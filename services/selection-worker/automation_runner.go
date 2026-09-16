@@ -108,6 +108,23 @@ func (r *AutomationRunner) releaseRun(taskID string) {
 	r.runMu.Unlock()
 }
 
+// taskLockKey serializes executions that would otherwise race on the same
+// underlying work. A strategy-selection task is keyed by its strategy_id, so a
+// manual run and a cron run of the same strategy cannot overlap and drag each
+// other past the 20-minute timeout; every other task type keys on its own id.
+func (r *AutomationRunner) taskLockKey(task AutomationTask) string {
+	if task.Type != "strategy_selection" {
+		return task.ID
+	}
+	var payload struct {
+		StrategyID string `json:"strategy_id"`
+	}
+	if json.Unmarshal([]byte(task.PayloadJSON), &payload) == nil && strings.TrimSpace(payload.StrategyID) != "" {
+		return "strategy:" + payload.StrategyID
+	}
+	return task.ID
+}
+
 func (r *AutomationRunner) Start() error {
 	r.cron.Start()
 	if err := r.Reload(); err != nil {
@@ -177,10 +194,11 @@ func (r *AutomationRunner) RunTask(ctx context.Context, taskID string) (Automati
 }
 
 func (r *AutomationRunner) runTask(ctx context.Context, task AutomationTask) (AutomationRun, error) {
-	if !r.acquireRun(task.ID) {
-		return AutomationRun{}, fmt.Errorf("任务已在运行中，跳过重复触发: %s", task.ID)
+	lockKey := r.taskLockKey(task)
+	if !r.acquireRun(lockKey) {
+		return AutomationRun{}, fmt.Errorf("任务已在运行中，跳过重复触发: %s", task.Name)
 	}
-	defer r.releaseRun(task.ID)
+	defer r.releaseRun(lockKey)
 
 	run, err := r.store.CreateAutomationRun(task)
 	if err != nil {
@@ -220,8 +238,11 @@ func (r *AutomationRunner) runTask(ctx context.Context, task AutomationTask) (Au
 		resultJSON = mustJSON(result)
 	}
 
-	if finishErr := r.store.FinishAutomationRun(run.ID, status, logText, resultJSON, matchedCount); finishErr != nil && err == nil {
-		err = finishErr
+	if finishErr := r.store.FinishAutomationRun(run.ID, status, logText, resultJSON, matchedCount); finishErr != nil {
+		log.Printf("更新运行记录失败: run=%s %v", run.ID, finishErr)
+		if err == nil {
+			err = finishErr
+		}
 	}
 	message := logText
 	if message == "" {
