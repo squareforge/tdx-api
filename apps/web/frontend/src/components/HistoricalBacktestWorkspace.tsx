@@ -2,7 +2,7 @@ import {
   Alert, Button, Card, DatePicker, Empty, Input, InputNumber, Progress, Segmented, Select, Space, Table, Tag, Typography, message
 } from 'antd';
 import {
-  BarChartOutlined, ClockCircleOutlined, ExperimentOutlined, PlayCircleOutlined, ReloadOutlined, StopOutlined, SwapOutlined, TeamOutlined
+  BarChartOutlined, ClockCircleOutlined, ExperimentOutlined, LeftOutlined, PlayCircleOutlined, ReloadOutlined, RightOutlined, StopOutlined, SwapOutlined, TeamOutlined
 } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -54,8 +54,8 @@ const scanSummaryColumns = [
   { title: '策略', dataIndex: 'strategy_name', width: 180, render: (value: string) => <strong>{value}</strong> },
   { title: '最优参数', key: 'params', render: (_: unknown, row: HistoricalScanResult) => <span>{scanParamText(row)}</span> },
   { title: '总收益', dataIndex: 'total_return', width: 100, sorter: (a: HistoricalScanResult, b: HistoricalScanResult) => a.total_return - b.total_return, render: (value: number) => <strong className={scanReturnColor(value)}>{pct(value)}</strong> },
-  { title: '最大回撤', dataIndex: 'max_drawdown', width: 100, render: (value: number) => <span className="trading-negative">-{Number(value || 0).toFixed(2)}%</span> },
-  { title: '胜率', dataIndex: 'win_rate', width: 80, render: (value: number) => `${Number(value || 0).toFixed(1)}%` },
+  { title: '最大回撤', dataIndex: 'max_drawdown', width: 100, sorter: (a: HistoricalScanResult, b: HistoricalScanResult) => a.max_drawdown - b.max_drawdown, render: (value: number) => <span className="trading-negative">-{Number(value || 0).toFixed(2)}%</span> },
+  { title: '胜率', dataIndex: 'win_rate', width: 80, sorter: (a: HistoricalScanResult, b: HistoricalScanResult) => a.win_rate - b.win_rate, render: (value: number) => `${Number(value || 0).toFixed(1)}%` },
   { title: '笔数', dataIndex: 'closed_count', width: 70 }
 ];
 
@@ -67,8 +67,8 @@ const scanDetailColumns = [
   { title: '止损', dataIndex: 'stop_loss', width: 70, render: (value: number) => `${value}%` },
   { title: '持有', dataIndex: 'max_hold_days', width: 70, render: (value: number) => `${value}天` },
   { title: '总收益', dataIndex: 'total_return', width: 100, sorter: (a: HistoricalScanResult, b: HistoricalScanResult) => a.total_return - b.total_return, render: (value: number) => <strong className={scanReturnColor(value)}>{pct(value)}</strong> },
-  { title: '最大回撤', dataIndex: 'max_drawdown', width: 100, render: (value: number) => <span className="trading-negative">-{Number(value || 0).toFixed(2)}%</span> },
-  { title: '胜率', dataIndex: 'win_rate', width: 80, render: (value: number) => `${Number(value || 0).toFixed(1)}%` },
+  { title: '最大回撤', dataIndex: 'max_drawdown', width: 100, sorter: (a: HistoricalScanResult, b: HistoricalScanResult) => a.max_drawdown - b.max_drawdown, render: (value: number) => <span className="trading-negative">-{Number(value || 0).toFixed(2)}%</span> },
+  { title: '胜率', dataIndex: 'win_rate', width: 80, sorter: (a: HistoricalScanResult, b: HistoricalScanResult) => a.win_rate - b.win_rate, render: (value: number) => `${Number(value || 0).toFixed(1)}%` },
   { title: '笔数', dataIndex: 'closed_count', width: 70 }
 ];
 
@@ -130,6 +130,7 @@ export function HistoricalBacktestWorkspace() {
   const [listView, setListView] = useState<'runs' | 'scan'>('runs');
   const [scanning, setScanning] = useState(false);
   const initializedStrategies = useRef(false);
+  const scanStrategyScrollRef = useRef<HTMLDivElement>(null);
 
   const loadRuns = useCallback(async (preferID?: string) => {
     const response = await apiFetch<{ items: HistoricalBacktestRun[] }>('/api/historical-backtests?limit=30');
@@ -297,6 +298,11 @@ export function HistoricalBacktestWorkspace() {
 
   function stockName(symbol: string) { return stockNames[normalizeSymbol(symbol)] || ''; }
   function openQuote(symbol: string) { setQuoteTarget({ code: symbol, name: stockName(symbol) || undefined }); }
+  function scrollScanStrategies(direction: -1 | 1) {
+    const container = scanStrategyScrollRef.current;
+    if (!container) return;
+    container.scrollBy({ left: direction * Math.max(240, container.clientWidth * 0.7), behavior: 'smooth' });
+  }
 
   const result = useMemo(() => parseJSON<HistoricalBacktestResult>(selectedRun?.result_json, {}), [selectedRun?.result_json]);
   const summaries = result.strategy_summaries || [];
@@ -441,7 +447,13 @@ export function HistoricalBacktestWorkspace() {
             {selectedScanRun.status === 'running' ? <Progress percent={Math.round(selectedScanRun.processed_strategies * 100 / (selectedScanRun.total_strategies || 1))} status="active" /> : null}
             {selectedScanRun.error ? <Alert type="error" showIcon message={selectedScanRun.error} /> : null}
             <div className="historical-result-toolbar">
-              <Segmented value={scanStrategy} onChange={(value) => setScanStrategy(value as string)} options={[{ value: 'all', label: '策略最优汇总' }, ...scanStrategyOptions]} />
+              <div className="historical-scan-strategy-nav">
+                <Button aria-label="向左查看更多策略" title="向左查看更多策略" icon={<LeftOutlined />} onClick={() => scrollScanStrategies(-1)} />
+                <div ref={scanStrategyScrollRef} className="historical-scan-strategy-scroll" aria-label="扫描策略选择" tabIndex={0}>
+                  <Segmented value={scanStrategy} onChange={(value) => setScanStrategy(value as string)} options={[{ value: 'all', label: '策略最优汇总' }, ...scanStrategyOptions]} />
+                </div>
+                <Button aria-label="向右查看更多策略" title="向右查看更多策略" icon={<RightOutlined />} onClick={() => scrollScanStrategies(1)} />
+              </div>
             </div>
             {scanStrategy === 'all'
               ? <Table<HistoricalScanResult> size="small" rowKey="id" dataSource={scanSummary} columns={scanSummaryColumns} pagination={false} scroll={{ x: 900 }} locale={{ emptyText: selectedScanRun.status === 'running' ? '扫描中...' : '暂无扫描结果' }} />

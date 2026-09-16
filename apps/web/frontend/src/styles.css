@@ -10516,6 +10516,60 @@ textarea::placeholder {
   width: 120px;
 }
 
+.historical-scan-strategy-nav {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 30px;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+}
+
+.historical-scan-strategy-nav > .ant-btn {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+}
+
+.historical-scan-strategy-scroll {
+  width: 100%;
+  min-width: 0;
+  padding-bottom: 5px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
+  scrollbar-color: #94a3b8 #e8edf4;
+  scrollbar-width: thin;
+}
+
+.historical-scan-strategy-scroll:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--primary) 52%, transparent);
+  outline-offset: 2px;
+}
+
+.historical-scan-strategy-scroll .ant-segmented {
+  width: max-content;
+  min-width: max-content;
+}
+
+.historical-scan-strategy-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+
+.historical-scan-strategy-scroll::-webkit-scrollbar-track {
+  border-radius: 3px;
+  background: #e8edf4;
+}
+
+.historical-scan-strategy-scroll::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: #94a3b8;
+}
+
+.historical-scan-strategy-scroll::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
 .historical-result-card .code-link.ant-btn {
   color: #1677ff;
 }
