@@ -208,7 +208,6 @@ func normalizeHistoricalBacktestRequest(req historicalBacktestRequest) (historic
 	}
 	sort.Ints(horizons)
 	req.Horizons = horizons
-	req.TargetReturn, req.DrawdownLimit = workbench.DefaultTrackingPolicy(req.TargetReturn, req.DrawdownLimit)
 	if req.InitialCash <= 0 || req.InitialCash > 1e9 {
 		req.InitialCash = 100000
 	}
@@ -239,6 +238,9 @@ func normalizeHistoricalBacktestRequest(req historicalBacktestRequest) (historic
 	if req.MaxHoldDays <= 0 || req.MaxHoldDays > 250 {
 		req.MaxHoldDays = 15
 	}
+	// 信号达标统计复用组合退出的止盈/回撤参数,避免两套口径不一致。
+	req.TargetReturn = req.TakeProfit
+	req.DrawdownLimit = req.TrailDrawdown
 	req.StrategyIDs = normalizeIDList(req.StrategyIDs)
 	return req, start, end, nil
 }

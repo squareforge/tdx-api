@@ -72,8 +72,6 @@ export function HistoricalBacktestWorkspace() {
   const [startDate, setStartDate] = useState<Dayjs | null>(dayjs().startOf('year'));
   const [endDate, setEndDate] = useState<Dayjs | null>(dayjs());
   const [strategyIDs, setStrategyIDs] = useState<string[]>([]);
-  const [targetReturn, setTargetReturn] = useState(3);
-  const [drawdownLimit, setDrawdownLimit] = useState(5);
   const [initialCash, setInitialCash] = useState(100000);
   const [maxPositions, setMaxPositions] = useState(5);
   const [buyBase, setBuyBase] = useState<'open' | 'close'>('open');
@@ -178,8 +176,7 @@ export function HistoricalBacktestWorkspace() {
         method: 'POST',
         body: JSON.stringify({
           start_date: startDate.format('YYYY-MM-DD'), end_date: endDate.format('YYYY-MM-DD'), strategy_ids: strategyIDs,
-          horizons: [3, 5, 10], target_return: targetReturn, drawdown_limit: drawdownLimit,
-          initial_cash: initialCash, max_positions: maxPositions,
+          horizons: [3, 5, 10], initial_cash: initialCash, max_positions: maxPositions,
           buy_base: buyBase, buy_offset: buyOffset, sell_base: sellBase,
           take_profit: takeProfit, trail_drawdown: trailDrawdown, stop_loss: stopLoss, max_hold_days: maxHoldDays
         })
@@ -280,17 +277,15 @@ export function HistoricalBacktestWorkspace() {
           <label><span>开始日期</span><DatePicker value={startDate} onChange={setStartDate} allowClear={false} /></label>
           <label><span>结束日期</span><DatePicker value={endDate} onChange={setEndDate} allowClear={false} disabledDate={(date) => Boolean(startDate && date.isBefore(startDate, 'day'))} /></label>
           <label className="historical-strategy-picker"><span>执行策略</span><Select mode="multiple" maxTagCount="responsive" value={strategyIDs} onChange={setStrategyIDs} options={strategies.map((item) => ({ value: item.id, label: item.name }))} /></label>
-          <label><span>目标收益</span><InputNumber min={0.1} max={100} step={0.5} addonAfter="%" value={targetReturn} onChange={(value) => setTargetReturn(value || 3)} /></label>
-          <label><span>回撤上限</span><InputNumber min={0.1} max={100} step={0.5} addonAfter="%" value={drawdownLimit} onChange={(value) => setDrawdownLimit(value || 5)} /></label>
-          <label><span>初始资金</span><InputNumber min={10000} step={10000} addonAfter="元" value={initialCash} onChange={(value) => setInitialCash(value || 100000)} /></label>
+          <label><span>止盈</span><InputNumber min={0.1} max={100} step={0.5} addonAfter="%" value={takeProfit} onChange={(value) => setTakeProfit(value || 10)} /></label>
+          <label><span>止损</span><InputNumber min={0.1} max={100} step={0.5} addonAfter="%" value={stopLoss} onChange={(value) => setStopLoss(value || 3)} /></label>
+          <label><span>回撤</span><InputNumber min={0.1} max={100} step={0.5} addonAfter="%" value={trailDrawdown} onChange={(value) => setTrailDrawdown(value || 5)} /></label>
           <label><span>最大持仓数</span><InputNumber min={1} max={20} value={maxPositions} onChange={(value) => setMaxPositions(value || 5)} /></label>
+          <label><span>最大持有天数</span><InputNumber min={1} max={250} value={maxHoldDays} onChange={(value) => setMaxHoldDays(value || 15)} /></label>
           <label><span>买入基准</span><Select value={buyBase} onChange={setBuyBase} style={{ width: 110 }} options={[{ value: 'open', label: '开盘价' }, { value: 'close', label: '收盘价' }]} /></label>
           <label><span>买入偏移</span><InputNumber min={-50} max={50} step={0.1} addonAfter="%" value={buyOffset} onChange={(value) => setBuyOffset(value || 0)} /></label>
-          <label><span>卖出价</span><Select value={sellBase} onChange={setSellBase} style={{ width: 120 }} options={[{ value: 'next_open', label: '次日开盘' }, { value: 'same_close', label: '当日收盘' }]} /></label>
-          <label><span>止盈</span><InputNumber min={0.1} max={100} step={0.5} addonAfter="%" value={takeProfit} onChange={(value) => setTakeProfit(value || 10)} /></label>
-          <label><span>移动止损</span><InputNumber min={0.1} max={100} step={0.5} addonAfter="%" value={trailDrawdown} onChange={(value) => setTrailDrawdown(value || 5)} /></label>
-          <label><span>固定止损</span><InputNumber min={0.1} max={100} step={0.5} addonAfter="%" value={stopLoss} onChange={(value) => setStopLoss(value || 3)} /></label>
-          <label><span>持有天数</span><InputNumber min={1} max={250} value={maxHoldDays} onChange={(value) => setMaxHoldDays(value || 15)} /></label>
+          <label><span>卖出基准</span><Select value={sellBase} onChange={setSellBase} style={{ width: 120 }} options={[{ value: 'next_open', label: '次日开盘' }, { value: 'same_close', label: '当日收盘' }]} /></label>
+          <label><span>初始资金</span><InputNumber min={10000} step={10000} addonAfter="元" value={initialCash} onChange={(value) => setInitialCash(value || 100000)} /></label>
           <Button className="historical-start-button" type="primary" icon={<PlayCircleOutlined />} loading={starting} disabled={runs.some((item) => item.status === 'running')} onClick={() => void startBacktest()}>开始回测</Button>
         </div>
       </Card>
@@ -311,7 +306,7 @@ export function HistoricalBacktestWorkspace() {
               <div><span>交易日</span><strong>{selectedRun.processed_dates}/{selectedRun.total_dates || '--'}</strong></div>
               <div><span>候选股票</span><strong>{selectedRun.candidate_symbols || '--'}</strong></div>
               <div><span>历史信号</span><strong>{selectedRun.signal_count}</strong></div>
-              <div><span>成功标准</span><strong>收益 ≥ {selectedRun.target_return}%</strong><small>回撤不低于 -{selectedRun.drawdown_limit}%</small></div>
+              <div><span>成功标准</span><strong>收益 ≥ {selectedRun.take_profit ?? selectedRun.target_return ?? 10}%</strong><small>回撤不低于 -{selectedRun.trail_drawdown ?? selectedRun.drawdown_limit ?? 5}%</small></div>
             </div>
             {selectedRun.error ? <Alert type="error" showIcon message={selectedRun.error} /> : null}
             <div className="historical-result-toolbar">

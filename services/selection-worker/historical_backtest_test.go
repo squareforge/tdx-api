@@ -46,8 +46,14 @@ func TestNormalizeHistoricalBacktestRequestDefaults(t *testing.T) {
 	if len(req.Horizons) != 3 || req.Horizons[0] != 3 || req.Horizons[1] != 5 || req.Horizons[2] != 10 {
 		t.Fatalf("horizons = %v, want [3 5 10]", req.Horizons)
 	}
-	if req.TargetReturn != 3 || req.DrawdownLimit != 5 {
-		t.Fatalf("policy = %.1f/%.1f, want 3/5", req.TargetReturn, req.DrawdownLimit)
+	if req.TargetReturn != 10 || req.DrawdownLimit != 5 {
+		t.Fatalf("达标标准 = %.1f/%.1f, want 10/5(复用止盈/回撤)", req.TargetReturn, req.DrawdownLimit)
+	}
+	if req.TakeProfit != 10 || req.TrailDrawdown != 5 || req.StopLoss != 3 {
+		t.Fatalf("退出参数 = %.1f/%.1f/%.1f, want 10/5/3", req.TakeProfit, req.TrailDrawdown, req.StopLoss)
+	}
+	if req.MaxHoldDays != 15 || req.BuyBase != "open" || req.SellBase != "next_open" {
+		t.Fatalf("买卖参数 = %d/%s/%s, want 15/open/next_open", req.MaxHoldDays, req.BuyBase, req.SellBase)
 	}
 }
 
