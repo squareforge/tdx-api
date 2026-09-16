@@ -618,6 +618,13 @@ export interface HistoricalBacktestRun {
   horizons: number[];
   target_return: number;
   drawdown_limit: number;
+  buy_base?: string;
+  buy_offset?: number;
+  sell_base?: string;
+  take_profit?: number;
+  trail_drawdown?: number;
+  stop_loss?: number;
+  max_hold_days?: number;
   total_dates: number;
   processed_dates: number;
   current_date?: string;

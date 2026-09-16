@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 )
@@ -10,10 +11,17 @@ import (
 // 约束:涨停买不进、跌停卖不出、100股整手、T+1、最大持仓数、等权分配。
 
 type portfolioSimConfig struct {
-	InitialCash  float64 `json:"initial_cash"`
-	MaxPositions int     `json:"max_positions"`
-	BuyCost      float64 `json:"buy_cost"`  // 买入费率(佣金+过户),与策略回测引擎一致
-	SellCost     float64 `json:"sell_cost"` // 卖出费率(佣金+过户+印花税),与策略回测引擎一致
+	InitialCash   float64 `json:"initial_cash"`
+	MaxPositions  int     `json:"max_positions"`
+	BuyCost       float64 `json:"buy_cost"`  // 买入费率(佣金+过户),与策略回测引擎一致
+	SellCost      float64 `json:"sell_cost"` // 卖出费率(佣金+过户+印花税),与策略回测引擎一致
+	BuyBase       string  `json:"buy_base"`  // 买入基准价: open(次日开盘) | close(信号日收盘)
+	BuyOffset     float64 `json:"buy_offset"`
+	SellBase      string  `json:"sell_base"` // 卖出价: next_open(次日开盘) | same_close(当日收盘)
+	TakeProfit    float64 `json:"take_profit"`
+	TrailDrawdown float64 `json:"trail_drawdown"`
+	StopLoss      float64 `json:"stop_loss"`
+	MaxHoldDays   int     `json:"max_hold_days"`
 }
 
 type portfolioSimPosition struct {
@@ -24,10 +32,9 @@ type portfolioSimPosition struct {
 	signalDate     int
 	strategyName   string
 	lastClose      float64 // 最近可用收盘价(权益估值用)
-	peakClose      float64 // 持仓期间最高收盘价(回撤止盈基准)
-	stopActive     bool    // 浮盈是否曾触及 +12%,激活回撤止盈
+	peakClose      float64 // 持仓期间最高收盘价(回撤止损基准)
 	holdDays       int     // 持有交易日数
-	pendingExit    string  // 昨日收盘判定、今日开盘执行的退出原因
+	pendingExit    string  // 昨日收盘判定、次日开盘执行的退出原因
 	pendingExitSet bool
 }
 
@@ -36,6 +43,7 @@ type portfolioPendingBuy struct {
 	score        float64
 	signalDate   int
 	strategyName string
+	signalClose  float64 // 信号日收盘价,买入基准"close"时作为限价参考
 }
 
 type portfolioSimulator struct {
@@ -54,6 +62,24 @@ func newPortfolioSimulator(cfg portfolioSimConfig) *portfolioSimulator {
 	}
 	if cfg.SellCost <= 0 {
 		cfg.SellCost = 0.001 // 佣金+过户+印花税
+	}
+	if cfg.BuyBase != "close" {
+		cfg.BuyBase = "open"
+	}
+	if cfg.SellBase != "same_close" {
+		cfg.SellBase = "next_open"
+	}
+	if cfg.TakeProfit <= 0 {
+		cfg.TakeProfit = 10
+	}
+	if cfg.TrailDrawdown <= 0 {
+		cfg.TrailDrawdown = 5
+	}
+	if cfg.StopLoss <= 0 {
+		cfg.StopLoss = 3
+	}
+	if cfg.MaxHoldDays <= 0 {
+		cfg.MaxHoldDays = 15
 	}
 	return &portfolioSimulator{
 		cfg:         cfg,
@@ -90,22 +116,6 @@ func portfolioKlineOnDate(rows []FormulaKline, date int) (FormulaKline, bool) {
 		return FormulaKline{}, false
 	}
 	return rows[index], true
-}
-
-func portfolioMA20(rows []FormulaKline, date int) (float64, bool) {
-	end := sort.Search(len(rows), func(i int) bool { return rows[i].Date > date })
-	if end < 20 {
-		return 0, false
-	}
-	window := rows[end-20 : end]
-	if window[len(window)-1].Date != date {
-		return 0, false
-	}
-	sum := 0.0
-	for _, row := range window {
-		sum += row.Close
-	}
-	return sum / 20, true
 }
 
 // onDayOpen 处理当日开盘:先执行昨日收盘触发的卖出,再执行昨日信号的买入。
@@ -160,32 +170,51 @@ func (sim *portfolioSimulator) tryBuy(buy portfolioPendingBuy, date int, dateTex
 		sim.appendSkip(buy, dateText, "涨停无法买入")
 		return
 	}
+	// 买入限价 = 基准价 × (1+offset)。基准"open"用当日开盘价,"close"用信号日收盘价。
+	basePrice := row.Open
+	if sim.cfg.BuyBase == "close" && buy.signalClose > 0 {
+		basePrice = buy.signalClose
+	}
+	limitPrice := basePrice * (1 + sim.cfg.BuyOffset/100)
+	if limitPrice <= 0 {
+		sim.appendSkip(buy, dateText, "买入限价无效")
+		return
+	}
+	// 限价买单成交条件:当日最低价须不高于限价;开盘即低于限价则按开盘价成交。
+	if row.Low > limitPrice {
+		sim.appendSkip(buy, dateText, "未跌至买入限价")
+		return
+	}
+	fillPrice := limitPrice
+	if row.Open <= limitPrice {
+		fillPrice = row.Open
+	}
 	target := sim.equity() / float64(sim.cfg.MaxPositions)
-	shares := int(target/row.Open/100) * 100
+	shares := int(target/fillPrice/100) * 100
 	if shares < 100 {
 		sim.appendSkip(buy, dateText, "资金不足一手")
 		return
 	}
 	// 买入总支出含费率:现金约束与降级重算都以含费单价为准
-	cost := float64(shares) * row.Open * (1 + sim.cfg.BuyCost)
+	cost := float64(shares) * fillPrice * (1 + sim.cfg.BuyCost)
 	if cost > sim.cash {
-		shares = int(sim.cash/(row.Open*(1+sim.cfg.BuyCost))/100) * 100
+		shares = int(sim.cash/(fillPrice*(1+sim.cfg.BuyCost))/100) * 100
 		if shares < 100 {
 			sim.appendSkip(buy, dateText, "现金不足")
 			return
 		}
-		cost = float64(shares) * row.Open * (1 + sim.cfg.BuyCost)
+		cost = float64(shares) * fillPrice * (1 + sim.cfg.BuyCost)
 	}
 	sim.cash -= cost
 	sim.positions[buy.symbol] = &portfolioSimPosition{
 		symbol:       buy.symbol,
 		shares:       shares,
-		entryPrice:   row.Open,
+		entryPrice:   fillPrice,
 		entryDate:    date,
 		signalDate:   buy.signalDate,
 		strategyName: buy.strategyName,
-		lastClose:    row.Open,
-		peakClose:    row.Open,
+		lastClose:    fillPrice,
+		peakClose:    fillPrice,
 	}
 }
 
@@ -228,8 +257,10 @@ func (sim *portfolioSimulator) appendSkip(buy portfolioPendingBuy, attemptDate, 
 	})
 }
 
-// onDayClose 收盘结算:更新持仓估值与峰值,判定次日开盘执行的退出条件,记录最大回撤。
-func (sim *portfolioSimulator) onDayClose(date int, klines map[string][]FormulaKline) {
+// onDayClose 收盘结算:更新持仓估值与峰值,判定退出条件,记录最大回撤。
+// 退出判定按"止损 > 回撤 > 止盈 > 超时"优先级;卖出价由 SellBase 决定
+// (same_close 当日收盘直接成交,next_open 次日开盘执行)。
+func (sim *portfolioSimulator) onDayClose(date int, dateText string, klines map[string][]FormulaKline) {
 	for _, pos := range sim.positions {
 		row, ok := portfolioKlineOnDate(klines[pos.symbol], date)
 		if !ok {
@@ -240,20 +271,25 @@ func (sim *portfolioSimulator) onDayClose(date int, klines map[string][]FormulaK
 		if row.Close > pos.peakClose {
 			pos.peakClose = row.Close
 		}
-		if row.Close >= pos.entryPrice*1.12 {
-			pos.stopActive = true
-		}
+		var reason string
 		switch {
-		case row.Close <= pos.entryPrice*0.92:
-			pos.pendingExit, pos.pendingExitSet = "止损(收盘≤-8%)", true
-		case pos.stopActive && row.Close <= pos.peakClose*0.90:
-			pos.pendingExit, pos.pendingExitSet = "回撤止盈(高点回撤10%)", true
-		default:
-			if ma, ok := portfolioMA20(klines[pos.symbol], date); ok && row.Close < ma {
-				pos.pendingExit, pos.pendingExitSet = "收盘跌破20日线", true
-			} else if pos.holdDays >= 40 {
-				pos.pendingExit, pos.pendingExitSet = "持有超过40个交易日", true
-			}
+		case row.Close <= pos.entryPrice*(1-sim.cfg.StopLoss/100):
+			reason = fmt.Sprintf("止损(收盘≤-%g%%)", sim.cfg.StopLoss)
+		case row.Close <= pos.peakClose*(1-sim.cfg.TrailDrawdown/100):
+			reason = fmt.Sprintf("回撤(峰值回撤≥%g%%)", sim.cfg.TrailDrawdown)
+		case row.Close >= pos.entryPrice*(1+sim.cfg.TakeProfit/100):
+			reason = fmt.Sprintf("止盈(收盘收益≥%g%%)", sim.cfg.TakeProfit)
+		case pos.holdDays >= sim.cfg.MaxHoldDays:
+			reason = fmt.Sprintf("持有超过%d个交易日", sim.cfg.MaxHoldDays)
+		}
+		if reason == "" {
+			continue
+		}
+		if sim.cfg.SellBase == "same_close" {
+			pos.pendingExit = reason
+			sim.executeSell(pos, row.Close, date, dateText)
+		} else {
+			pos.pendingExit, pos.pendingExitSet = reason, true
 		}
 	}
 	equity := sim.equity()
@@ -346,7 +382,7 @@ func round2(value float64) float64 {
 
 // mergePendingBuy 把当日新信号合并进待买列表：同一股票多条策略信号只买一次，
 // 保留最高得分并拼接触发策略名。
-func mergePendingBuy(buys []portfolioPendingBuy, symbol string, score float64, signalDate int, strategyName string) []portfolioPendingBuy {
+func mergePendingBuy(buys []portfolioPendingBuy, symbol string, score float64, signalDate int, strategyName string, signalClose float64) []portfolioPendingBuy {
 	for i := range buys {
 		if buys[i].symbol != symbol {
 			continue
@@ -362,5 +398,5 @@ func mergePendingBuy(buys []portfolioPendingBuy, symbol string, score float64, s
 		}
 		return buys
 	}
-	return append(buys, portfolioPendingBuy{symbol: symbol, score: score, signalDate: signalDate, strategyName: strategyName})
+	return append(buys, portfolioPendingBuy{symbol: symbol, score: score, signalDate: signalDate, strategyName: strategyName, signalClose: signalClose})
 }

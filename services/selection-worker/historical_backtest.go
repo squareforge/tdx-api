@@ -27,6 +27,13 @@ type historicalBacktestRequest struct {
 	MaxPositions  int      `json:"max_positions"`
 	BuyCost       float64  `json:"buy_cost"`
 	SellCost      float64  `json:"sell_cost"`
+	BuyBase       string   `json:"buy_base"`
+	BuyOffset     float64  `json:"buy_offset"`
+	SellBase      string   `json:"sell_base"`
+	TakeProfit    float64  `json:"take_profit"`
+	TrailDrawdown float64  `json:"trail_drawdown"`
+	StopLoss      float64  `json:"stop_loss"`
+	MaxHoldDays   int      `json:"max_hold_days"`
 }
 
 type historicalStrategyPlan struct {
@@ -214,6 +221,24 @@ func normalizeHistoricalBacktestRequest(req historicalBacktestRequest) (historic
 	if req.SellCost <= 0 {
 		req.SellCost = 0.001 // 与策略回测引擎默认一致(佣金+过户+印花税)
 	}
+	if req.BuyBase != "close" {
+		req.BuyBase = "open"
+	}
+	if req.SellBase != "same_close" {
+		req.SellBase = "next_open"
+	}
+	if req.TakeProfit <= 0 || req.TakeProfit > 100 {
+		req.TakeProfit = 10
+	}
+	if req.TrailDrawdown <= 0 || req.TrailDrawdown > 100 {
+		req.TrailDrawdown = 5
+	}
+	if req.StopLoss <= 0 || req.StopLoss > 100 {
+		req.StopLoss = 3
+	}
+	if req.MaxHoldDays <= 0 || req.MaxHoldDays > 250 {
+		req.MaxHoldDays = 15
+	}
 	req.StrategyIDs = normalizeIDList(req.StrategyIDs)
 	return req, start, end, nil
 }
@@ -281,6 +306,8 @@ func (r *AutomationRunner) startHistoricalBacktest(raw historicalBacktestRequest
 		Status: "running", StartDate: req.StartDate, EndDate: req.EndDate, StrategyIDs: strategyIDs,
 		StrategySnapshotJSON: mustJSON(strategies), Horizons: req.Horizons,
 		TargetReturn: req.TargetReturn, DrawdownLimit: req.DrawdownLimit,
+		BuyBase: req.BuyBase, BuyOffset: req.BuyOffset, SellBase: req.SellBase,
+		TakeProfit: req.TakeProfit, TrailDrawdown: req.TrailDrawdown, StopLoss: req.StopLoss, MaxHoldDays: req.MaxHoldDays,
 	})
 	if err != nil {
 		r.releaseRun(historicalBacktestRunLock)
@@ -363,7 +390,11 @@ func (r *AutomationRunner) runHistoricalBacktest(ctx context.Context, run Histor
 	consensus := map[string]*historicalConsensusAccumulator{}
 	trackingBars := map[string][]workbench.TrackingBar{}
 	signalCount := 0
-	sim := newPortfolioSimulator(portfolioSimConfig{InitialCash: req.InitialCash, MaxPositions: req.MaxPositions, BuyCost: req.BuyCost, SellCost: req.SellCost})
+	sim := newPortfolioSimulator(portfolioSimConfig{
+		InitialCash: req.InitialCash, MaxPositions: req.MaxPositions, BuyCost: req.BuyCost, SellCost: req.SellCost,
+		BuyBase: req.BuyBase, BuyOffset: req.BuyOffset, SellBase: req.SellBase,
+		TakeProfit: req.TakeProfit, TrailDrawdown: req.TrailDrawdown, StopLoss: req.StopLoss, MaxHoldDays: req.MaxHoldDays,
+	})
 	pendingBuys := []portfolioPendingBuy{}
 	for dateIndex, signalDate := range dates {
 		if ctx.Err() != nil || r.store.HistoricalBacktestCancelRequested(run.ID) {
@@ -421,7 +452,7 @@ func (r *AutomationRunner) runHistoricalBacktest(ctx context.Context, run Histor
 					RunID: run.ID, StrategyID: plan.strategy.ID, StrategyName: plan.strategy.Name, SignalDate: dateText,
 					Symbol: item.Symbol, Latest: item.Latest, Score: item.Score, DetailJSON: mustJSON(item), TrackingJSON: trackingJSON,
 				})
-				pendingBuys = mergePendingBuy(pendingBuys, item.Symbol, item.Score, signalDate, plan.strategy.Name)
+				pendingBuys = mergePendingBuy(pendingBuys, item.Symbol, item.Score, signalDate, plan.strategy.Name, item.Latest)
 				updateHistoricalSummary(summaries[plan.strategy.ID], tracking, req.Horizons)
 				key := dateText + ":" + item.Symbol
 				entry := consensus[key]
@@ -436,7 +467,7 @@ func (r *AutomationRunner) runHistoricalBacktest(ctx context.Context, run Histor
 			return nil, err
 		}
 		// 当日收盘:持仓退出条件判定与权益结算
-		sim.onDayClose(signalDate, klines)
+		sim.onDayClose(signalDate, dateText, klines)
 		signalCount += len(daySignals)
 		if err := r.store.UpdateHistoricalBacktestProgress(run.ID, len(dates), dateIndex+1, dateText, len(symbols), signalCount); err != nil {
 			return nil, err

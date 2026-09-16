@@ -332,6 +332,13 @@ func (s *AppStore) migrate() error {
 			horizons_json TEXT NOT NULL DEFAULT '[3,5,10]',
 			target_return REAL NOT NULL DEFAULT 3,
 			drawdown_limit REAL NOT NULL DEFAULT 5,
+			buy_base TEXT NOT NULL DEFAULT 'open',
+			buy_offset REAL NOT NULL DEFAULT 0,
+			sell_base TEXT NOT NULL DEFAULT 'next_open',
+			take_profit REAL NOT NULL DEFAULT 10,
+			trail_drawdown REAL NOT NULL DEFAULT 5,
+			stop_loss REAL NOT NULL DEFAULT 3,
+			max_hold_days INTEGER NOT NULL DEFAULT 15,
 			total_dates INTEGER NOT NULL DEFAULT 0,
 			processed_dates INTEGER NOT NULL DEFAULT 0,
 			current_date TEXT NOT NULL DEFAULT '',
@@ -485,6 +492,12 @@ func (s *AppStore) migrate() error {
 		"macro_alert_settings": {"notify_webhooks": "INTEGER NOT NULL DEFAULT 0", "webhook_ids": "TEXT NOT NULL DEFAULT '[]'"},
 		"selection_results":    {"tracking_json": "TEXT NOT NULL DEFAULT '{}'"},
 		"automation_runs":      {"parent_run_id": "TEXT NOT NULL DEFAULT ''"},
+		"historical_backtest_runs": {
+			"buy_base": "TEXT NOT NULL DEFAULT 'open'", "buy_offset": "REAL NOT NULL DEFAULT 0",
+			"sell_base": "TEXT NOT NULL DEFAULT 'next_open'", "take_profit": "REAL NOT NULL DEFAULT 10",
+			"trail_drawdown": "REAL NOT NULL DEFAULT 5", "stop_loss": "REAL NOT NULL DEFAULT 3",
+			"max_hold_days": "INTEGER NOT NULL DEFAULT 15",
+		},
 	} {
 		for column, definition := range columns {
 			if err := s.ensureColumn(table, column, definition); err != nil {

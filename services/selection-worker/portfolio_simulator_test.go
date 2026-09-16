@@ -51,7 +51,7 @@ func TestPortfolioLimitUpSkip(t *testing.T) {
 	}
 	sim := newPortfolioSimulator(portfolioSimConfig{InitialCash: 100000, MaxPositions: 1})
 	sim.onDayOpen(20260105, "2026-01-05", klines, nil)
-	sim.onDayClose(20260105, klines)
+	sim.onDayClose(20260105, historicalDateText(20260105), klines)
 	sim.onDayOpen(20260106, "2026-01-06", klines, []portfolioPendingBuy{pfBuy("000001", 90, 20260105, "策略A")})
 
 	trade := pfSingleTrade(t, sim, "run1")
@@ -64,33 +64,30 @@ func TestPortfolioLimitUpSkip(t *testing.T) {
 func TestPortfolioLimitDownDelay(t *testing.T) {
 	klines := map[string][]FormulaKline{
 		"000001": pfKline([]pfBar{
-			{date: 20260105, yclose: 10, open: 10, close: 9.5},
-			{date: 20260106, yclose: 9.5, open: 9.5, close: 9.0}, // 收盘触发止损
-			{date: 20260107, yclose: 9.0, open: 8.1, close: 9.0}, // 开盘=跌停价,卖不出
-			{date: 20260108, yclose: 9.0, open: 9.2, close: 9.2}, // 开盘可卖
+			{date: 20260105, yclose: 10, open: 10, close: 9.5},    // 买入日,收盘-5%触发止损3%
+			{date: 20260106, yclose: 9.5, open: 8.5, close: 8.5},  // 开盘低于跌停价,卖不出
+			{date: 20260107, yclose: 8.5, open: 9.0, close: 9.0},  // 开盘可卖,顺延成交
 		}),
 	}
 	sim := newPortfolioSimulator(portfolioSimConfig{InitialCash: 10050, MaxPositions: 1}) // 多留 50 覆盖买入费率,保证满 1000 股
 	sim.onDayOpen(20260105, "2026-01-05", klines, []portfolioPendingBuy{pfBuy("000001", 90, 20260104, "策略A")})
-	sim.onDayClose(20260105, klines)
-	sim.onDayOpen(20260106, "2026-01-06", klines, nil)
-	sim.onDayClose(20260106, klines)
-	sim.onDayOpen(20260107, "2026-01-07", klines, nil) // 跌停顺延
-	sim.onDayClose(20260107, klines)
-	sim.onDayOpen(20260108, "2026-01-08", klines, nil) // 顺延成交
+	sim.onDayClose(20260105, historicalDateText(20260105), klines)
+	sim.onDayOpen(20260106, "2026-01-06", klines, nil) // 跌停卖不出,顺延
+	sim.onDayClose(20260106, historicalDateText(20260106), klines)
+	sim.onDayOpen(20260107, "2026-01-07", klines, nil) // 顺延成交
 
 	trade := pfSingleTrade(t, sim, "run1")
 	if trade.Status != "closed" {
 		t.Fatalf("trade status = %s, want closed", trade.Status)
 	}
-	if trade.EntryDate != "2026-01-05" || trade.ExitDate != "2026-01-08" {
-		t.Fatalf("entry/exit = %s/%s, want 2026-01-05/2026-01-08", trade.EntryDate, trade.ExitDate)
+	if trade.EntryDate != "2026-01-05" || trade.ExitDate != "2026-01-07" {
+		t.Fatalf("entry/exit = %s/%s, want 2026-01-05/2026-01-07", trade.EntryDate, trade.ExitDate)
 	}
-	if trade.Reason != "止损(收盘≤-8%)" {
-		t.Fatalf("reason = %s, want 止损(收盘≤-8%%)", trade.Reason)
+	if trade.Reason != "止损(收盘≤-3%)" {
+		t.Fatalf("reason = %s, want 止损(收盘≤-3%%)", trade.Reason)
 	}
-	if math.Abs(trade.Pnl+814.2) > 0.01 { // 1000股买入扣 0.05% 费率,卖出扣 0.1% 费率
-		t.Fatalf("pnl = %v, want -814.2", trade.Pnl)
+	if math.Abs(trade.Pnl+1014) > 0.01 { // 1000股 10→9.0,扣双边费率
+		t.Fatalf("pnl = %v, want -1014", trade.Pnl)
 	}
 }
 
@@ -112,18 +109,18 @@ func TestPortfolioRoundLot(t *testing.T) {
 }
 
 // 现金受约束降级买入:持仓浮盈后新信号的目标金额超过现金,
-// 降级为按全部现金向下取整买入(700 股 → 400 股)。
+// 降级为按全部现金向下取整买入 400 股。
 func TestPortfolioCashConstrainedBuy(t *testing.T) {
 	klines := map[string][]FormulaKline{
 		"000001": pfKline([]pfBar{
-			{date: 20260105, yclose: 19.9, open: 19.9, close: 50}, // 收盘大涨,浮盈拉高权益
-			{date: 20260106, yclose: 50, open: 50, close: 50},
+			{date: 20260105, yclose: 19.9, open: 19.9, close: 21}, // 收盘小涨,浮盈拉高权益但未达止盈10%
+			{date: 20260106, yclose: 21, open: 50, close: 50},
 		}),
 		"000002": pfKline([]pfBar{{date: 20260106, yclose: 50, open: 24, close: 24}}),
 	}
 	sim := newPortfolioSimulator(portfolioSimConfig{InitialCash: 20000, MaxPositions: 2})
 	sim.onDayOpen(20260105, "2026-01-05", klines, []portfolioPendingBuy{pfBuy("000001", 90, 20260104, "策略A")}) // 500股*19.9=9950,现金剩10050
-	sim.onDayClose(20260105, klines)
+	sim.onDayClose(20260105, historicalDateText(20260105), klines)
 	sim.onDayOpen(20260106, "2026-01-06", klines, []portfolioPendingBuy{pfBuy("000002", 80, 20260105, "策略B")})
 
 	trades := pfTrades(t, sim, "run1")
@@ -153,8 +150,8 @@ func TestPortfolioInsufficientForOneLot(t *testing.T) {
 	}
 }
 
-// T+1 与退出优先级:买入当日收盘同时满足止损与 20 日线,次日开盘卖出;
-// 卖出日必须晚于买入日,退出原因为止损(switch 顺序优先)。
+// T+1 与退出优先级:买入当日收盘触发止损,次日开盘卖出;
+// 卖出日必须晚于买入日,退出原因为止损(优先级:止损>回撤>止盈>超时)。
 func TestPortfolioTPlusOneAndStopPriority(t *testing.T) {
 	bars := make([]pfBar, 0, 26)
 	start := 20251201
@@ -168,7 +165,7 @@ func TestPortfolioTPlusOneAndStopPriority(t *testing.T) {
 	klines := map[string][]FormulaKline{"000001": pfKline(bars)}
 	sim := newPortfolioSimulator(portfolioSimConfig{InitialCash: 10050, MaxPositions: 1}) // 多留 50 覆盖买入费率
 	sim.onDayOpen(20251225, "2025-12-25", klines, []portfolioPendingBuy{pfBuy("000001", 90, 20251224, "策略A")})
-	sim.onDayClose(20251225, klines)
+	sim.onDayClose(20251225, historicalDateText(20251225), klines)
 	sim.onDayOpen(20251226, "2025-12-26", klines, nil)
 
 	trade := pfSingleTrade(t, sim, "run1")
@@ -178,8 +175,8 @@ func TestPortfolioTPlusOneAndStopPriority(t *testing.T) {
 	if trade.EntryDate != "2025-12-25" || trade.ExitDate != "2025-12-26" {
 		t.Fatalf("entry/exit = %s/%s, want 2025-12-25/2025-12-26(T+1)", trade.EntryDate, trade.ExitDate)
 	}
-	if trade.Reason != "止损(收盘≤-8%)" {
-		t.Fatalf("reason = %s, want 止损(收盘≤-8%%)(优先于20日线)", trade.Reason)
+	if trade.Reason != "止损(收盘≤-3%)" {
+		t.Fatalf("reason = %s, want 止损(收盘≤-3%%)", trade.Reason)
 	}
 }
 
@@ -204,9 +201,13 @@ func TestPortfolioEqualWeight(t *testing.T) {
 			t.Fatalf("trade = %+v, want open", trade)
 		}
 	}
-	// 第一笔 5000 股(目标 50000);第二笔因费率+等权整手截断降为 4900 股
-	if trades[0].Shares != 5000 || trades[1].Shares != 4900 {
-		t.Fatalf("shares = %d/%d, want 5000/4900(费率导致第二笔整手截断)", trades[0].Shares, trades[1].Shares)
+	// 000001 先买 5000 股(目标 50000);000002 因费率+等权整手截断降为 4900 股
+	shares := map[string]int{}
+	for _, trade := range trades {
+		shares[trade.Symbol] = trade.Shares
+	}
+	if shares["000001"] != 5000 || shares["000002"] != 4900 {
+		t.Fatalf("shares = %v, want 000001:5000/000002:4900(费率导致第二笔整手截断)", shares)
 	}
 }
 
@@ -220,7 +221,7 @@ func TestPortfolioDuplicateSignal(t *testing.T) {
 	}
 	sim := newPortfolioSimulator(portfolioSimConfig{InitialCash: 10000, MaxPositions: 2})
 	sim.onDayOpen(20260105, "2026-01-05", klines, []portfolioPendingBuy{pfBuy("000001", 90, 20260104, "策略A")})
-	sim.onDayClose(20260105, klines)
+	sim.onDayClose(20260105, historicalDateText(20260105), klines)
 	sim.onDayOpen(20260106, "2026-01-06", klines, []portfolioPendingBuy{pfBuy("000001", 95, 20260105, "策略A")})
 
 	trades := pfTrades(t, sim, "run1")
@@ -279,9 +280,9 @@ func TestPortfolioLimitRateByBoard(t *testing.T) {
 
 // 同一股票多条策略信号只买一次:保留最高得分,拼接触发策略名。
 func TestMergePendingBuy(t *testing.T) {
-	buys := mergePendingBuy(nil, "000001", 80, 20260105, "策略A")
-	buys = mergePendingBuy(buys, "000001", 90, 20260105, "策略B")
-	buys = mergePendingBuy(buys, "000001", 70, 20260105, "策略A") // 重复策略不重复拼接
+	buys := mergePendingBuy(nil, "000001", 80, 20260105, "策略A", 0)
+	buys = mergePendingBuy(buys, "000001", 90, 20260105, "策略B", 0)
+	buys = mergePendingBuy(buys, "000001", 70, 20260105, "策略A", 0) // 重复策略不重复拼接
 	if len(buys) != 1 {
 		t.Fatalf("len(buys) = %d, want 1", len(buys))
 	}
@@ -291,7 +292,7 @@ func TestMergePendingBuy(t *testing.T) {
 	if buys[0].strategyName != "策略A·策略B" {
 		t.Fatalf("strategyName = %q, want 策略A·策略B", buys[0].strategyName)
 	}
-	buys = mergePendingBuy(buys, "000002", 70, 20260105, "策略A")
+	buys = mergePendingBuy(buys, "000002", 70, 20260105, "策略A", 0)
 	if len(buys) != 2 {
 		t.Fatalf("len(buys) = %d, want 2", len(buys))
 	}
@@ -301,8 +302,8 @@ func TestMergePendingBuy(t *testing.T) {
 func TestPortfolioSummary(t *testing.T) {
 	klines := map[string][]FormulaKline{
 		"000001": pfKline([]pfBar{
-			{date: 20260105, yclose: 10, open: 10, close: 11.3},   // 触及 +12%,激活回撤止盈(避开 10*1.12 浮点边界)
-			{date: 20260106, yclose: 11.3, open: 11.3, close: 10}, // 回撤到峰值*90%以下,触发回撤止盈
+			{date: 20260105, yclose: 10, open: 10, close: 11.3},   // 收盘 +13% ≥ 止盈10%,触发止盈
+			{date: 20260106, yclose: 11.3, open: 11.3, close: 10}, // 次日开盘 11.3 卖出
 			{date: 20260107, yclose: 10, open: 10.2, close: 10.2},
 		}),
 		"000002": pfKline([]pfBar{
@@ -315,9 +316,9 @@ func TestPortfolioSummary(t *testing.T) {
 		pfBuy("000001", 90, 20260104, "策略A"),
 		pfBuy("000002", 80, 20260104, "策略B"),
 	}) // 各 10000 → 各 1000 股
-	sim.onDayClose(20260105, klines)
+	sim.onDayClose(20260105, historicalDateText(20260105), klines)
 	sim.onDayOpen(20260106, "2026-01-06", klines, nil) // 卖出 000002
-	sim.onDayClose(20260106, klines)
+	sim.onDayClose(20260106, historicalDateText(20260106), klines)
 	sim.onDayOpen(20260107, "2026-01-07", klines, nil) // 卖出 000001
 	_ = pfTrades(t, sim, "run1")
 
@@ -331,13 +332,13 @@ func TestPortfolioSummary(t *testing.T) {
 	if summary["win_rate"] != 50.0 {
 		t.Fatalf("win_rate = %v, want 50", summary["win_rate"])
 	}
-	// 盈亏(含双边费率):A +184.8(1000股 10→10.2) / B -822.69(900股 10→9.1)
-	// → 期末权益 ≈ 19362.11,总收益 ≈ -3.19%
-	if math.Abs(summary["final_equity"].(float64)-19362.11) > 0.5 {
-		t.Fatalf("final_equity = %v, want ≈19362.11", summary["final_equity"])
+	// 盈亏(含双边费率):A +1283.70(1000股 10→11.3 止盈) / B -822.69(900股 10→9.1 止损)
+	// → 期末权益 ≈ 20461.01,总收益 ≈ +2.31%
+	if math.Abs(summary["final_equity"].(float64)-20461.01) > 0.5 {
+		t.Fatalf("final_equity = %v, want ≈20461.01", summary["final_equity"])
 	}
-	if got := summary["total_return"].(float64); math.Abs(got+3.19) > 0.1 {
-		t.Fatalf("total_return = %v, want ≈-3.19", got)
+	if got := summary["total_return"].(float64); math.Abs(got-2.31) > 0.1 {
+		t.Fatalf("total_return = %v, want ≈+2.31", got)
 	}
 }
 
@@ -351,7 +352,7 @@ func TestPortfolioCosts(t *testing.T) {
 	}
 	sim := newPortfolioSimulator(portfolioSimConfig{InitialCash: 10000, MaxPositions: 1})
 	sim.onDayOpen(20260105, "2026-01-05", klines, []portfolioPendingBuy{pfBuy("000001", 90, 20260104, "策略A")})
-	sim.onDayClose(20260105, klines)
+	sim.onDayClose(20260105, historicalDateText(20260105), klines)
 	sim.onDayOpen(20260106, "2026-01-06", klines, nil)
 
 	trade := pfSingleTrade(t, sim, "run1")

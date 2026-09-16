@@ -18,6 +18,13 @@ type HistoricalBacktestRun struct {
 	Horizons             []int    `json:"horizons"`
 	TargetReturn         float64  `json:"target_return"`
 	DrawdownLimit        float64  `json:"drawdown_limit"`
+	BuyBase              string   `json:"buy_base"`
+	BuyOffset            float64  `json:"buy_offset"`
+	SellBase             string   `json:"sell_base"`
+	TakeProfit           float64  `json:"take_profit"`
+	TrailDrawdown        float64  `json:"trail_drawdown"`
+	StopLoss             float64  `json:"stop_loss"`
+	MaxHoldDays          int      `json:"max_hold_days"`
 	TotalDates           int      `json:"total_dates"`
 	ProcessedDates       int      `json:"processed_dates"`
 	CurrentDate          string   `json:"current_date"`
@@ -92,10 +99,12 @@ func (s *AppStore) CreateHistoricalBacktestRun(run HistoricalBacktestRun) (Histo
 	run.UpdatedAt = now
 	_, err := s.db.Exec(`INSERT INTO historical_backtest_runs
 		(id,status,start_date,end_date,strategy_ids_json,strategy_snapshot_json,horizons_json,target_return,drawdown_limit,
+		buy_base,buy_offset,sell_base,take_profit,trail_drawdown,stop_loss,max_hold_days,
 		total_dates,processed_dates,current_date,candidate_symbols,signal_count,result_json,error,cancel_requested,created_at,started_at,finished_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		run.ID, run.Status, run.StartDate, run.EndDate, string(strategyIDsJSON), run.StrategySnapshotJSON, string(horizonsJSON),
-		run.TargetReturn, run.DrawdownLimit, run.TotalDates, run.ProcessedDates, run.CurrentDate, run.CandidateSymbols,
+		run.TargetReturn, run.DrawdownLimit, run.BuyBase, run.BuyOffset, run.SellBase, run.TakeProfit, run.TrailDrawdown,
+		run.StopLoss, run.MaxHoldDays, run.TotalDates, run.ProcessedDates, run.CurrentDate, run.CandidateSymbols,
 		run.SignalCount, run.ResultJSON, run.Error, boolInt(run.CancelRequested), run.CreatedAt, run.StartedAt, run.FinishedAt, run.UpdatedAt)
 	return run, err
 }
@@ -105,9 +114,10 @@ func scanHistoricalBacktestRun(scanner interface{ Scan(...interface{}) error }) 
 	var strategyIDsJSON, horizonsJSON string
 	var cancelRequested int
 	err := scanner.Scan(&run.ID, &run.Status, &run.StartDate, &run.EndDate, &strategyIDsJSON, &run.StrategySnapshotJSON,
-		&horizonsJSON, &run.TargetReturn, &run.DrawdownLimit, &run.TotalDates, &run.ProcessedDates, &run.CurrentDate,
-		&run.CandidateSymbols, &run.SignalCount, &run.ResultJSON, &run.Error, &cancelRequested, &run.CreatedAt,
-		&run.StartedAt, &run.FinishedAt, &run.UpdatedAt)
+		&horizonsJSON, &run.TargetReturn, &run.DrawdownLimit, &run.BuyBase, &run.BuyOffset, &run.SellBase,
+		&run.TakeProfit, &run.TrailDrawdown, &run.StopLoss, &run.MaxHoldDays, &run.TotalDates, &run.ProcessedDates,
+		&run.CurrentDate, &run.CandidateSymbols, &run.SignalCount, &run.ResultJSON, &run.Error, &cancelRequested,
+		&run.CreatedAt, &run.StartedAt, &run.FinishedAt, &run.UpdatedAt)
 	if err != nil {
 		return run, err
 	}
@@ -118,6 +128,7 @@ func scanHistoricalBacktestRun(scanner interface{ Scan(...interface{}) error }) 
 }
 
 const historicalBacktestRunColumns = `id,status,start_date,end_date,strategy_ids_json,strategy_snapshot_json,horizons_json,target_return,drawdown_limit,
+	buy_base,buy_offset,sell_base,take_profit,trail_drawdown,stop_loss,max_hold_days,
 	total_dates,processed_dates,"current_date",candidate_symbols,signal_count,result_json,error,cancel_requested,created_at,started_at,finished_at,updated_at`
 
 func (s *AppStore) GetHistoricalBacktestRun(id string) (HistoricalBacktestRun, error) {
