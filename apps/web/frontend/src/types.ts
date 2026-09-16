@@ -639,6 +639,43 @@ export interface HistoricalBacktestRun {
   updated_at?: string;
 }
 
+export interface HistoricalScanRun {
+  id: string;
+  status: 'running' | 'success' | 'failed' | string;
+  start_date: string;
+  end_date: string;
+  strategy_ids: string[];
+  total_strategies: number;
+  processed_strategies: number;
+  current_strategy?: string;
+  signal_count: number;
+  error?: string;
+  created_at: string;
+  started_at?: string;
+  finished_at?: string;
+  updated_at?: string;
+}
+
+export interface HistoricalScanResult {
+  id: string;
+  run_id: string;
+  strategy_id: string;
+  strategy_name: string;
+  buy_base: string;
+  sell_base: string;
+  take_profit: number;
+  trail_drawdown: number;
+  stop_loss: number;
+  max_hold_days: number;
+  total_return: number;
+  max_drawdown: number;
+  win_rate: number;
+  closed_count: number;
+  open_count: number;
+  final_equity: number;
+  created_at: string;
+}
+
 export interface HistoricalHorizonSummary {
   completed: number;
   pending: number;
