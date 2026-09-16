@@ -8,6 +8,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 )
 
 type StrategyConfig struct {
@@ -134,6 +135,23 @@ func (r *AutomationRunner) executeStrategy(ctx context.Context, strategy Strateg
 		PoolCache:     map[string]map[string]bool{},
 		FormulaByName: map[string]Formula{},
 		FormulaByID:   map[string]Formula{},
+	}
+	// 批量加载候选股票 K 线并盘中补K，与系统策略日报路径保持一致，
+	// 避免逐只串行拉取导致全市场策略超时。
+	loadSymbols := append([]string{}, symbols...)
+	if strategyUsesMarketContext(cfg) {
+		loadSymbols = append(loadSymbols, strategyBenchmarkSymbol)
+	}
+	klines, loadErrors := r.loadSystemBatchKlines(ctx, loadSymbols, cfg.CalcCount)
+	for symbol, reason := range r.patchIntradayKlines(ctx, klines, time.Now()) {
+		loadErrors[symbol] = reason
+	}
+	result.KlineCache = klines
+	for symbol, reason := range loadErrors {
+		if symbol == strategyBenchmarkSymbol {
+			continue
+		}
+		result.Errors[symbol] = reason
 	}
 	if err := r.prepareStrategyMarketContext(ctx, &result); err != nil {
 		return StrategyRunResult{}, err
@@ -449,7 +467,9 @@ func (r *AutomationRunner) evaluateStrategySymbol(ctx context.Context, strategy 
 	item := StrategySelectionItem{Symbol: symbol, Hit: true}
 	rows, err := r.strategyKline(ctx, result, symbol)
 	if err != nil {
-		result.Errors[symbol] = err.Error()
+		if _, exists := result.Errors[symbol]; !exists {
+			result.Errors[symbol] = err.Error()
+		}
 		return item, false
 	}
 	if len(rows) > 0 {
@@ -488,15 +508,13 @@ func (r *AutomationRunner) evaluateStrategySymbol(ctx context.Context, strategy 
 }
 
 func (r *AutomationRunner) strategyKline(ctx context.Context, result *StrategyRunResult, symbol string) ([]FormulaKline, error) {
-	if rows, ok := result.KlineCache[symbol]; ok {
+	if rows, ok := result.KlineCache[symbol]; ok && len(rows) > 0 {
 		return rows, nil
 	}
-	rows, err := loadFormulaKline(ctx, symbol, result.Config.Period, result.Config.CalcCount)
-	if err != nil {
-		return nil, err
+	if reason, ok := result.Errors[symbol]; ok {
+		return nil, errors.New(reason)
 	}
-	result.KlineCache[symbol] = rows
-	return rows, nil
+	return nil, fmt.Errorf("K线未加载: %s", symbol)
 }
 
 func (r *AutomationRunner) evaluateFactor(result *StrategyRunResult, symbol string, rows []FormulaKline, rule StrategyFactorRule, filter bool) StrategyFactorResult {
