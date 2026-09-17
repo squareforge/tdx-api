@@ -65,6 +65,7 @@ const workspaceCodes: Record<string, string> = {
 };
 
 const selectionWorkspaceKeys = new Set(selectionWorkspaces.map((workspace) => workspace.key));
+const primaryWorkspaceKeys = new Set(primaryWorkspaces.map((workspace) => workspace.key));
 
 function Placeholder({ name }: { name: string }) {
   return (
@@ -112,7 +113,10 @@ function WorkspaceContent({ workspace }: { workspace: string }) {
 }
 
 export default function App() {
-  const [activePrimaryWorkspace, setActivePrimaryWorkspace] = useState('market');
+  const [activePrimaryWorkspace, setActivePrimaryWorkspace] = useState(() => {
+    const savedWorkspace = window.localStorage.getItem('tdx.activePrimaryWorkspace');
+    return savedWorkspace && primaryWorkspaceKeys.has(savedWorkspace) ? savedWorkspace : 'market';
+  });
   const [activeSelectionWorkspace, setActiveSelectionWorkspace] = useState(() => {
     const savedWorkspace = window.localStorage.getItem('tdx.activeSelectionWorkspace');
     return savedWorkspace && selectionWorkspaceKeys.has(savedWorkspace) ? savedWorkspace : 'selectionResults';
@@ -148,6 +152,10 @@ export default function App() {
   useEffect(() => {
     window.localStorage.setItem('tdx.activeSelectionWorkspace', activeSelectionWorkspace);
   }, [activeSelectionWorkspace]);
+
+  useEffect(() => {
+    window.localStorage.setItem('tdx.activePrimaryWorkspace', activePrimaryWorkspace);
+  }, [activePrimaryWorkspace]);
 
   const selectionTabItems = selectionWorkspaces.map((workspace) => ({
     key: workspace.key,

@@ -23,6 +23,7 @@ RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple --tru
 
 COPY services/hikyuu-data-service/app.py ./app.py
 COPY services/hikyuu-data-service/importdata_runner.py ./importdata_runner.py
+COPY services/hikyuu-data-service/freshness_runner.py ./freshness_runner.py
 COPY services/hikyuu-data-service/query_runner.py ./query_runner.py
 COPY services/hikyuu-data-service/research_runner.py ./research_runner.py
 

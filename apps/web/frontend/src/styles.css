@@ -9716,6 +9716,56 @@ textarea::placeholder {
 .hikyuu-research-strip .is-warn > .anticon { color: var(--warning); }
 .hikyuu-quality-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
 
+.hikyuu-sync-progress {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--primary-soft);
+}
+
+.hikyuu-sync-progress-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.hikyuu-sync-progress-head span { color: var(--text); font-weight: 600; }
+.hikyuu-sync-progress-head strong { color: var(--primary); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px; }
+.hikyuu-sync-progress-head small { color: var(--text-soft); }
+
+.hikyuu-sync-phases { display: grid; gap: 4px; }
+
+.hikyuu-sync-phase {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.hikyuu-sync-phase > span { color: var(--text-soft); font-size: 12px; }
+.hikyuu-sync-phase .ant-progress { margin: 0; }
+.hikyuu-sync-phase .ant-tag { margin: 0; width: fit-content; }
+
+.hikyuu-sync-scope {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.hikyuu-sync-scope-note {
+  margin: 0 0 4px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.hikyuu-sync-scope .hikyuu-sync-scope-tag {
+  margin-left: 6px;
+}
+
 .kline-indicator-note {
   display: grid;
   gap: 8px;

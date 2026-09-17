@@ -24,13 +24,15 @@ var (
 	automationRunner *AutomationRunner
 )
 
-func runSystemStrategyBatchOnWorker(ctx context.Context) (AutomationRun, error) {
-	endpoint := serviceURL("SELECTION_WORKER_URL", "http://selection-worker:8082") + "/api/automations/" + SystemStrategyDailyBatchTaskID + "/run"
+func runAutomationTaskOnWorker(ctx context.Context, taskID string, timeout time.Duration) (AutomationRun, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	endpoint := serviceURL("SELECTION_WORKER_URL", "http://selection-worker:8082") + "/api/automations/" + taskID + "/run"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(nil))
 	if err != nil {
 		return AutomationRun{}, err
 	}
-	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	resp, err := (&http.Client{Timeout: timeout}).Do(req)
 	if err != nil {
 		return AutomationRun{}, err
 	}
@@ -58,6 +60,10 @@ func runSystemStrategyBatchOnWorker(ctx context.Context) (AutomationRun, error) 
 		return AutomationRun{}, err
 	}
 	return run, nil
+}
+
+func runSystemStrategyBatchOnWorker(ctx context.Context) (AutomationRun, error) {
+	return runAutomationTaskOnWorker(ctx, SystemStrategyDailyBatchTaskID, 15*time.Second)
 }
 
 // notifySelectionWorkerReload asks the selection-worker scheduler to reload its
@@ -678,9 +684,14 @@ func handleAutomationOperations(w http.ResponseWriter, r *http.Request) {
 		}
 		var run AutomationRun
 		var err error
-		if id == SystemStrategyDailyBatchTaskID {
+		switch id {
+		case SystemStrategyDailyBatchTaskID:
 			run, err = runSystemStrategyBatchOnWorker(r.Context())
-		} else {
+		case FixedCloseSyncTaskID:
+			run, err = runAutomationTaskOnWorker(r.Context(), id, 2*time.Hour)
+		case FixedSelectionTrackingTaskID:
+			run, err = runAutomationTaskOnWorker(r.Context(), id, 20*time.Minute)
+		default:
 			run, err = automationRunner.RunTask(r.Context(), id)
 		}
 		if err != nil {

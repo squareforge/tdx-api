@@ -898,6 +898,7 @@ func registerMarketRoutes() {
 	http.HandleFunc("/api/tasks", handleListTasks)
 	http.HandleFunc("/api/tasks/", handleTaskOperations)
 	http.HandleFunc("/api/hikyuu/kline/batch", handleHikyuuKlineBatch)
+	http.HandleFunc("/api/hikyuu/freshness", handleHikyuuFreshness)
 	http.HandleFunc("/api/hikyuu/tasks/after-close-sync", handleHikyuuAfterCloseSync)
 	http.HandleFunc("/api/hikyuu/tasks/", handleHikyuuTask)
 }

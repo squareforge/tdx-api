@@ -1,5 +1,6 @@
 import copy
 import ast
+import io
 import json
 import os
 import subprocess
@@ -28,13 +29,27 @@ CONFIG_DIR = Path(os.getenv("HIKYUU_CONFIG_DIR", "/root/.hikyuu"))
 LOG_DIR = Path(os.getenv("HIKYUU_LOG_DIR", "/app/logs"))
 PYTHON_BIN = os.getenv("HIKYUU_PYTHON", "python3")
 IMPORT_SCRIPT = os.getenv("HIKYUU_IMPORT_SCRIPT", "/app/importdata_runner.py")
+FRESHNESS_SCRIPT = os.getenv("HIKYUU_FRESHNESS_SCRIPT", "/app/freshness_runner.py")
 QUERY_SCRIPT = os.getenv("HIKYUU_QUERY_SCRIPT", "/app/query_runner.py")
 RESEARCH_SCRIPT = os.getenv("HIKYUU_RESEARCH_SCRIPT", "/app/research_runner.py")
 QUERY_TIMEOUT_SECONDS = int(os.getenv("HIKYUU_QUERY_TIMEOUT_SECONDS", "120"))
+FRESHNESS_MIN_COVERAGE = float(os.getenv("HIKYUU_FRESHNESS_MIN_COVERAGE", "0.95"))
 SCHEDULER_ENABLED = os.getenv("HIKYUU_SCHEDULER_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 AFTER_CLOSE_CRON = os.getenv("HIKYUU_AFTER_CLOSE_CRON", "30 16 * * 1-5")
 MAX_TASKS = int(os.getenv("HIKYUU_MAX_TASKS", "200"))
+MAX_CONCURRENT_TASKS = int(os.getenv("HIKYUU_MAX_CONCURRENT_TASKS", "2"))
 DATA_REVISION_FILE = STOCKS_DIR / ".data-revision"
+SYNC_SCOPE_KEYS = ("day", "min", "min5", "trans", "time", "finance", "block", "weight")
+SYNC_SCOPE_LABELS = {
+    "day": "日线",
+    "min": "1分钟线",
+    "min5": "5分钟线",
+    "trans": "分笔",
+    "time": "分时",
+    "finance": "财务",
+    "block": "板块",
+    "weight": "权重",
+}
 INDICATOR_CACHE_SECONDS = int(os.getenv("HIKYUU_INDICATOR_CACHE_SECONDS", "60"))
 indicator_cache: Dict[str, Any] = {}
 indicator_cache_lock = threading.Lock()
@@ -57,6 +72,7 @@ class SyncRequest(BaseModel):
     trans_start_date: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     time_start_date: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     use_tdx_number: int = Field(default=10, ge=1, le=32)
+    expected_date: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
 
 
 class KlineBatchRequest(BaseModel):
@@ -85,7 +101,9 @@ tasks: Dict[str, Dict[str, Any]] = {}
 task_order: List[str] = []
 task_lock = threading.Lock()
 data_access_lock = threading.Lock()
-active_task_id: Optional[str] = None
+data_state = threading.Condition()
+active_imports = 0
+active_queries = 0
 scheduler: Optional[BackgroundScheduler] = None
 
 
@@ -102,6 +120,12 @@ def ensure_dirs() -> None:
     (STOCKS_DIR / "tmp").mkdir(parents=True, exist_ok=True)
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def write_text_atomic(path: Path, content: str) -> None:
+    temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex[:8]}.tmp")
+    temp_path.write_text(content, encoding="utf-8")
+    os.replace(temp_path, path)
 
 
 def hikyuu_version() -> str:
@@ -250,10 +274,10 @@ sh_trans = {datadir}/sh_trans.h5
 sz_trans = {datadir}/sz_trans.h5
 bj_trans = {datadir}/bj_trans.h5
 """.strip()
-    (CONFIG_DIR / "hikyuu.ini").write_text(content + "\n", encoding="utf-8")
+    write_text_atomic(CONFIG_DIR / "hikyuu.ini", content + "\n")
 
 
-def build_import_config(request: SyncRequest) -> None:
+def build_import_config(request: SyncRequest, task_id: str) -> None:
     ensure_dirs()
     parser = ConfigParser()
     parser["quotation"] = {
@@ -323,8 +347,12 @@ def build_import_config(request: SyncRequest) -> None:
         "timeline_max": "100000",
         "trans_max": "100000",
     }
-    with (CONFIG_DIR / "importdata-gui.ini").open("w", encoding="utf-8") as fh:
-        parser.write(fh)
+    buffer = io.StringIO()
+    parser.write(buffer)
+    content = buffer.getvalue()
+    # 每个任务使用独立配置文件，避免并行同步时互相覆盖；共享文件保留最近一次配置便于排查
+    write_text_atomic(CONFIG_DIR / f"importdata-gui-{task_id}.ini", content)
+    write_text_atomic(CONFIG_DIR / "importdata-gui.ini", content)
     write_hikyuu_ini()
 
 
@@ -347,14 +375,80 @@ def task_snapshot(task: Dict[str, Any]) -> Dict[str, Any]:
         try:
             lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
             item["log_tail"] = lines[-80:]
-            item.update(parse_task_progress(item["log_tail"]))
+            item.update(parse_task_progress(lines))
         except OSError:
             item["log_tail"] = []
-            item.update({"progress": None, "stage": None, "message": None})
+            item.update({"progress": None, "stage": None, "message": None, "phases": _empty_phases()})
     else:
         item["log_tail"] = []
-        item.update({"progress": None, "stage": None, "message": None})
+        item.update({"progress": None, "stage": None, "message": None, "phases": _empty_phases()})
+    if item.get("status") == "failed":
+        item.update({"progress": 100, "stage": "失败", "message": item.get("error") or "同步失败"})
     return item
+
+
+def request_scope(request: Dict[str, Any]) -> Dict[str, bool]:
+    return {key: bool(request.get(key)) for key in SYNC_SCOPE_KEYS if request.get(key)}
+
+
+def scope_label(scope: Dict[str, bool]) -> str:
+    labels = [SYNC_SCOPE_LABELS[key] for key in SYNC_SCOPE_KEYS if scope.get(key)]
+    return "、".join(labels)
+
+
+def _active_items_locked() -> List[Dict[str, Any]]:
+    return [
+        tasks[task_id]
+        for task_id in task_order
+        if tasks.get(task_id, {}).get("status") in ("pending", "running")
+    ]
+
+
+def active_task_items() -> List[Dict[str, Any]]:
+    with task_lock:
+        return _active_items_locked()
+
+
+def find_scope_conflict(scope: Dict[str, bool], active_items: List[Dict[str, Any]]) -> Optional[str]:
+    overlap: List[str] = []
+    for item in active_items:
+        running_scope = request_scope(item.get("request") or {})
+        for key in SYNC_SCOPE_KEYS:
+            if scope.get(key) and running_scope.get(key) and key not in overlap:
+                overlap.append(key)
+    if not overlap:
+        return None
+    return "以下数据正在其他任务中同步，请等待完成：" + "、".join(SYNC_SCOPE_LABELS[key] for key in overlap)
+
+
+def begin_import_run() -> None:
+    global active_imports
+    with data_state:
+        while active_queries > 0:
+            data_state.wait()
+        active_imports += 1
+
+
+def end_import_run() -> None:
+    global active_imports
+    with data_state:
+        active_imports -= 1
+        data_state.notify_all()
+
+
+def begin_query_process() -> None:
+    global active_queries
+    with data_state:
+        if active_imports > 0:
+            raise HTTPException(status_code=503, detail="hikyuu 数据同步中，请稍后重试")
+        active_queries += 1
+
+
+def end_query_process() -> None:
+    global active_queries
+    with data_state:
+        active_queries -= 1
+        data_state.notify_all()
 
 
 def run_json_process(script: str, arguments: List[str]) -> Any:
@@ -363,11 +457,8 @@ def run_json_process(script: str, arguments: List[str]) -> Any:
     env["HIKYUU_STOCKS_DIR"] = str(STOCKS_DIR)
     env["HIKYUU_CONFIG_DIR"] = str(CONFIG_DIR)
     env["TZ"] = TZ_NAME
+    begin_query_process()
     try:
-        with task_lock:
-            sync_running = active_task_id is not None
-        if sync_running:
-            raise HTTPException(status_code=503, detail="hikyuu 数据同步中，请稍后重试")
         with data_access_lock:
             completed = subprocess.run(
                 [PYTHON_BIN, script, *arguments],
@@ -381,6 +472,8 @@ def run_json_process(script: str, arguments: List[str]) -> Any:
         raise HTTPException(status_code=504, detail="hikyuu 查询超时") from exc
     except OSError as exc:
         raise HTTPException(status_code=503, detail=f"hikyuu 查询进程启动失败: {exc}") from exc
+    finally:
+        end_query_process()
 
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip() or "hikyuu 查询失败"
@@ -396,66 +489,170 @@ def run_json_process(script: str, arguments: List[str]) -> Any:
     raise HTTPException(status_code=503, detail="hikyuu 查询返回格式错误")
 
 
+KTYPE_TO_PHASE = {"DAY": "day", "1MIN": "min1", "5MIN": "min5"}
+MARKET_COUNT = 3  # SH/SZ/BJ
+
+
+def _empty_phases() -> Dict[str, Dict[str, Any]]:
+    return {
+        "day": {"label": "日线", "progress": None, "done": False},
+        "min1": {"label": "1分钟", "progress": None, "done": False},
+        "min5": {"label": "5分钟", "progress": None, "done": False},
+        "finance": {"label": "财务", "progress": None, "done": False},
+        "block": {"label": "板块", "progress": None, "done": False},
+        "weight": {"label": "权重", "progress": None, "done": False},
+    }
+
+
 def parse_task_progress(lines: List[str]) -> Dict[str, Any]:
-    result: Dict[str, Any] = {"progress": None, "stage": None, "message": None}
-    for raw_line in reversed(lines):
+    result: Dict[str, Any] = {"progress": None, "stage": None, "message": None, "phases": _empty_phases()}
+    finished_markets: Dict[str, set] = {}
+    latest_progress: Optional[tuple] = None  # (phase_key, progress)
+
+    for raw_line in lines:
         text = raw_line.strip()
-        if not text:
+        if not text or not text.startswith("["):
             continue
-        if text.startswith("["):
-            try:
-                event = ast.literal_eval(text)
-            except (ValueError, SyntaxError):
-                event = None
-            if isinstance(event, list) and event and event[0] == "HDF5_IMPORT":
-                kind = str(event[1]) if len(event) > 1 else ""
-                if kind == "THREAD":
-                    status = str(event[2]) if len(event) > 2 else ""
-                    if status == "FINISHED":
-                        return {"progress": 100, "stage": "完成", "message": "同步完成"}
-                    if status == "FAILURE":
-                        message = str(event[3]) if len(event) > 3 else "同步失败"
-                        return {"progress": 100, "stage": "失败", "message": message}
-                if kind in {"IMPORT_KDATA", "IMPORT_TRANS", "IMPORT_TIME"}:
-                    sub_stage = str(event[2]) if len(event) > 2 else kind
-                    progress = event[3] if len(event) > 3 else None
-                    if isinstance(progress, (int, float)):
-                        return {
-                            "progress": max(0, min(100, int(progress))),
-                            "stage": sub_stage,
-                            "message": f"{sub_stage} {int(progress)}%",
-                        }
-                    return {"progress": None, "stage": sub_stage, "message": sub_stage}
-                if kind == "IMPORT_FINANCE":
-                    progress = event[2] if len(event) > 2 else None
-                    if isinstance(progress, (int, float)):
-                        return {
-                            "progress": max(0, min(100, int(progress))),
-                            "stage": "财务",
-                            "message": f"财务 {int(progress)}%",
-                        }
-                    return {"progress": None, "stage": "财务", "message": "财务同步中"}
-                if kind == "IMPORT_WEIGHT":
-                    label = str(event[1]) if len(event) > 1 else "权息"
-                    total = event[2] if len(event) > 2 else None
-                    message = f"{label} 同步中"
-                    if total is not None:
-                        message = f"{label} {total}"
-                    return {"progress": None, "stage": label, "message": message}
-                if kind == "IMPORT_BLOCKINFO":
-                    label = str(event[2]) if len(event) > 2 else "板块"
-                    return {"progress": None, "stage": label, "message": label}
-                if kind == "INFO":
-                    message = str(event[2]) if len(event) > 2 else "同步中"
-                    return {"progress": None, "stage": "信息", "message": message}
-        result = {"progress": None, "stage": "信息", "message": text}
-        if "导入完毕" in text:
-            return {"progress": 100, "stage": "完成", "message": "同步完成"}
+        try:
+            event = ast.literal_eval(text)
+        except (ValueError, SyntaxError):
+            continue
+        if not (isinstance(event, list) and event and event[0] == "HDF5_IMPORT"):
+            continue
+        kind = str(event[1]) if len(event) > 1 else ""
+
+        if kind == "THREAD":
+            status = str(event[2]) if len(event) > 2 else ""
+            if status == "FINISHED":
+                result["progress"] = 100
+                result["stage"] = "完成"
+                result["message"] = "同步完成"
+                for phase in result["phases"].values():
+                    phase["done"] = True
+                    phase["progress"] = 100
+            elif status == "FAILURE":
+                result["progress"] = 100
+                result["stage"] = "失败"
+                result["message"] = str(event[3]) if len(event) > 3 else "同步失败"
+            continue
+
+        if kind == "IMPORT_KDATA":
+            sub = str(event[2]) if len(event) > 2 else ""
+            if sub == "FINISHED":
+                market = str(event[3]) if len(event) > 3 else ""
+                ktype = str(event[4]) if len(event) > 4 else ""
+                phase = KTYPE_TO_PHASE.get(ktype)
+                if phase and market:
+                    finished_markets.setdefault(phase, set()).add(market)
+                continue
+            phase = KTYPE_TO_PHASE.get(sub)
+            progress = event[3] if len(event) > 3 else None
+            if phase and isinstance(progress, (int, float)):
+                result["phases"][phase]["progress"] = int(progress)
+                latest_progress = (phase, int(progress))
+            continue
+
+        if kind == "IMPORT_FINANCE":
+            progress = event[2] if len(event) > 2 else None
+            if isinstance(progress, (int, float)):
+                result["phases"]["finance"]["progress"] = int(progress)
+                latest_progress = ("finance", int(progress))
+            continue
+
+        if kind == "IMPORT_WEIGHT":
+            latest_progress = ("weight", None)
+            continue
+
+        if kind == "IMPORT_BLOCKINFO":
+            latest_progress = ("block", None)
+            continue
+
+    for phase, markets in finished_markets.items():
+        if len(markets) >= MARKET_COUNT:
+            result["phases"][phase]["done"] = True
+            result["phases"][phase]["progress"] = 100
+
+    if latest_progress is not None:
+        phase_key, progress = latest_progress
+        label = result["phases"][phase_key]["label"]
+        result["stage"] = label
+        if progress is not None:
+            result["progress"] = progress
+            result["message"] = f"{label} {progress}%"
+        else:
+            result["message"] = f"{label} 同步中"
+
     return result
 
 
+IMPORT_FAILURE_MARKERS = (
+    "'HDF5_IMPORT', 'THREAD', 'FAILURE'",
+    "ImportPytdxToH5Task failed!",
+    "Unable to open/create file",
+    "All process is finished, but some tasks are running!",
+    "连续失败20个股票",
+    "已停止导入",
+    "停止导入",
+)
+
+
+def detect_import_failure(log_text: str) -> Optional[str]:
+    for line in log_text.splitlines():
+        if any(marker in line for marker in IMPORT_FAILURE_MARKERS):
+            return line.strip()[-1000:] or "hikyuu import reported failure"
+    return None
+
+
+def parse_json_output(output: str) -> Any:
+    for line in reversed([line.strip() for line in output.splitlines() if line.strip()]):
+        try:
+            return json.loads(line)
+        except json.JSONDecodeError:
+            continue
+    raise RuntimeError("hikyuu freshness check returned invalid JSON")
+
+
+def run_freshness_check(expected_date: str, env: Dict[str, str]) -> Dict[str, Any]:
+    try:
+        completed = subprocess.run(
+            [
+                PYTHON_BIN,
+                FRESHNESS_SCRIPT,
+                "--expected-date",
+                expected_date,
+                "--min-coverage",
+                str(FRESHNESS_MIN_COVERAGE),
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=QUERY_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("hikyuu freshness check timed out") from exc
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "unknown error"
+        raise RuntimeError(f"hikyuu freshness check failed: {detail[-1000:]}")
+    result = parse_json_output(completed.stdout)
+    if not isinstance(result, dict):
+        raise RuntimeError("hikyuu freshness check returned a non-object result")
+    return result
+
+
+def freshness_failure_message(result: Dict[str, Any]) -> str:
+    details = []
+    for market, item in result.get("markets", {}).items():
+        if not item.get("ok"):
+            coverage = float(item.get("coverage") or 0) * 100
+            details.append(
+                f"{market} latest={item.get('latest_date') or 'none'} coverage={coverage:.1f}%"
+            )
+    suffix = ", ".join(details) or "unknown market state"
+    return f"K线完整性校验失败（目标交易日 {result.get('expected_date') or 'unknown'}）：{suffix}"
+
+
 def run_task(task_id: str) -> None:
-    global active_task_id
     with task_lock:
         task = tasks[task_id]
         task["status"] = "running"
@@ -466,13 +663,14 @@ def run_task(task_id: str) -> None:
     env["HOME"] = str(CONFIG_DIR.parent if CONFIG_DIR.name == ".hikyuu" else Path("/root"))
     env["HIKYUU_STOCKS_DIR"] = str(STOCKS_DIR)
     env["HIKYUU_CONFIG_DIR"] = str(CONFIG_DIR)
+    env["HIKYUU_IMPORT_CONFIG"] = str(CONFIG_DIR / f"importdata-gui-{task_id}.ini")
     env["TZ"] = TZ_NAME
 
-    data_access_lock.acquire()
+    begin_import_run()
     try:
-        build_import_config(request)
+        build_import_config(request, task_id)
         with log_path.open("a", encoding="utf-8") as log:
-            log.write(f"[{now_text()}] task {task_id} started: {task['type']}\n")
+            log.write(f"[{now_text()}] task {task_id} started: {task['type']} · {scope_label(request_scope(task['request']))}\n")
             log.flush()
             proc = subprocess.Popen(
                 [PYTHON_BIN, IMPORT_SCRIPT],
@@ -487,43 +685,70 @@ def run_task(task_id: str) -> None:
                 log_text = log_path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 log_text = ""
-            failure_markers = (
-                "'HDF5_IMPORT', 'THREAD', 'FAILURE'",
-                "ImportPytdxToH5Task failed!",
-                "Unable to open/create file",
-                "All process is finished, but some tasks are running!",
-            )
-            import_failed = any(marker in log_text for marker in failure_markers)
+            failure_error = detect_import_failure(log_text)
+            freshness = None
+            task_error = failure_error
+            if exit_code == 0 and task_error is None and request.expected_date:
+                try:
+                    freshness = run_freshness_check(request.expected_date, env)
+                    for market, item in freshness.get("markets", {}).items():
+                        log.write(
+                            "K线完整性校验 "
+                            f"{market}: latest={item.get('latest_date')} "
+                            f"fresh={item.get('fresh_count')}/{item.get('total')} "
+                            f"coverage={float(item.get('coverage') or 0) * 100:.1f}% "
+                            f"ok={item.get('ok')}\n"
+                        )
+                    log.flush()
+                    if not freshness.get("ok"):
+                        task_error = freshness_failure_message(freshness)
+                except Exception as exc:
+                    task_error = str(exc)
             with task_lock:
                 task["exit_code"] = exit_code
                 task["ended_at"] = now_text()
-                if exit_code == 0 and not import_failed:
+                task["freshness"] = freshness
+                if exit_code == 0 and task_error is None:
                     task["status"] = "success"
                     try:
-                        DATA_REVISION_FILE.write_text(f"{uuid.uuid4().hex[:12]}\n", encoding="utf-8")
+                        write_text_atomic(DATA_REVISION_FILE, f"{uuid.uuid4().hex[:12]}\n")
                     except OSError:
                         pass
                 else:
                     task["status"] = "failed"
-                    task["error"] = "hikyuu import reported failure" if import_failed else f"import process exited with code {exit_code}"
-            log.write(f"[{now_text()}] task {task_id} ended: exit_code={exit_code}\n")
+                    task["error"] = task_error or f"import process exited with code {exit_code}"
+                final_status = task["status"]
+            log.write(f"[{now_text()}] task {task_id} ended: status={final_status} exit_code={exit_code}\n")
     except Exception as exc:
         with task_lock:
             task["status"] = "failed"
             task["error"] = str(exc)
             task["ended_at"] = now_text()
     finally:
-        data_access_lock.release()
-        with task_lock:
-            if active_task_id == task_id:
-                active_task_id = None
+        end_import_run()
 
 
 def create_task(task_type: str, request: SyncRequest) -> Dict[str, Any]:
-    global active_task_id
+    payload = request_dict(request)
+    scope = request_scope(payload)
+    if not scope:
+        raise HTTPException(status_code=400, detail="未选择同步内容")
+
     with task_lock:
-        if active_task_id is not None:
-            raise HTTPException(status_code=409, detail=f"task already running: {active_task_id}")
+        active_items = _active_items_locked()
+        if len(active_items) >= MAX_CONCURRENT_TASKS:
+            raise HTTPException(
+                status_code=409,
+                detail=f"并发同步任务已达上限（{MAX_CONCURRENT_TASKS}），请等待现有任务完成",
+            )
+        conflict = find_scope_conflict(scope, active_items)
+        if conflict:
+            raise HTTPException(status_code=409, detail=conflict)
+        # 代码表导入由已有任务负责，并行任务跳过，避免重复写入 stock.db
+        if any((item.get("request") or {}).get("stock") for item in active_items):
+            payload["stock"] = False
+        if any((item.get("request") or {}).get("fund") for item in active_items):
+            payload["fund"] = False
 
         task_id = str(uuid.uuid4())
         log_file = LOG_DIR / f"{task_id}.log"
@@ -536,11 +761,10 @@ def create_task(task_type: str, request: SyncRequest) -> Dict[str, Any]:
             "exit_code": None,
             "error": None,
             "log_file": str(log_file),
-            "request": request_dict(request),
+            "request": payload,
         }
         tasks[task_id] = task
         task_order.append(task_id)
-        active_task_id = task_id
         trim_tasks()
 
     thread = threading.Thread(target=run_task, args=(task_id,), daemon=True)
@@ -651,6 +875,18 @@ def quality(code: str = Query(""), period: str = Query("day")) -> Dict[str, Any]
     return {"code": 0, "message": "success", "data": dataset_quality(normalized_code, normalized_period, sample)}
 
 
+@app.get("/api/hikyuu/freshness")
+def freshness(expected_date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$")) -> Dict[str, Any]:
+    ensure_dirs()
+    if not (CONFIG_DIR / "hikyuu.ini").exists():
+        write_hikyuu_ini()
+    data = run_json_process(FRESHNESS_SCRIPT, [
+        "--expected-date", expected_date,
+        "--min-coverage", str(FRESHNESS_MIN_COVERAGE),
+    ])
+    return {"code": 0, "message": "success", "data": data}
+
+
 @app.post("/api/hikyuu/indicators")
 def indicators(payload: Dict[str, Any]) -> Dict[str, Any]:
     cache_key = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
@@ -682,6 +918,7 @@ def backtest(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 @app.get("/api/hikyuu/health")
 def health() -> Dict[str, Any]:
+    active_ids = [item["id"] for item in active_task_items()]
     return {
         "code": 0,
         "message": "success",
@@ -693,7 +930,8 @@ def health() -> Dict[str, Any]:
             "log_dir": str(LOG_DIR),
             "scheduler_enabled": SCHEDULER_ENABLED,
             "after_close_cron": AFTER_CLOSE_CRON,
-            "active_task_id": active_task_id,
+            "active_task_id": active_ids[0] if active_ids else None,
+            "active_task_ids": active_ids,
             "hikyuu_version": hikyuu_version(),
             "data_revision": data_revision(),
             "quality_status": dataset_quality()["status"],

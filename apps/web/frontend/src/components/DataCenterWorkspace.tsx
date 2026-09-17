@@ -1,4 +1,4 @@
-import { Button, Card, Checkbox, Form, Input, InputNumber, Select, Space, Statistic, Table, Tag, Typography, message } from 'antd';
+import { Button, Card, Checkbox, Form, Input, InputNumber, Modal, Progress, Select, Space, Statistic, Table, Tag, Typography, message } from 'antd';
 import { CheckCircleOutlined, DatabaseOutlined, ReloadOutlined, SearchOutlined, WarningOutlined } from '@ant-design/icons';
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '../lib/api';
@@ -22,6 +22,20 @@ function directoryRowKey(record: Record<string, unknown>) {
   return String(record.code || record.Code || record.value || record.name || record.Name || JSON.stringify(record));
 }
 
+const SYNC_SCOPE_ITEMS = [
+  { key: 'day', label: '日线' },
+  { key: 'min', label: '1分钟线' },
+  { key: 'min5', label: '5分钟线' },
+  { key: 'finance', label: '财务' },
+  { key: 'block', label: '板块' },
+  { key: 'weight', label: '权重' }
+];
+
+function taskScopeKeys(task: Record<string, unknown>): string[] {
+  const request = (task.request || {}) as Record<string, unknown>;
+  return SYNC_SCOPE_ITEMS.filter((item) => request[item.key]).map((item) => item.key);
+}
+
 export function DataCenterWorkspace() {
   const [overview, setOverview] = useState<Record<string, unknown>>({});
   const [directoryRows, setDirectoryRows] = useState<Array<Record<string, unknown>>>([]);
@@ -40,6 +54,11 @@ export function DataCenterWorkspace() {
   const [hikyuuStatus, setHikyuuStatus] = useState<unknown>('尚未查询');
   const [hikyuuMetadata, setHikyuuMetadata] = useState<Record<string, unknown>>({});
   const [hikyuuQuality, setHikyuuQuality] = useState<Record<string, unknown>>({});
+  const [syncModalOpen, setSyncModalOpen] = useState(false);
+  const [syncScope, setSyncScope] = useState<Record<string, boolean>>({ day: true, min: false, min5: false, finance: true, block: true, weight: true });
+  const [syncTasks, setSyncTasks] = useState<Array<Record<string, unknown>>>([]);
+  const syncingKeys = new Set(syncTasks.flatMap((task) => taskScopeKeys(task)));
+  const syncingLabels = SYNC_SCOPE_ITEMS.filter((item) => syncingKeys.has(item.key)).map((item) => item.label);
 
   const loadOverview = useCallback(async () => {
     try {
@@ -136,6 +155,57 @@ export function DataCenterWorkspace() {
     }
   }
 
+  function openSyncModal() {
+    // 正在同步的数据项自动取消勾选，避免重复提交后被后端拒绝
+    setSyncScope((prev) => {
+      const next = { ...prev };
+      for (const task of syncTasks) {
+        for (const key of taskScopeKeys(task)) next[key] = false;
+      }
+      return next;
+    });
+    setSyncModalOpen(true);
+    void refreshSyncTasks();
+  }
+
+  async function startFullSync() {
+    const payload: Record<string, unknown> = { use_tdx_number: 20 };
+    const selected: string[] = [];
+    for (const item of SYNC_SCOPE_ITEMS) {
+      const enabled = Boolean(syncScope[item.key]) && !syncingKeys.has(item.key);
+      payload[item.key] = enabled;
+      if (enabled) selected.push(item.label);
+    }
+    if (!selected.length) {
+      message.warning('请至少勾选一项需要同步的数据');
+      return;
+    }
+    setSyncModalOpen(false);
+    try {
+      await apiFetch('/api/hikyuu/tasks/full-sync', { method: 'POST', body: JSON.stringify(payload) });
+      message.success(syncTasks.length ? `已新增并行同步任务：${selected.join('、')}` : `已开始同步：${selected.join('、')}`);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '同步任务创建失败');
+    }
+    void refreshSyncTasks();
+    void loadHikyuu('/api/hikyuu/tasks');
+  }
+
+  const refreshSyncTasks = useCallback(async () => {
+    try {
+      const tasks = await apiFetch<Array<Record<string, unknown>>>('/api/hikyuu/tasks');
+      setSyncTasks((tasks || []).filter((item) => item.status === 'running' || item.status === 'pending'));
+    } catch {
+      // 同步任务轮询失败时静默,下次再试
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshSyncTasks();
+    const timer = window.setInterval(() => void refreshSyncTasks(), 3000);
+    return () => window.clearInterval(timer);
+  }, [refreshSyncTasks]);
+
   const loadHikyuuResearch = useCallback(async () => {
     try {
       const [health, metadata, quality] = await Promise.all([
@@ -211,10 +281,32 @@ export function DataCenterWorkspace() {
           ))}
         </div>
         <Space wrap className="toolbar-row">
-          <Button type="primary" onClick={() => loadHikyuu('/api/hikyuu/tasks/full-sync', { method: 'POST', body: '{}' })}>全量同步</Button>
+          <Button type="primary" onClick={openSyncModal}>全量同步</Button>
           <Button onClick={() => loadHikyuu('/api/hikyuu/tasks/after-close-sync', { method: 'POST', body: '{}' })}>盘后同步</Button>
           <Button onClick={() => loadHikyuu('/api/hikyuu/tasks')}>刷新任务</Button>
         </Space>
+        {syncTasks.map((task) => {
+          const request = (task.request || {}) as Record<string, unknown>;
+          const scopeText = SYNC_SCOPE_ITEMS.filter((item) => request[item.key]).map((item) => item.label).join('、') || '同步';
+          return (
+            <div className="hikyuu-sync-progress" key={String(task.id)}>
+              <div className="hikyuu-sync-progress-head">
+                <span>同步中 · {scopeText}</span>
+                <strong>{task.progress != null ? `${task.progress}%` : '--'}</strong>
+                <small>{String(task.stage || '')}</small>
+              </div>
+              <Progress percent={Number(task.progress ?? 0)} status="active" size="small" />
+              <div className="hikyuu-sync-phases">
+                {Object.entries((task.phases || {}) as Record<string, { label: string; progress: number | null; done: boolean }>).map(([key, phase]) => (
+                  <div key={key} className="hikyuu-sync-phase">
+                    <span>{phase.label}</span>
+                    {phase.done ? <Tag color="success">完成</Tag> : phase.progress != null ? <Progress percent={phase.progress} size="small" /> : <Tag>等待</Tag>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
         <JsonPane value={hikyuuStatus} />
       </Card>
 
@@ -267,6 +359,33 @@ export function DataCenterWorkspace() {
         <DynamicTable rows={rowsFrom(blockOutput)} scrollY={320} />
         {!rowsFrom(blockOutput).length ? <JsonPane value={blockOutput} /> : null}
       </Card>
+      <Modal
+        title="全量同步"
+        open={syncModalOpen}
+        onOk={startFullSync}
+        onCancel={() => setSyncModalOpen(false)}
+        okText="开始同步"
+        cancelText="取消"
+        okButtonProps={{ disabled: !SYNC_SCOPE_ITEMS.some((item) => syncScope[item.key] && !syncingKeys.has(item.key)) }}
+      >
+        {syncingLabels.length ? (
+          <p className="hikyuu-sync-scope-note">正在同步：{syncingLabels.join('、')}（置灰项不可重复勾选，完成后恢复；其他数据提交后会作为并行任务运行）</p>
+        ) : null}
+        <p>勾选需要同步的数据周期（分钟线数据量大、耗时长，建议需要时再同步）：</p>
+        <div className="hikyuu-sync-scope">
+          {SYNC_SCOPE_ITEMS.map((item) => (
+            <Checkbox
+              key={item.key}
+              disabled={syncingKeys.has(item.key)}
+              checked={syncScope[item.key]}
+              onChange={(event) => setSyncScope((prev) => ({ ...prev, [item.key]: event.target.checked }))}
+            >
+              {item.label}
+              {syncingKeys.has(item.key) ? <Tag className="hikyuu-sync-scope-tag" color="processing">同步中</Tag> : null}
+            </Checkbox>
+          ))}
+        </div>
+      </Modal>
     </div>
   );
 }

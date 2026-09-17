@@ -162,6 +162,10 @@ func (r *AutomationRunner) Reload() error {
 		}
 		entryID, err := r.cron.AddFunc(task.Cron, func(taskID string) func() {
 			return func() {
+				if taskID == FixedSelectionTrackingTaskID {
+					r.triggerSelectionTrackingOncePerDay()
+					return
+				}
 				timeout := 20 * time.Minute
 				if taskID == FixedCloseSyncTaskID {
 					timeout = 2 * time.Hour
@@ -281,6 +285,7 @@ func (r *AutomationRunner) runTask(ctx context.Context, task AutomationTask) (Au
 	// data synchronization time rather than including strategy evaluation.
 	if task.ID == FixedCloseSyncTaskID && status == "success" && err == nil && !automationResultSkipped(result) {
 		go r.triggerSystemStrategyDailyBatch()
+		go r.triggerSelectionTrackingOncePerDay()
 	}
 
 	if latest, latestErr := r.store.GetAutomationRun(run.ID); latestErr == nil {
@@ -289,8 +294,35 @@ func (r *AutomationRunner) runTask(ctx context.Context, task AutomationTask) (Au
 	return run, err
 }
 
+// triggerSelectionTrackingOncePerDay lets the 17:15 schedule remain as a
+// fallback while also running tracking immediately after a delayed close sync.
+// A failed run is intentionally retried once fresh Hikyuu data is available.
+func (r *AutomationRunner) triggerSelectionTrackingOncePerDay() {
+	task, err := r.store.GetAutomationTask(FixedSelectionTrackingTaskID)
+	if err != nil || !task.Enabled {
+		return
+	}
+	today := time.Now().In(time.Local).Format("2006-01-02")
+	runs, err := r.store.ListAutomationRuns(FixedSelectionTrackingTaskID, 20)
+	if err != nil {
+		log.Printf("检查选股跟踪运行记录失败: %v", err)
+		return
+	}
+	for _, existing := range runs {
+		startedAt, parseErr := time.Parse(time.RFC3339, existing.StartedAt)
+		if parseErr == nil && startedAt.In(time.Local).Format("2006-01-02") == today && (existing.Status == "running" || existing.Status == "success") {
+			return
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+	if _, err := r.RunTask(ctx, FixedSelectionTrackingTaskID); err != nil {
+		log.Printf("选股跟踪任务执行失败: %v", err)
+	}
+}
+
 func (r *AutomationRunner) runSelectionTracking(ctx context.Context, task AutomationTask) (interface{}, int, error) {
-	payload := SelectionTrackingPayload{Limit: 500, Horizons: []int{1, 5, 10}, ContinueOnError: true}
+	payload := SelectionTrackingPayload{Limit: 500, Horizons: []int{3, 5, 10}, ContinueOnError: true}
 	if strings.TrimSpace(task.PayloadJSON) != "" {
 		if err := json.Unmarshal([]byte(task.PayloadJSON), &payload); err != nil {
 			return nil, 0, err
@@ -298,6 +330,21 @@ func (r *AutomationRunner) runSelectionTracking(ctx context.Context, task Automa
 	}
 	if payload.Limit <= 0 || payload.Limit > selectionTrackingMaxLimit() {
 		payload.Limit = selectionTrackingMaxLimit()
+	}
+	if !useMarketService() {
+		return nil, 0, errors.New("选股跟踪前无法校验Hikyuu K线完整性：MARKET_SERVICE_URL 未配置")
+	}
+	today := time.Now().In(time.Local).Format("2006-01-02")
+	expectedDate, err := marketClient.ExpectedTradingDate(ctx, today)
+	if err != nil {
+		return nil, 0, fmt.Errorf("选股跟踪前确定最新交易日失败: %w", err)
+	}
+	freshness, err := marketClient.HikyuuFreshness(ctx, expectedDate)
+	if err != nil {
+		return nil, 0, fmt.Errorf("选股跟踪前校验Hikyuu K线完整性失败: %w", err)
+	}
+	if !freshness.OK {
+		return map[string]interface{}{"freshness": freshness}, 0, errors.New(hikyuuFreshnessError(freshness))
 	}
 	items, err := r.store.ListSelectionResults("", "", "", false, payload.Limit)
 	if err != nil {
@@ -327,10 +374,28 @@ func (r *AutomationRunner) runSelectionTracking(ctx context.Context, task Automa
 		tracked = append(tracked, SelectionTrackingItem{Result: item, Tracking: tracking})
 	}
 	return map[string]interface{}{
-		"summary": workbench.SummarizeSelectionTracking(tracked, payload.Horizons),
-		"policy":  map[string]float64{"target_return": targetReturn, "drawdown_limit": drawdownLimit},
-		"errors":  errorsByResult,
+		"summary":   workbench.SummarizeSelectionTracking(tracked, payload.Horizons),
+		"policy":    map[string]float64{"target_return": targetReturn, "drawdown_limit": drawdownLimit},
+		"errors":    errorsByResult,
+		"freshness": freshness,
 	}, len(tracked), nil
+}
+
+func hikyuuFreshnessError(freshness *MarketHikyuuFreshness) string {
+	if freshness == nil {
+		return "Hikyuu K线完整性校验无结果"
+	}
+	details := make([]string, 0, len(freshness.Markets))
+	for _, market := range []string{"SH", "SZ", "BJ"} {
+		item, ok := freshness.Markets[market]
+		if ok && !item.OK {
+			details = append(details, fmt.Sprintf("%s latest=%s coverage=%.1f%%", market, item.LatestDate, item.Coverage*100))
+		}
+	}
+	if len(details) == 0 {
+		details = append(details, "市场状态未知")
+	}
+	return fmt.Sprintf("Hikyuu K线完整性校验未通过（目标交易日 %s）：%s", freshness.ExpectedDate, strings.Join(details, ", "))
 }
 
 func selectionTrackingMaxLimit() int {
@@ -518,14 +583,15 @@ func (r *AutomationRunner) runSystemSync(ctx context.Context, task AutomationTas
 		if !useMarketService() {
 			return nil, 0, errors.New("Hikyuu盘后同步必须通过行情服务执行")
 		}
-		isWorkday, err := marketClient.IsWorkday(ctx, time.Now().In(time.Local).Format("2006-01-02"))
+		today := time.Now().In(time.Local).Format("2006-01-02")
+		isWorkday, err := marketClient.IsWorkday(ctx, today)
 		if err != nil {
 			return nil, 0, err
 		}
 		if !isWorkday {
 			return map[string]interface{}{"scope": "hikyuu_after_close", "source": "hikyuu", "skipped": true, "reason": "非交易日"}, 0, nil
 		}
-		task, err := marketClient.StartHikyuuAfterCloseSync(ctx)
+		task, err := marketClient.StartHikyuuAfterCloseSync(ctx, today)
 		if err != nil {
 			return nil, 0, err
 		}

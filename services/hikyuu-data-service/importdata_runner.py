@@ -1,6 +1,8 @@
 import os
 import sys
 import time
+import fcntl
+import functools
 from concurrent import futures
 from configparser import ConfigParser
 from pathlib import Path
@@ -106,9 +108,66 @@ def install_import_fallbacks(import_module):
     import_module.sqlite_import_stock_name = import_stock_name
 
 
-def main() -> int:
+def install_hdf5_write_lock(import_module):
+    """Serialize HDF5 import tasks across all forked importer processes."""
+    task_class = import_module.ImportPytdxToH5
+    if getattr(task_class, "_tdx_hdf5_lock_installed", False):
+        return
+
+    original_call = task_class.__call__
+
+    @functools.wraps(original_call)
+    def locked_call(task, *args, **kwargs):
+        config = getattr(task, "config", None)
+        if config is not None and not config.getboolean("hdf5", "enable", fallback=True):
+            return original_call(task, *args, **kwargs)
+
+        stocks_dir = Path(os.getenv("HIKYUU_STOCKS_DIR", "/root/stocks"))
+        lock_path = Path(os.getenv("HIKYUU_HDF5_LOCK_FILE", str(stocks_dir / ".hdf5-writer.lock")))
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        task_label = f"{getattr(task, 'market', '?')} {getattr(task, 'ktype', '?')}"
+        with lock_path.open("a+", encoding="utf-8") as lock_file:
+            print(f"HDF5 write lock waiting: {task_label}", flush=True)
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                print(f"HDF5 write lock acquired: {task_label}", flush=True)
+                return original_call(task, *args, **kwargs)
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                print(f"HDF5 write lock released: {task_label}", flush=True)
+
+    task_class.__call__ = locked_call
+    task_class._tdx_hdf5_lock_installed = True
+
+
+def install_sqlite_busy_timeout(import_module, timeout_ms=None):
+    """Raise the code-table connection busy timeout so parallel syncs wait instead of failing."""
+    if timeout_ms is None:
+        timeout_ms = int(os.getenv("HIKYUU_SQLITE_BUSY_TIMEOUT_MS", "600000"))
+    original = getattr(import_module, "sqlite_create_database", None)
+    if original is None or getattr(original, "_tdx_busy_timeout", False):
+        return
+
+    @functools.wraps(original)
+    def create_database_with_timeout(connect):
+        try:
+            connect.execute(f"PRAGMA busy_timeout={int(timeout_ms)}")
+        except Exception:
+            pass
+        return original(connect)
+
+    create_database_with_timeout._tdx_busy_timeout = True
+    import_module.sqlite_create_database = create_database_with_timeout
+
+
+def resolve_import_config_path() -> Path:
     config_dir = Path(os.getenv("HIKYUU_CONFIG_DIR", "/root/.hikyuu"))
-    config_file = config_dir / "importdata-gui.ini"
+    override = os.getenv("HIKYUU_IMPORT_CONFIG", "").strip()
+    return Path(override) if override else config_dir / "importdata-gui.ini"
+
+
+def main() -> int:
+    config_file = resolve_import_config_path()
     if not config_file.exists():
         print(f"missing config file: {config_file}", flush=True)
         return 2
@@ -124,6 +183,8 @@ def main() -> int:
     config.read(config_file, encoding="utf-8")
 
     install_import_fallbacks(import_module)
+    install_hdf5_write_lock(import_module)
+    install_sqlite_busy_timeout(import_module)
 
     runner = UsePytdxImportToH5Thread(None, config)
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -169,12 +170,37 @@ func handleHikyuuAfterCloseSync(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, "只支持POST请求")
 		return
 	}
-	task, err := hikyuuClient.StartAfterCloseSync(r.Context())
+	var payload struct {
+		ExpectedDate string `json:"expected_date"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil && err != io.EOF {
+		errorResponse(w, "请求参数错误: "+err.Error())
+		return
+	}
+	task, err := hikyuuClient.StartAfterCloseSync(r.Context(), payload.ExpectedDate)
 	if err != nil {
 		errorResponse(w, err.Error())
 		return
 	}
 	successResponse(w, task)
+}
+
+func handleHikyuuFreshness(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, "只支持GET请求")
+		return
+	}
+	expectedDate := strings.TrimSpace(r.URL.Query().Get("expected_date"))
+	if expectedDate == "" {
+		errorResponse(w, "expected_date不能为空")
+		return
+	}
+	result, err := hikyuuClient.GetFreshness(r.Context(), expectedDate)
+	if err != nil {
+		errorResponse(w, err.Error())
+		return
+	}
+	successResponse(w, result)
 }
 
 func handleHikyuuTask(w http.ResponseWriter, r *http.Request) {

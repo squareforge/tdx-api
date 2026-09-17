@@ -50,17 +50,38 @@ type MarketKlineBatch struct {
 }
 
 type MarketHikyuuTask struct {
-	ID        string   `json:"id"`
-	Type      string   `json:"type"`
-	Status    string   `json:"status"`
-	StartedAt string   `json:"started_at"`
-	EndedAt   string   `json:"ended_at"`
-	ExitCode  *int     `json:"exit_code"`
-	Error     string   `json:"error"`
-	Progress  *int     `json:"progress,omitempty"`
-	Stage     string   `json:"stage,omitempty"`
-	Message   string   `json:"message,omitempty"`
-	LogTail   []string `json:"log_tail,omitempty"`
+	ID        string                 `json:"id"`
+	Type      string                 `json:"type"`
+	Status    string                 `json:"status"`
+	StartedAt string                 `json:"started_at"`
+	EndedAt   string                 `json:"ended_at"`
+	ExitCode  *int                   `json:"exit_code"`
+	Error     string                 `json:"error"`
+	Progress  *int                   `json:"progress,omitempty"`
+	Stage     string                 `json:"stage,omitempty"`
+	Message   string                 `json:"message,omitempty"`
+	LogTail   []string               `json:"log_tail,omitempty"`
+	Freshness *MarketHikyuuFreshness `json:"freshness,omitempty"`
+}
+
+type MarketHikyuuMarketFreshness struct {
+	Total            int            `json:"total"`
+	FreshCount       int            `json:"fresh_count"`
+	StaleCount       int            `json:"stale_count"`
+	MissingCount     int            `json:"missing_count"`
+	LatestDate       string         `json:"latest_date"`
+	Coverage         float64        `json:"coverage"`
+	DateDistribution map[string]int `json:"date_distribution"`
+	Errors           []string       `json:"errors"`
+	OK               bool           `json:"ok"`
+}
+
+type MarketHikyuuFreshness struct {
+	ExpectedDate    string                                 `json:"expected_date"`
+	MinimumCoverage float64                                `json:"minimum_coverage"`
+	OK              bool                                   `json:"ok"`
+	Markets         map[string]MarketHikyuuMarketFreshness `json:"markets"`
+	CheckedAt       string                                 `json:"checked_at"`
 }
 
 func NewMarketServiceClient() *MarketServiceClient {
@@ -179,9 +200,21 @@ func (c *MarketServiceClient) KlineHistoryBatch(ctx context.Context, symbols []s
 	return &resp, nil
 }
 
-func (c *MarketServiceClient) StartHikyuuAfterCloseSync(ctx context.Context) (*MarketHikyuuTask, error) {
+func (c *MarketServiceClient) StartHikyuuAfterCloseSync(ctx context.Context, expectedDate string) (*MarketHikyuuTask, error) {
 	var resp MarketHikyuuTask
-	if err := c.post(ctx, "/api/hikyuu/tasks/after-close-sync", map[string]interface{}{}, &resp); err != nil {
+	if err := c.post(ctx, "/api/hikyuu/tasks/after-close-sync", map[string]interface{}{
+		"expected_date": strings.TrimSpace(expectedDate),
+	}, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *MarketServiceClient) HikyuuFreshness(ctx context.Context, expectedDate string) (*MarketHikyuuFreshness, error) {
+	query := url.Values{}
+	query.Set("expected_date", strings.TrimSpace(expectedDate))
+	var resp MarketHikyuuFreshness
+	if err := c.get(ctx, "/api/hikyuu/freshness", query, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -207,6 +240,31 @@ func (c *MarketServiceClient) IsWorkday(ctx context.Context, date string) (bool,
 		return false, err
 	}
 	return resp.IsWorkday, nil
+}
+
+func (c *MarketServiceClient) ExpectedTradingDate(ctx context.Context, date string) (string, error) {
+	query := url.Values{}
+	query.Set("date", strings.TrimSpace(date))
+	query.Set("count", "1")
+	var resp struct {
+		Date struct {
+			ISO string `json:"iso"`
+		} `json:"date"`
+		IsWorkday bool `json:"is_workday"`
+		Previous  []struct {
+			ISO string `json:"iso"`
+		} `json:"previous"`
+	}
+	if err := c.get(ctx, "/api/workday", query, &resp); err != nil {
+		return "", err
+	}
+	if resp.IsWorkday && strings.TrimSpace(resp.Date.ISO) != "" {
+		return resp.Date.ISO, nil
+	}
+	if len(resp.Previous) == 0 || strings.TrimSpace(resp.Previous[0].ISO) == "" {
+		return "", errors.New("无法确定最近交易日")
+	}
+	return resp.Previous[0].ISO, nil
 }
 
 // Quotes 批量获取实时行情快照(单批建议不超过50只)。

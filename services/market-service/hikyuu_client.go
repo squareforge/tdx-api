@@ -59,6 +59,27 @@ type HikyuuTask struct {
 	Message   string                 `json:"message,omitempty"`
 	Request   map[string]interface{} `json:"request,omitempty"`
 	LogTail   []string               `json:"log_tail,omitempty"`
+	Freshness *HikyuuFreshness       `json:"freshness,omitempty"`
+}
+
+type HikyuuMarketFreshness struct {
+	Total            int            `json:"total"`
+	FreshCount       int            `json:"fresh_count"`
+	StaleCount       int            `json:"stale_count"`
+	MissingCount     int            `json:"missing_count"`
+	LatestDate       string         `json:"latest_date"`
+	Coverage         float64        `json:"coverage"`
+	DateDistribution map[string]int `json:"date_distribution"`
+	Errors           []string       `json:"errors"`
+	OK               bool           `json:"ok"`
+}
+
+type HikyuuFreshness struct {
+	ExpectedDate    string                           `json:"expected_date"`
+	MinimumCoverage float64                          `json:"minimum_coverage"`
+	OK              bool                             `json:"ok"`
+	Markets         map[string]HikyuuMarketFreshness `json:"markets"`
+	CheckedAt       string                           `json:"checked_at"`
 }
 
 type hikyuuKlineItem struct {
@@ -216,11 +237,14 @@ func (c *HikyuuDataServiceClient) FetchKlineBatch(ctx context.Context, symbols [
 	return result, batch.Errors, nil
 }
 
-func (c *HikyuuDataServiceClient) StartAfterCloseSync(ctx context.Context) (*HikyuuTask, error) {
+func (c *HikyuuDataServiceClient) StartAfterCloseSync(ctx context.Context, expectedDate string) (*HikyuuTask, error) {
 	payload := map[string]interface{}{
 		"day": true, "min": false, "min5": false, "trans": false, "time": false,
 		"stock": true, "fund": true, "weight": true, "finance": false, "block": false,
 		"use_tdx_number": 10,
+	}
+	if expectedDate = strings.TrimSpace(expectedDate); expectedDate != "" {
+		payload["expected_date"] = expectedDate
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -232,6 +256,30 @@ func (c *HikyuuDataServiceClient) StartAfterCloseSync(ctx context.Context) (*Hik
 	}
 	req.Header.Set("Content-Type", "application/json")
 	return c.readTask(req)
+}
+
+func (c *HikyuuDataServiceClient) GetFreshness(ctx context.Context, expectedDate string) (*HikyuuFreshness, error) {
+	if !c.Enabled() {
+		return nil, errors.New("HIKYUU_DATA_SERVICE_URL 未配置")
+	}
+	query := url.Values{}
+	query.Set("expected_date", strings.TrimSpace(expectedDate))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/hikyuu/freshness?"+query.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	var envelope hikyuuEnvelope
+	if err := c.do(req, &envelope); err != nil {
+		return nil, err
+	}
+	if envelope.Code != 0 {
+		return nil, errors.New(envelope.Message)
+	}
+	var result HikyuuFreshness
+	if err := json.Unmarshal(envelope.Data, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 func (c *HikyuuDataServiceClient) GetTask(ctx context.Context, id string) (*HikyuuTask, error) {

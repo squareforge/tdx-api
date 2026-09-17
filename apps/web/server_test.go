@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestNormalizeMinuteDate(t *testing.T) {
@@ -58,5 +61,36 @@ func TestGetAllCodeModelsPrefersMarketService(t *testing.T) {
 	}
 	if models[0].Exchange == "" || models[1].Exchange == "" {
 		t.Fatal("expected exchange to be populated")
+	}
+}
+
+func TestRunAutomationTaskOnWorker(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		if r.URL.Path != "/api/automations/fixed-close-sync/run" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"code":    0,
+			"message": "success",
+			"data": AutomationRun{
+				ID:     "run-1",
+				TaskID: FixedCloseSyncTaskID,
+				Status: "success",
+			},
+		})
+	}))
+	defer server.Close()
+
+	t.Setenv("SELECTION_WORKER_URL", server.URL)
+	run, err := runAutomationTaskOnWorker(context.Background(), FixedCloseSyncTaskID, time.Second)
+	if err != nil {
+		t.Fatalf("runAutomationTaskOnWorker() error = %v", err)
+	}
+	if run.ID != "run-1" || run.TaskID != FixedCloseSyncTaskID || run.Status != "success" {
+		t.Fatalf("runAutomationTaskOnWorker() = %#v", run)
 	}
 }
