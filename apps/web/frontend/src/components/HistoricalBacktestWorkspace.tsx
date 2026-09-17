@@ -50,6 +50,10 @@ function scanParamText(item: HistoricalScanResult) {
   return `${item.buy_base === 'open' ? '开盘' : '收盘'}买 · ${item.sell_base === 'next_open' ? '次日开' : '当日收'}卖 · 止${item.take_profit}% 回${item.trail_drawdown}% 损${item.stop_loss}% ${item.max_hold_days}天`;
 }
 
+function compareScanReturnDesc(a: HistoricalScanResult, b: HistoricalScanResult) {
+  return b.total_return - a.total_return;
+}
+
 const scanSummaryColumns = [
   { title: '策略', dataIndex: 'strategy_name', width: 180, render: (value: string) => <strong>{value}</strong> },
   { title: '最优参数', key: 'params', render: (_: unknown, row: HistoricalScanResult) => <span>{scanParamText(row)}</span> },
@@ -320,12 +324,17 @@ export function HistoricalBacktestWorkspace() {
     }
     const summary: HistoricalScanResult[] = [];
     for (const list of byStrategy.values()) {
-      const eligible = list.filter((item) => item.closed_count >= 30);
-      summary.push((eligible.length ? eligible : list)[0]);
+      const best = [...list].sort(compareScanReturnDesc)[0];
+      if (best) summary.push(best);
     }
-    summary.sort((a, b) => b.total_return - a.total_return);
+    summary.sort(compareScanReturnDesc);
     return summary;
   }, [scanResults]);
+
+  const scanDetailResults = useMemo(
+    () => scanResults.filter((item) => item.strategy_id === scanStrategy).sort(compareScanReturnDesc),
+    [scanResults, scanStrategy]
+  );
 
   const scanStrategyOptions = useMemo(() => {
     const seen = new Set<string>();
@@ -457,7 +466,7 @@ export function HistoricalBacktestWorkspace() {
             </div>
             {scanStrategy === 'all'
               ? <Table<HistoricalScanResult> size="small" rowKey="id" dataSource={scanSummary} columns={scanSummaryColumns} pagination={false} scroll={{ x: 900 }} locale={{ emptyText: selectedScanRun.status === 'running' ? '扫描中...' : '暂无扫描结果' }} />
-              : <Table<HistoricalScanResult> size="small" rowKey="id" dataSource={scanResults.filter((item) => item.strategy_id === scanStrategy)} columns={scanDetailColumns} pagination={{ pageSize: 50, showSizeChanger: false }} scroll={{ x: 900 }} locale={{ emptyText: '暂无该策略的扫描结果' }} />}
+              : <Table<HistoricalScanResult> size="small" rowKey="id" dataSource={scanDetailResults} columns={scanDetailColumns} pagination={{ pageSize: 50, showSizeChanger: false }} scroll={{ x: 900 }} locale={{ emptyText: '暂无该策略的扫描结果' }} />}
           </> : !selectedRun ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="创建回测后查看结果" /> : <>
             <div className="historical-progress-head">
               <div><ClockCircleOutlined /><span>当前交易日</span><strong>{selectedRun.current_date || '正在加载K线'}</strong></div>
