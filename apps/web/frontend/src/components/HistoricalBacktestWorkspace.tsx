@@ -251,6 +251,7 @@ export function HistoricalBacktestWorkspace() {
         })
       });
       await loadRuns(run.id);
+      setListView('runs');
       setView('ranking');
       message.success('历史回测已开始');
     } catch (error) {
@@ -273,7 +274,7 @@ export function HistoricalBacktestWorkspace() {
         })
       });
       await loadScanRuns(run.id);
-      setSelectedRun(null);
+      setListView('scan');
       message.success('参数扫描已开始');
     } catch (error) {
       message.error(error instanceof Error ? error.message : '参数扫描启动失败');
@@ -284,9 +285,14 @@ export function HistoricalBacktestWorkspace() {
 
   function selectScanRun(run: HistoricalScanRun) {
     setSelectedScanRun(run);
-    setSelectedRun(null);
     setScanStrategy('all');
     void loadScanResults(run);
+  }
+
+  function changeListView(value: string | number) {
+    const nextView = value as 'runs' | 'scan';
+    setListView(nextView);
+    if (nextView === 'scan' && selectedScanRun) void loadScanResults(selectedScanRun);
   }
 
   async function cancelRun() {
@@ -314,6 +320,7 @@ export function HistoricalBacktestWorkspace() {
   const portfolio = result.portfolio;
   const progress = selectedRun?.total_dates ? Math.round(selectedRun.processed_dates * 100 / selectedRun.total_dates) : 0;
   const runStrategyOptions = strategies.filter((item) => selectedRun?.strategy_ids.includes(item.id)).map((item) => ({ value: item.id, label: item.name }));
+  const isScanView = listView === 'scan';
 
   const scanSummary = useMemo(() => {
     const byStrategy = new Map<string, HistoricalScanResult[]>();
@@ -440,14 +447,14 @@ export function HistoricalBacktestWorkspace() {
       </Card>
 
       <div className="historical-backtest-main">
-        <Card className="work-card historical-run-list" title={<div className="historical-backtest-title"><div><span>批次列表</span><Text type="secondary">{listView === 'runs' ? `${runs.length} 条回测` : `${scanRuns.length} 条扫描`}</Text></div><small>RUNS</small></div>} extra={<Segmented size="small" value={listView} onChange={(value) => setListView(value as 'runs' | 'scan')} options={[{ value: 'runs', label: '回测' }, { value: 'scan', label: '扫描' }]} />}>
+        <Card className="work-card historical-run-list" title={<div className="historical-backtest-title"><div><span>批次列表</span><Text type="secondary">{listView === 'runs' ? `${runs.length} 条回测` : `${scanRuns.length} 条扫描`}</Text></div><small>RUNS</small></div>} extra={<Segmented size="small" value={listView} onChange={changeListView} options={[{ value: 'runs', label: '回测' }, { value: 'scan', label: '扫描' }]} />}>
           {listView === 'runs'
             ? (runs.length ? <div className="historical-run-stack">{runs.map((run) => { const meta = statusMeta(run.status); return <button type="button" key={run.id} className={run.id === selectedRun?.id ? 'is-active' : ''} onClick={() => { setSelectedRun(run); setPage(1); setTradePage(1); }}><span>{run.start_date} → {run.end_date}</span><strong>{run.strategy_ids.length} 个策略 · {run.signal_count} 条信号</strong><small><Tag color={meta.color}>{meta.label}</Tag>{run.processed_dates}/{run.total_dates || '--'} 交易日</small></button>; })}</div> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无历史回测" />)
             : (scanRuns.length ? <div className="historical-run-stack">{scanRuns.map((run) => { const meta = statusMeta(run.status); return <button type="button" key={run.id} className={run.id === selectedScanRun?.id ? 'is-active' : ''} onClick={() => selectScanRun(run)}><span>{run.start_date} → {run.end_date}</span><strong>{run.strategy_ids.length} 个策略 · 96 组合</strong><small><Tag color={meta.color}>{meta.label}</Tag>{run.processed_strategies}/{run.total_strategies || '--'} 策略</small></button>; })}</div> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无参数扫描" />)}
         </Card>
 
-        <Card className="work-card historical-result-card" title={<div className="historical-backtest-title"><div><span>{selectedScanRun ? '参数扫描结果' : '回测结果'}</span><Text type="secondary">{selectedScanRun ? `${selectedScanRun.start_date} 至 ${selectedScanRun.end_date}` : selectedRun ? `${selectedRun.start_date} 至 ${selectedRun.end_date}` : '等待任务'}</Text></div><small>{selectedScanRun ? 'SCAN RESULT' : 'RESULT'}</small></div>} extra={selectedRun?.status === 'running' ? <Button danger icon={<StopOutlined />} onClick={() => void cancelRun()}>取消</Button> : null}>
-          {selectedScanRun ? <>
+        <Card className="work-card historical-result-card" title={<div className="historical-backtest-title"><div><span>{isScanView ? '参数扫描结果' : '回测结果'}</span><Text type="secondary">{isScanView ? (selectedScanRun ? `${selectedScanRun.start_date} 至 ${selectedScanRun.end_date}` : '等待任务') : selectedRun ? `${selectedRun.start_date} 至 ${selectedRun.end_date}` : '等待任务'}</Text></div><small>{isScanView ? 'SCAN RESULT' : 'RESULT'}</small></div>} extra={!isScanView && selectedRun?.status === 'running' ? <Button danger icon={<StopOutlined />} onClick={() => void cancelRun()}>取消</Button> : null}>
+          {isScanView ? !selectedScanRun ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="创建参数扫描后查看结果" /> : <>
             <div className="historical-facts">
               <div><span>策略进度</span><strong>{selectedScanRun.processed_strategies}/{selectedScanRun.total_strategies || '--'}</strong></div>
               <div><span>当前策略</span><strong>{selectedScanRun.current_strategy || '--'}</strong></div>

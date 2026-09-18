@@ -447,12 +447,18 @@ func (s *AppStore) migrate() error {
 			url TEXT NOT NULL,
 			method TEXT NOT NULL DEFAULT 'POST',
 			headers_json TEXT NOT NULL DEFAULT '{}',
-			events TEXT NOT NULL DEFAULT '["automation.failed","stock_selection.finished"]',
+				events TEXT NOT NULL DEFAULT '["automation.failed","stock_selection.finished","t-signal.triggered"]',
 			enabled INTEGER NOT NULL DEFAULT 1,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS trading_system_state (
+			id TEXT PRIMARY KEY,
+			state_json TEXT NOT NULL DEFAULT '{}',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS t_signal_state (
 			id TEXT PRIMARY KEY,
 			state_json TEXT NOT NULL DEFAULT '{}',
 			created_at TEXT NOT NULL,
@@ -1753,6 +1759,52 @@ func (s *AppStore) UpsertTradingSystemState(state TradingSystemState) (TradingSy
 	return state, err
 }
 
+// TSignalStateRecord 日内做T信号状态的通用持久化记录(JSON 文本)。
+// 完整结构由 selection-worker 的信号引擎定义,本包只负责存取。
+type TSignalStateRecord struct {
+	ID        string `json:"id"`
+	StateJSON string `json:"state_json"`
+	CreatedAt string `json:"created_at,omitempty"`
+	UpdatedAt string `json:"updated_at,omitempty"`
+}
+
+func (s *AppStore) GetTSignalState(id string) (TSignalStateRecord, error) {
+	if strings.TrimSpace(id) == "" {
+		id = "default"
+	}
+	var record TSignalStateRecord
+	err := s.db.QueryRow(`SELECT id,state_json,created_at,updated_at FROM t_signal_state WHERE id=?`, id).
+		Scan(&record.ID, &record.StateJSON, &record.CreatedAt, &record.UpdatedAt)
+	if err != nil {
+		return record, err
+	}
+	return record, nil
+}
+
+func (s *AppStore) UpsertTSignalState(record TSignalStateRecord) (TSignalStateRecord, error) {
+	if strings.TrimSpace(record.ID) == "" {
+		record.ID = "default"
+	}
+	if record.StateJSON == "" {
+		record.StateJSON = "{}"
+	}
+	now := NowText()
+	old, err := s.GetTSignalState(record.ID)
+	if err == nil {
+		record.CreatedAt = old.CreatedAt
+	} else {
+		record.CreatedAt = now
+	}
+	record.UpdatedAt = now
+	_, err = s.db.Exec(`INSERT INTO t_signal_state
+		(id,state_json,created_at,updated_at)
+		VALUES (?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET
+			state_json=excluded.state_json,updated_at=excluded.updated_at`,
+		record.ID, record.StateJSON, record.CreatedAt, record.UpdatedAt)
+	return record, err
+}
+
 func validateTradingDirections(trades []TradingTrade) error {
 	holdings := make(map[string]float64)
 	for _, trade := range trades {
@@ -2154,7 +2206,7 @@ func normalizeWebhook(h Webhook) Webhook {
 		h.HeadersJSON = "{}"
 	}
 	if strings.TrimSpace(h.Events) == "" {
-		h.Events = `["automation.failed","automation.finished","stock_selection.finished","strategy_selection.finished","macro_event.alert_due","macro_event.window_started"]`
+		h.Events = `["automation.failed","automation.finished","stock_selection.finished","strategy_selection.finished","macro_event.alert_due","macro_event.window_started","t-signal.triggered","t-signal.notice","t-signal.acked"]`
 	}
 	return h
 }

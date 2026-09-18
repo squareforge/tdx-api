@@ -9,6 +9,7 @@ import { HistoricalBacktestWorkspace } from './components/HistoricalBacktestWork
 import { SelectionResultsWorkspace } from './components/SelectionResultsWorkspace';
 import { StrategiesWorkspace } from './components/StrategiesWorkspace';
 import { TradingSystemWorkspace } from './components/TradingSystemWorkspace';
+import { IntradayTradingWorkspace } from './components/IntradayTradingWorkspace';
 import { UniverseWorkspace } from './components/UniverseWorkspace';
 import { WebhooksWorkspace } from './components/WebhooksWorkspace';
 import { MarketWorkspace } from './components/MarketWorkspace';
@@ -42,8 +43,14 @@ const selectionWorkspaces = [
   { key: 'historicalBacktest', label: '历史回测' }
 ];
 
+// 交易系统内子 tab:持仓与交易(原有) + 日内交易(日内做T信号驾驶舱)。
+const tradingWorkspaces = [
+  { key: 'holdingsTrading', label: '持仓与交易' },
+  { key: 'intradayT', label: '日内交易' }
+];
+
 const workspaceLabels = Object.fromEntries(
-  [...primaryWorkspaces, ...selectionWorkspaces].map((workspace) => [workspace.key, workspace.label])
+  [...primaryWorkspaces, ...selectionWorkspaces, ...tradingWorkspaces].map((workspace) => [workspace.key, workspace.label])
 );
 
 const workspaceCodes: Record<string, string> = {
@@ -55,6 +62,8 @@ const workspaceCodes: Record<string, string> = {
   dailyReview: 'DAILY_REVIEW',
   historicalBacktest: 'HISTORICAL_REPLAY',
   tradingSystem: 'TRADING_PLAN',
+  holdingsTrading: 'HOLDINGS_TRADING',
+  intradayT: 'INTRADAY_T',
   universe: 'UNIVERSE',
   strategies: 'STRATEGY_LAB',
   automations: 'RUN_SCHEDULER',
@@ -65,6 +74,7 @@ const workspaceCodes: Record<string, string> = {
 };
 
 const selectionWorkspaceKeys = new Set(selectionWorkspaces.map((workspace) => workspace.key));
+const tradingWorkspaceKeys = new Set(tradingWorkspaces.map((workspace) => workspace.key));
 const primaryWorkspaceKeys = new Set(primaryWorkspaces.map((workspace) => workspace.key));
 
 function Placeholder({ name }: { name: string }) {
@@ -92,7 +102,10 @@ function WorkspaceContent({ workspace }: { workspace: string }) {
     case 'historicalBacktest':
       return <HistoricalBacktestWorkspace />;
     case 'tradingSystem':
+    case 'holdingsTrading':
       return <TradingSystemWorkspace />;
+    case 'intradayT':
+      return <IntradayTradingWorkspace />;
     case 'universe':
       return <UniverseWorkspace />;
     case 'strategies':
@@ -120,6 +133,10 @@ export default function App() {
   const [activeSelectionWorkspace, setActiveSelectionWorkspace] = useState(() => {
     const savedWorkspace = window.localStorage.getItem('tdx.activeSelectionWorkspace');
     return savedWorkspace && selectionWorkspaceKeys.has(savedWorkspace) ? savedWorkspace : 'selectionResults';
+  });
+  const [activeTradingWorkspace, setActiveTradingWorkspace] = useState(() => {
+    const savedWorkspace = window.localStorage.getItem('tdx.activeTradingWorkspace');
+    return savedWorkspace && tradingWorkspaceKeys.has(savedWorkspace) ? savedWorkspace : 'holdingsTrading';
   });
   const [serviceStatus, setServiceStatus] = useState<ServiceStatusResult>();
   const [serviceLoading, setServiceLoading] = useState(false);
@@ -154,10 +171,20 @@ export default function App() {
   }, [activeSelectionWorkspace]);
 
   useEffect(() => {
+    window.localStorage.setItem('tdx.activeTradingWorkspace', activeTradingWorkspace);
+  }, [activeTradingWorkspace]);
+
+  useEffect(() => {
     window.localStorage.setItem('tdx.activePrimaryWorkspace', activePrimaryWorkspace);
   }, [activePrimaryWorkspace]);
 
   const selectionTabItems = selectionWorkspaces.map((workspace) => ({
+    key: workspace.key,
+    label: workspace.label,
+    children: <WorkspaceContent workspace={workspace.key} />
+  }));
+
+  const tradingTabItems = tradingWorkspaces.map((workspace) => ({
     key: workspace.key,
     label: workspace.label,
     children: <WorkspaceContent workspace={workspace.key} />
@@ -176,12 +203,27 @@ export default function App() {
           destroyOnHidden={false}
         />
       </div>
+    ) : workspace.key === 'tradingSystem' ? (
+      <div className="selection-workspace">
+        <Tabs
+          className="selection-subtabs"
+          activeKey={activeTradingWorkspace}
+          items={tradingTabItems}
+          onChange={setActiveTradingWorkspace}
+          destroyOnHidden={false}
+        />
+      </div>
     ) : (
       <WorkspaceContent workspace={workspace.key} />
     )
   }));
 
-  const activeWorkspace = activePrimaryWorkspace === 'selection' ? activeSelectionWorkspace : activePrimaryWorkspace;
+  const activeWorkspace =
+    activePrimaryWorkspace === 'selection'
+      ? activeSelectionWorkspace
+      : activePrimaryWorkspace === 'tradingSystem'
+        ? activeTradingWorkspace
+        : activePrimaryWorkspace;
   const activeWorkspaceLabel = workspaceLabels[activeWorkspace] || '工作台';
 
   return (

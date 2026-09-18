@@ -29,6 +29,7 @@ type TradingDiscipline = workbench.TradingDiscipline
 type TradingFeeConfig = workbench.TradingFeeConfig
 type TradingTrade = workbench.TradingTrade
 type TradingSystemState = workbench.TradingSystemState
+type TSignalStateRecord = workbench.TSignalStateRecord
 
 const (
 	DefaultTrackingTargetReturn  = workbench.DefaultTrackingTargetReturn

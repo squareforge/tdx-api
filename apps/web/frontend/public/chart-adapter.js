@@ -404,6 +404,34 @@
         };
     }
 
+    // 日内信号模块使用自己的分钟bar数据。转换在适配层完成,让 HQChart 与实时/回放共用同一入口。
+    function buildIntradayMinutePayload(symbol, options) {
+        const bars = Array.isArray(options?.minuteBars)
+            ? options.minuteBars
+            : (Array.isArray(options?.bars) ? options.bars : []);
+        const list = bars
+            .map(item => {
+                const timeText = String(item?.chart_time || item?.time || '');
+                const timeMatch = timeText.match(/T(\d{2}):(\d{2})(?::(\d{2}))?/);
+                const price = Number(item?.close || item?.price || 0);
+                if (!timeMatch || !Number.isFinite(price) || price <= 0) return null;
+                return {
+                    Time: `${timeMatch[1]}:${timeMatch[2]}:${timeMatch[3] || '00'}`,
+                    Price: Math.round(price * 1000),
+                    Number: Math.max(0, Number(item?.volume || item?.vol || 0))
+                };
+            })
+            .filter(Boolean)
+            .sort((left, right) => left.Time.localeCompare(right.Time));
+        const first = bars[0];
+        const date = dateToNumber(first?.time || options?.date);
+        const prevClose = Number(options?.prevClose || 0);
+        return buildMinutePayload(symbol, { date, Count: 240, List: list }, {
+            Name: options?.name || toHQSymbol(symbol),
+            K: { Last: prevClose, Open: Number(first?.open || first?.close || 0) }
+        });
+    }
+
     async function fetchMinuteChartData(symbol) {
         const [minuteResult, quoteResult] = await Promise.allSettled([
             fetchMinute(symbol),
@@ -422,8 +450,13 @@
                 const req = data.Request && data.Request.Data ? data.Request.Data : {};
                 const reqSymbol = Array.isArray(req.symbol) ? req.symbol[0] : req.symbol;
                 const symbol = reqSymbol || state.symbol;
-                fetchMinuteChartData(symbol)
-                    .then(payload => callback(payload))
+                const dataRequest = Array.isArray(state.minuteBars)
+                    ? Promise.resolve(buildIntradayMinutePayload(symbol, state))
+                    : fetchMinuteChartData(symbol);
+                dataRequest
+                    .then(payload => {
+                        callback(payload);
+                    })
                     .catch(error => {
                         console.warn('HQChart minute failed:', error);
                         callback(buildMinutePayload(symbol, { Count: 0, List: [] }, null));
@@ -609,9 +642,18 @@
 
         const key = chartKey(container);
         const symbol = normalizeSymbol(options.symbol);
-        states.set(key, { symbol, period: 'minute', count: 240 });
+        const state = {
+            symbol,
+            period: 'minute',
+            count: 240,
+            minuteBars: Array.isArray(options.minuteBars) ? options.minuteBars : undefined,
+            prevClose: options.prevClose,
+            name: options.name,
+            date: options.date
+        };
+        states.set(key, state);
         destroyChart(container);
-        states.set(key, { symbol, period: 'minute', count: 240 });
+        states.set(key, state);
 
         if (window.MARKET_SUFFIX_NAME && typeof window.MARKET_SUFFIX_NAME.GetMarketStatus === 'function') {
             window.MARKET_SUFFIX_NAME.GetMarketStatus = function () { return 2; };
@@ -654,7 +696,8 @@
             },
             EnableYDrag: { Right: true, Left: false },
             EnableZoomIndexWindow: true,
-            FloatTooltip: { Enable: true }
+            // 项目未引入 HQChart 的浮层表格样式,用画布内十字提示避免其退化为页面流内容。
+            FloatTooltip: { Enable: false }
         });
         chart.ScriptErrorCallback = function (error) {
             const detail = typeof error === 'string'
@@ -668,6 +711,57 @@
         return true;
     }
 
+    function updateMinute(container, options = {}) {
+        if (!container) return false;
+        const key = chartKey(container);
+        const chart = charts.get(key);
+        const state = states.get(key);
+        if (!chart || !state) return false;
+        state.minuteBars = Array.isArray(options.minuteBars) ? options.minuteBars : [];
+        state.prevClose = options.prevClose;
+        state.name = options.name || state.name;
+        state.date = options.date || state.date;
+        const payload = buildIntradayMinutePayload(state.symbol, state);
+        const minuteChart = chart.JSChartContainer || chart;
+        if (typeof minuteChart.RecvMinuteData === 'function') {
+            minuteChart.RecvMinuteData(payload);
+            // HQChart's default minute paint can inherit a white theme from the
+            // host page. Keep the native plot, but make its two lines explicit.
+            if (minuteChart.ChartPaint?.[0]) {
+                minuteChart.ChartPaint[0].Color = '#1769aa';
+                minuteChart.ChartPaint[0].LineColor = '#1769aa';
+                minuteChart.ChartPaint[0].AreaColor = 'rgba(23, 105, 170, 0.10)';
+            }
+            if (minuteChart.ChartPaint?.[1]) {
+                minuteChart.ChartPaint[1].Color = '#b7791f';
+                minuteChart.ChartPaint[1].LineColor = '#b7791f';
+            }
+            minuteChart.SetSizeChange?.(true);
+            minuteChart.Draw?.();
+            return true;
+        }
+        return false;
+    }
+
+    function getMinuteGeometry(container, prices = []) {
+        const chart = getChart(container);
+        const minuteChart = chart?.JSChartContainer || chart;
+        const frame = minuteChart?.Frame?.SubFrame?.[0]?.Frame;
+        if (!frame || typeof frame.GetXFromIndex !== 'function' || typeof frame.GetYFromData !== 'function') return null;
+        const ratio = window.devicePixelRatio || 1;
+        try {
+            return {
+                width: container.clientWidth,
+                height: container.clientHeight,
+                slots: Array.from({ length: 240 }, (_, index) => frame.GetXFromIndex(index) / ratio),
+                prices: prices.map(value => frame.GetYFromData(value) / ratio)
+            };
+        } catch (error) {
+            console.warn('HQChart minute geometry failed:', error);
+            return null;
+        }
+    }
+
     function resize(container) {
         if (container) {
             const chart = charts.get(chartKey(container));
@@ -679,5 +773,5 @@
         });
     }
 
-    window.TDXHQChart = { renderKLine, renderMinute, resize, destroy: destroyChart, getChart, isAvailable: hasHQChart };
+    window.TDXHQChart = { renderKLine, renderMinute, updateMinute, getMinuteGeometry, resize, destroy: destroyChart, getChart, isAvailable: hasHQChart };
 })();

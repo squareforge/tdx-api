@@ -14,6 +14,7 @@ func main() {
 	if err := initAutomationServices(); err != nil {
 		log.Fatal(err)
 	}
+	initTSignalEngine(appStore)
 
 	http.HandleFunc("/api/health", handleHealthCheck)
 	http.HandleFunc("/api/server-status", handleGetServerStatus)
@@ -46,6 +47,12 @@ func main() {
 	http.HandleFunc("/api/webhooks/", handleWebhookOperations)
 	http.HandleFunc("/api/hqchart/kline", handleHQChartKline)
 	http.HandleFunc("/api/hqchart/history", handleHQChartHistory)
+	http.HandleFunc("/api/t-signal/state", handleTSignalState)
+	http.HandleFunc("/api/t-signal/snapshot", handleTSignalSnapshot)
+	http.HandleFunc("/api/t-signal/records", handleTSignalRecords)
+	http.HandleFunc("/api/t-signal/replay", handleTSignalReplay)
+	http.HandleFunc("/api/t-signal/config", handleTSignalConfig)
+	http.HandleFunc("/api/t-signal/", handleTSignalAck)
 
 	listenAndServe("8082")
 }

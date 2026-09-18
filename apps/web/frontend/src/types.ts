@@ -929,6 +929,13 @@ export interface TDXHQChartAPI {
   isAvailable: () => boolean;
   renderKLine: (container: HTMLElement, options: Record<string, unknown>) => boolean;
   renderMinute?: (container: HTMLElement, options: Record<string, unknown>) => boolean;
+  updateMinute?: (container: HTMLElement, options: Record<string, unknown>) => boolean;
+  getMinuteGeometry?: (container: HTMLElement, prices?: number[]) => {
+    width: number;
+    height: number;
+    slots: number[];
+    prices: number[];
+  } | null;
   resize?: (container?: HTMLElement | null) => void;
   destroy?: (container?: HTMLElement | null) => void;
   getChart?: (container: HTMLElement) => unknown;
