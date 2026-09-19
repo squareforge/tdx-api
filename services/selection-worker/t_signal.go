@@ -33,15 +33,18 @@ const (
 
 // 规则编码(文档4.2)。
 const (
-	TSignalRuleS1Vwap   = "S1_VWAP_REGRESSION"
-	TSignalRuleS2Ma     = "S2_MA_SUPPORT"
-	TSignalRuleS3Macd   = "S3_MACD_DIVERGENCE"
-	TSignalRuleS4Break  = "S4_OPEN_BREAKOUT"
-	TSignalRuleS5Spike  = "S5_SPIKE_REVERSAL"
-	TSignalRuleFollowUp = "FOLLOW_UP_BUY_BACK"
+	TSignalRuleS1Vwap    = "S1_VWAP_REGRESSION"
+	TSignalRuleS2Ma      = "S2_MA_SUPPORT"
+	TSignalRuleS3Macd    = "S3_MACD_DIVERGENCE"
+	TSignalRuleS4Break   = "S4_OPEN_BREAKOUT"
+	TSignalRuleS5Spike   = "S5_SPIKE_REVERSAL"
+	TSignalRuleS6Vwap    = "S6_CALIBRATED_VWAP_FADE"
+	TSignalRuleFollowUp  = "FOLLOW_UP_BUY_BACK"
+	TSignalRuleStopExit  = "PROTECTIVE_STOP_BUY_BACK"
+	TSignalRuleCloseExit = "SESSION_CLOSE_BUY_BACK"
 )
 
-// TSignalRuleParams S1-S5 初始参数(文档4.2,回测后校准)。
+// TSignalRuleParams S1-S6 参数(文档4.2,回测后校准)。
 type TSignalRuleParams struct {
 	S1Enabled bool    `json:"s1_enabled"`
 	S1DevPct  float64 `json:"s1_dev_pct"`  // 偏离触发阈值 ±0.5%
@@ -62,6 +65,25 @@ type TSignalRuleParams struct {
 	S5MovePct  float64 `json:"s5_move_pct"` // 急拉急跌幅度 1.5%
 	S5StopPct  float64 `json:"s5_stop_pct"` // 继续同向止损 0.5%
 	S5Cooldown int     `json:"s5_cooldown"` // 同向冷却分钟
+
+	// S6 uses completed five-minute bars. Defaults are calibrated for sz300464;
+	// keep the rule disabled until a symbol-specific configuration enables it.
+	S6Enabled         bool    `json:"s6_enabled"`
+	S6PeakDevPct      float64 `json:"s6_peak_dev_pct"`
+	S6PullbackPct     float64 `json:"s6_pullback_pct"`
+	S6MinDevPct       float64 `json:"s6_min_dev_pct"`
+	S6MinDayGainPct   float64 `json:"s6_min_day_gain_pct"`
+	S6MaxDayGainPct   float64 `json:"s6_max_day_gain_pct"`
+	S6MinRSI          float64 `json:"s6_min_rsi"`
+	S6MaxVWAPSlopePct float64 `json:"s6_max_vwap_slope_pct"`
+	S6MaxVolRatio     float64 `json:"s6_max_vol_ratio"`
+	S6MinPrevDayPct   float64 `json:"s6_min_prev_day_pct"`
+	S6MaxPrevDayPct   float64 `json:"s6_max_prev_day_pct"`
+	S6MinGapPct       float64 `json:"s6_min_gap_pct"`
+	S6MaxGapPct       float64 `json:"s6_max_gap_pct"`
+	S6TargetPct       float64 `json:"s6_target_pct"`
+	S6StopPct         float64 `json:"s6_stop_pct"`
+	S6MaxHoldMinutes  int     `json:"s6_max_hold_minutes"`
 }
 
 func DefaultTSignalRuleParams() TSignalRuleParams {
@@ -71,6 +93,11 @@ func DefaultTSignalRuleParams() TSignalRuleParams {
 		S3Enabled: true, S3Lookback: 10,
 		S4Enabled: false, S4TargetPct: 0.8, S4VolRatio: 1.5,
 		S5Enabled: true, S5MovePct: 1.5, S5StopPct: 0.5, S5Cooldown: 15,
+		S6Enabled: false, S6PeakDevPct: 1.8, S6PullbackPct: 0.3, S6MinDevPct: 0.3,
+		S6MinDayGainPct: 1.5, S6MaxDayGainPct: 10, S6MinRSI: 60,
+		S6MaxVWAPSlopePct: 1, S6MaxVolRatio: 3,
+		S6MinPrevDayPct: -2, S6MaxPrevDayPct: 10, S6MinGapPct: -3, S6MaxGapPct: 1,
+		S6TargetPct: 0.7, S6StopPct: 4, S6MaxHoldMinutes: 150,
 	}
 }
 
@@ -151,16 +178,17 @@ type TSignalCooldown struct {
 
 // TSignalState 引擎完整状态,JSON 序列化后存 t_signal_state 表。
 type TSignalState struct {
-	Day       string               `json:"day"` // 交易日 YYYYMMDD
-	Config    TSignalConfig        `json:"config"`
-	Signals   []TSignalRecord      `json:"signals"`
-	Ledger    []TSignalLedgerEntry `json:"ledger"`
-	Trend     TSignalTrendVeto     `json:"trend"`
-	Cooldown  TSignalCooldown      `json:"cooldown"`
-	PrevClose float64              `json:"prev_close"` // 昨收
-	PrevVol   float64              `json:"prev_vol"`   // 昨日全天量(手)
-	Counter   int                  `json:"counter"`    // 当日信号序号
-	UpdatedAt string               `json:"updated_at,omitempty"`
+	Day           string               `json:"day"` // 交易日 YYYYMMDD
+	Config        TSignalConfig        `json:"config"`
+	Signals       []TSignalRecord      `json:"signals"`
+	Ledger        []TSignalLedgerEntry `json:"ledger"`
+	Trend         TSignalTrendVeto     `json:"trend"`
+	Cooldown      TSignalCooldown      `json:"cooldown"`
+	PrevClose     float64              `json:"prev_close"`      // 昨收
+	PrevVol       float64              `json:"prev_vol"`        // 昨日全天量(手)
+	PrevDayReturn float64              `json:"prev_day_return"` // 昨日涨跌幅(%),S6状态过滤
+	Counter       int                  `json:"counter"`         // 当日信号序号
+	UpdatedAt     string               `json:"updated_at,omitempty"`
 }
 
 // TSignalEngine 做T信号引擎。
@@ -187,6 +215,9 @@ type TSignalEngine struct {
 	s1HighAt      time.Time            // S1 超买起点,回归确认最多3分钟
 	s1LowAt       time.Time            // S1 超卖起点,回归确认最多3分钟
 	prevCloseMA   bool                 // S2 上一根bar收盘与均线关系
+	s6PeakDev     float64              // S6 当日五分钟收盘相对VWAP峰值
+	s6VWAPHistory []float64            // S6 五分钟VWAP序列(计算15分钟斜率)
+	s6Triggered   bool                 // S6 每日最多一笔
 }
 
 func NewTSignalEngine(store *AppStore, market *MarketServiceClient) *TSignalEngine {
@@ -370,7 +401,11 @@ func (e *TSignalEngine) onMinuteBar(bar *MinuteBar) {
 		e.evaluateS2(bar)
 		e.evaluateS3(bar)
 		e.evaluateS4(bar)
+		e.evaluateS6(bar)
+		e.checkProtectiveBuyBack(bar)
 		e.checkFollowUpBuyBack(bar)
+		e.checkTimedBuyBack(bar)
+		e.checkSessionCloseBuyBack(bar)
 		e.tickLifecycleAt(barTime(bar))
 		e.persist()
 	}
@@ -643,6 +678,102 @@ func (e *TSignalEngine) evaluateS4(bar *MinuteBar) {
 		bar.Close, bar.Close*(1+params.S4TargetPct/100), ref, nil)
 }
 
+// evaluateS6 is a symbol-calibrated, sell-first VWAP fade evaluated only after
+// a complete five-minute group. Its defaults were selected on train/validation
+// data and then checked on a later untouched segment with next-bar execution.
+func (e *TSignalEngine) evaluateS6(bar *MinuteBar) {
+	params := e.state.Config.Rules
+	if !params.S6Enabled || e.s6Triggered || e.hasOpenSellFirst() {
+		return
+	}
+	at := barTime(bar)
+	if at.Minute()%5 != 4 {
+		return
+	}
+	fiveBars := e.builder.FiveMinuteBars()
+	if len(fiveBars) == 0 {
+		return
+	}
+	five := fiveBars[len(fiveBars)-1]
+	vwap := e.builder.VWAP()
+	if vwap <= 0 || five.Close <= 0 || e.state.PrevClose <= 0 {
+		return
+	}
+	devPct := (five.Close - vwap) / vwap * 100
+	if devPct > e.s6PeakDev {
+		e.s6PeakDev = devPct
+	}
+	vwapSlope := 0.0
+	if len(e.s6VWAPHistory) >= 3 && e.s6VWAPHistory[len(e.s6VWAPHistory)-3] > 0 {
+		base := e.s6VWAPHistory[len(e.s6VWAPHistory)-3]
+		vwapSlope = (vwap - base) / base * 100
+	}
+	e.s6VWAPHistory = append(e.s6VWAPHistory, vwap)
+	if len(e.s6VWAPHistory) > 48 {
+		e.s6VWAPHistory = e.s6VWAPHistory[len(e.s6VWAPHistory)-48:]
+	}
+	if len(fiveBars) < 7 {
+		return
+	}
+
+	hm := at.Hour()*100 + at.Minute()
+	if !((hm >= 1004 && hm < 1100) || (hm >= 1334 && hm < 1430)) {
+		return
+	}
+	dayGain := (five.Close - e.state.PrevClose) / e.state.PrevClose * 100
+	firstOpen := e.builder.Completed()[0].Open
+	gapPct := (firstOpen - e.state.PrevClose) / e.state.PrevClose * 100
+	rsi := rsiFromFiveMinuteBars(fiveBars, 6)
+	volRatio := e.volumeRatio()
+	if e.s6PeakDev < params.S6PeakDevPct || e.s6PeakDev-devPct < params.S6PullbackPct || devPct < params.S6MinDevPct ||
+		dayGain < params.S6MinDayGainPct || dayGain > params.S6MaxDayGainPct || rsi < params.S6MinRSI ||
+		vwapSlope > params.S6MaxVWAPSlopePct || (params.S6MaxVolRatio > 0 && volRatio > params.S6MaxVolRatio) ||
+		e.state.PrevDayReturn < params.S6MinPrevDayPct || e.state.PrevDayReturn > params.S6MaxPrevDayPct ||
+		gapPct < params.S6MinGapPct || gapPct > params.S6MaxGapPct {
+		return
+	}
+	target := five.Close * (1 - params.S6TargetPct/100)
+	stop := five.Close * (1 + params.S6StopPct/100)
+	if !e.passFilters(TSignalDirSellFirst, five.Close, target, stop, bar.Time) {
+		return
+	}
+	e.s6Triggered = true
+	e.emitSignalFromPrice(at, TSignalDirSellFirst, TSignalRuleS6Vwap,
+		fmt.Sprintf("5min VWAP峰值偏离%.2f%%后回落%.2f%%,当前偏离%.2f%%,RSI6 %.1f", e.s6PeakDev, e.s6PeakDev-devPct, devPct, rsi),
+		five.Close, target, stop, &TSignalFollowUp{Rule: "BUY_BACK_AT_FIXED_TARGET", Ref: target})
+}
+
+func rsiFromFiveMinuteBars(bars []MinuteBar, period int) float64 {
+	if period <= 0 || len(bars) <= period {
+		return 0
+	}
+	gain, loss := 0.0, 0.0
+	for i := 1; i <= period; i++ {
+		change := bars[i].Close - bars[i-1].Close
+		if change > 0 {
+			gain += change
+		} else {
+			loss -= change
+		}
+	}
+	avgGain, avgLoss := gain/float64(period), loss/float64(period)
+	for i := period + 1; i < len(bars); i++ {
+		change := bars[i].Close - bars[i-1].Close
+		currentGain, currentLoss := 0.0, 0.0
+		if change > 0 {
+			currentGain = change
+		} else {
+			currentLoss = -change
+		}
+		avgGain = (avgGain*float64(period-1) + currentGain) / float64(period)
+		avgLoss = (avgLoss*float64(period-1) + currentLoss) / float64(period)
+	}
+	if avgLoss == 0 {
+		return 100
+	}
+	return 100 - 100/(1+avgGain/avgLoss)
+}
+
 // evaluateS5 S5 急拉急跌反转(文档4.2):短窗口涨跌超阈值+现量放大+滞涨/止跌。
 // 快照级触发,同向冷却窗口内不重复发。
 func (e *TSignalEngine) evaluateS5(price float64, now time.Time) {
@@ -769,6 +900,80 @@ func (e *TSignalEngine) checkFollowUpBuyBack(bar *MinuteBar) {
 	}
 }
 
+// checkProtectiveBuyBack turns a breached stop into an explicit buy-back alert.
+// Live execution remains manual; replay uses bar high/low and fills automatically.
+func (e *TSignalEngine) checkProtectiveBuyBack(bar *MinuteBar) {
+	if e.hasPendingDirection(TSignalDirBuyBack) {
+		return
+	}
+	for _, sig := range e.state.Signals {
+		if sig.Status != TSignalStatusExecuted || sig.Direction != TSignalDirSellFirst || e.ledgerPaired(sig.ID) {
+			continue
+		}
+		if sig.Stop > 0 && bar.High >= sig.Stop {
+			e.emitSignalFromPrice(barTime(bar), TSignalDirBuyBack, TSignalRuleStopExit,
+				fmt.Sprintf("保护止损触发:分钟最高%.3f >= 止损价%.3f", bar.High, sig.Stop),
+				bar.Close, bar.Close, bar.Close, nil)
+		}
+		return
+	}
+}
+
+func (e *TSignalEngine) checkTimedBuyBack(bar *MinuteBar) {
+	if e.hasPendingDirection(TSignalDirBuyBack) || e.state.Config.Rules.S6MaxHoldMinutes <= 0 {
+		return
+	}
+	now := barTime(bar)
+	for _, sig := range e.state.Signals {
+		if sig.Rule != TSignalRuleS6Vwap || sig.Status != TSignalStatusExecuted || e.ledgerPaired(sig.ID) {
+			continue
+		}
+		started, err := time.Parse(time.RFC3339, sig.Time)
+		if err != nil || tradingMinuteOffset(now)-tradingMinuteOffset(started) < e.state.Config.Rules.S6MaxHoldMinutes {
+			return
+		}
+		e.emitSignalFromPrice(now, TSignalDirBuyBack, TSignalRuleCloseExit,
+			fmt.Sprintf("最长持有%d分钟已到,发出回补提示", e.state.Config.Rules.S6MaxHoldMinutes),
+			bar.Close, bar.Close, bar.Close, nil)
+		return
+	}
+}
+
+func tradingMinuteOffset(at time.Time) int {
+	minutes := at.Hour()*60 + at.Minute()
+	switch {
+	case minutes <= 9*60+30:
+		return 0
+	case minutes <= 11*60+30:
+		return minutes - (9*60 + 30)
+	case minutes < 13*60:
+		return 120
+	case minutes <= 15*60:
+		return 120 + minutes - 13*60
+	default:
+		return 240
+	}
+}
+
+func (e *TSignalEngine) checkSessionCloseBuyBack(bar *MinuteBar) {
+	at := barTime(bar)
+	hm := at.Hour()*100 + at.Minute()
+	if hm < 1455 || !e.hasOpenSellFirst() || e.hasPendingDirection(TSignalDirBuyBack) {
+		return
+	}
+	e.emitSignalFromPrice(at, TSignalDirBuyBack, TSignalRuleCloseExit,
+		"14:55后强制回补提示,避免日内卖出仓位跨日暴露", bar.Close, bar.Close, bar.Close, nil)
+}
+
+func (e *TSignalEngine) hasPendingDirection(direction string) bool {
+	for _, sig := range e.state.Signals {
+		if sig.Direction == direction && (sig.Status == TSignalStatusNew || sig.Status == TSignalStatusActive) {
+			return true
+		}
+	}
+	return false
+}
+
 // tickLifecycle 推进信号生命周期:过期自动取消、收盘检查(文档4.4/5.4)。
 func (e *TSignalEngine) tickLifecycle() {
 	e.tickLifecycleAt(time.Now())
@@ -791,7 +996,7 @@ func (e *TSignalEngine) tickLifecycleAt(now time.Time) {
 	}
 	// 14:55 后:存在未回补卖单时提示「放弃回补/隔日处理」。
 	hm := now.Hour()*100 + now.Minute()
-	if hm >= 1455 && hm < 1500 {
+	if hm >= 1455 && hm < 1500 && !e.hasPendingDirection(TSignalDirBuyBack) {
 		for _, sig := range e.state.Signals {
 			if sig.Status == TSignalStatusExecuted && sig.Direction == TSignalDirSellFirst && !e.ledgerPaired(sig.ID) {
 				e.emitStandAside("收盘前仍有未回补卖单,请决策:放弃回补/隔日处理")
@@ -1094,12 +1299,16 @@ func (e *TSignalEngine) resetDailyLocked(at time.Time) {
 	e.state.Counter = 0
 	e.state.PrevClose = 0
 	e.state.PrevVol = 0
+	e.state.PrevDayReturn = 0
 	e.builder = NewMinuteBarBuilder()
 	e.difHistory = nil
 	e.consecLosses = 0
 	e.s1HighPending, e.s1LowPending = false, false
 	e.s1HighPeak, e.s1LowTrough = 0, 0
 	e.s1HighAt, e.s1LowAt = time.Time{}, time.Time{}
+	e.s6PeakDev = 0
+	e.s6VWAPHistory = nil
+	e.s6Triggered = false
 	e.lastS5 = map[string]time.Time{}
 }
 
@@ -1136,10 +1345,10 @@ func (e *TSignalEngine) restore() {
 		log.Printf("做T信号状态恢复失败: %v", err)
 		e.state = TSignalState{Config: TSignalConfig{Rules: DefaultTSignalRuleParams(), Fees: DefaultTSignalFeeConfig()}}
 	}
-	if e.state.Config.Rules.S1DevPct == 0 {
+	if strings.TrimSpace(e.state.Config.Symbol) != "" && e.state.Config.Rules.S1DevPct == 0 {
 		e.state.Config.Rules = DefaultTSignalRuleParams()
 	}
-	if e.state.Config.Fees.MinRound == 0 {
+	if strings.TrimSpace(e.state.Config.Symbol) != "" && e.state.Config.Fees.MinRound == 0 {
 		e.state.Config.Fees = DefaultTSignalFeeConfig()
 	}
 	if e.state.Day != "" && e.state.Day != dateText() {
@@ -1174,14 +1383,14 @@ func (e *TSignalEngine) persist() {
 	}
 }
 
-// UpdateConfig 更新配置(API调用);换标的需确认并清空当日信号与账本(UI文档3.1)。
+// UpdateConfig 更新配置(API调用);存在盘中bar时换标的需确认并清空当日状态(UI文档3.1)。
 func (e *TSignalEngine) UpdateConfig(cfg TSignalConfig, force bool) error {
 	e.mu.Lock()
 	oldSymbol := strings.TrimSpace(e.state.Config.Symbol)
 	newSymbol := strings.TrimSpace(cfg.Symbol)
-	if oldSymbol != "" && newSymbol != oldSymbol && !force {
+	if oldSymbol != "" && newSymbol != oldSymbol && e.hasIntradayBarsLocked() && !force {
 		e.mu.Unlock()
-		return fmt.Errorf("当日已锁定标的 %s,换标的需确认(force=true)且将清空当日信号与账本", oldSymbol)
+		return fmt.Errorf("当前分时已有数据，换标的 %s 需确认(force=true)且将清空分时、信号与账本", oldSymbol)
 	}
 	if cfg.PositionShares < 0 || (cfg.PositionShares > 0 && cfg.PositionShares%3 != 0) {
 		e.mu.Unlock()
@@ -1190,10 +1399,12 @@ func (e *TSignalEngine) UpdateConfig(cfg TSignalConfig, force bool) error {
 	if newSymbol != oldSymbol {
 		e.resetDailyLocked(time.Now())
 	}
-	if cfg.Rules.S1DevPct == 0 {
+	// 空配置用于“恢复默认/清空”操作:没有标的时保留空值，让前端真正显示为空；
+	// 用户重新填写并保存标的后，再为缺失的规则和费用补齐策略默认值。
+	if newSymbol != "" && cfg.Rules.S1DevPct == 0 {
 		cfg.Rules = DefaultTSignalRuleParams()
 	}
-	if cfg.Fees.MinRound == 0 {
+	if newSymbol != "" && cfg.Fees.MinRound == 0 {
 		cfg.Fees = DefaultTSignalFeeConfig()
 	}
 	cfg.UpdatedAt = nowText()
@@ -1207,6 +1418,14 @@ func (e *TSignalEngine) UpdateConfig(cfg TSignalConfig, force bool) error {
 		e.requestStreamRestart()
 	}
 	return nil
+}
+
+// hasIntradayBarsLocked 仅在持有 e.mu 时调用，用于判断切换标的是否需要二次确认。
+func (e *TSignalEngine) hasIntradayBarsLocked() bool {
+	if e.builder == nil {
+		return false
+	}
+	return len(e.builder.Completed()) > 0 || e.builder.Current() != nil
 }
 
 // refreshPrevDayVolume 拉取昨日全天成交量(量比基准,文档3.3)。
@@ -1239,6 +1458,9 @@ func (e *TSignalEngine) refreshPrevDayVolumeForSymbol(symbol string) {
 			}
 			e.state.PrevVol = float64(k.Volume)
 			e.state.PrevClose = k.Close.Float64()
+			if last := k.Last.Float64(); last > 0 {
+				e.state.PrevDayReturn = (k.Close.Float64() - last) / last * 100
+			}
 			e.state.UpdatedAt = nowText()
 			e.persist()
 			e.mu.Unlock()

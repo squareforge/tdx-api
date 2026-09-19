@@ -10989,10 +10989,10 @@ textarea::placeholder {
 }
 
 .intraday-topbar {
-  padding: 10px 12px;
+  padding: 8px 10px 0;
   border: 1px solid var(--line);
-  border-radius: 4px;
-  background: var(--panel);
+  border-radius: var(--radius);
+  background: #fbfcfe;
   box-shadow: var(--shadow-soft);
 }
 
@@ -11007,13 +11007,106 @@ textarea::placeholder {
   min-width: 0;
 }
 
+.intraday-topbar-status.ant-space,
+.intraday-replay-controls.ant-space {
+  gap: 6px !important;
+}
+
+.intraday-topbar .ant-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  margin: 0;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel-soft);
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 22px;
+}
+
+.intraday-topbar .ant-tag-blue {
+  border-color: #b9cceb;
+  background: var(--primary-soft);
+  color: var(--primary-strong);
+}
+
+.intraday-topbar .ant-tag-green {
+  border-color: #b9ddce;
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.intraday-topbar .ant-tag-gold,
+.intraday-topbar .ant-tag-orange {
+  border-color: #ead39e;
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.intraday-topbar .ant-tag-red {
+  border-color: #edc1bc;
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.intraday-topbar .ant-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 2px;
+}
+
+.intraday-topbar .ant-badge-status-dot {
+  width: 7px;
+  height: 7px;
+}
+
+.intraday-topbar .ant-badge-status-text {
+  margin-inline-start: 6px;
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.intraday-topbar .ant-btn {
+  min-height: 34px;
+  border-radius: var(--radius);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.intraday-topbar .ant-btn-default {
+  border-color: var(--line);
+  background: var(--panel);
+}
+
+.intraday-topbar .ant-btn-default:hover {
+  border-color: #a9bdd9;
+  background: var(--primary-soft);
+  color: var(--primary-strong);
+}
+
+.intraday-topbar .ant-btn-primary {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+
+.intraday-topbar .ant-btn-primary:hover {
+  border-color: var(--primary-strong);
+  background: var(--primary-strong);
+}
+
 .intraday-replay-controls {
   flex: 0 0 auto;
   margin-left: auto;
+  padding-left: 8px;
+  border-left: 1px solid var(--line);
 }
 
 .intraday-replay-controls .ant-tag {
-  margin-inline-end: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 10px;
 }
@@ -11071,7 +11164,9 @@ textarea::placeholder {
 }
 
 .intraday-trend-detail {
-  margin-top: 6px;
+  margin-top: 8px;
+  padding: 7px 2px 8px;
+  border-top: 1px solid var(--panel-muted);
 }
 
 .intraday-cooldown {
@@ -11520,6 +11615,10 @@ textarea::placeholder {
 }
 
 @media (max-width: 720px) {
+  .intraday-topbar {
+    padding: 8px 10px 0;
+  }
+
   .intraday-topbar-content {
     align-items: flex-start;
     flex-wrap: wrap;
@@ -11527,6 +11626,10 @@ textarea::placeholder {
 
   .intraday-replay-controls {
     margin-left: 0;
+    width: 100%;
+    padding: 8px 0;
+    border-top: 1px solid var(--panel-muted);
+    border-left: 0;
   }
 
   .intraday-body-with-config {

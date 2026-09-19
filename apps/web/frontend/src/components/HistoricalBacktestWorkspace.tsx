@@ -54,6 +54,20 @@ function compareScanReturnDesc(a: HistoricalScanResult, b: HistoricalScanResult)
   return b.total_return - a.total_return;
 }
 
+function scanMeetsHighWinRateGoal(item: HistoricalScanResult) {
+  return item.win_rate >= 70 && item.closed_count >= 20 && item.total_return > 0;
+}
+
+function compareScanBest(a: HistoricalScanResult, b: HistoricalScanResult) {
+  const goalDifference = Number(scanMeetsHighWinRateGoal(b)) - Number(scanMeetsHighWinRateGoal(a));
+  if (goalDifference) return goalDifference;
+  if (scanMeetsHighWinRateGoal(a) && scanMeetsHighWinRateGoal(b)) {
+    const nextOpenDifference = Number(b.sell_base === 'next_open') - Number(a.sell_base === 'next_open');
+    if (nextOpenDifference) return nextOpenDifference;
+  }
+  return compareScanReturnDesc(a, b);
+}
+
 const scanSummaryColumns = [
   { title: '策略', dataIndex: 'strategy_name', width: 180, render: (value: string) => <strong>{value}</strong> },
   { title: '最优参数', key: 'params', render: (_: unknown, row: HistoricalScanResult) => <span>{scanParamText(row)}</span> },
@@ -331,7 +345,7 @@ export function HistoricalBacktestWorkspace() {
     }
     const summary: HistoricalScanResult[] = [];
     for (const list of byStrategy.values()) {
-      const best = [...list].sort(compareScanReturnDesc)[0];
+      const best = [...list].sort(compareScanBest)[0];
       if (best) summary.push(best);
     }
     summary.sort(compareScanReturnDesc);
@@ -450,7 +464,7 @@ export function HistoricalBacktestWorkspace() {
         <Card className="work-card historical-run-list" title={<div className="historical-backtest-title"><div><span>批次列表</span><Text type="secondary">{listView === 'runs' ? `${runs.length} 条回测` : `${scanRuns.length} 条扫描`}</Text></div><small>RUNS</small></div>} extra={<Segmented size="small" value={listView} onChange={changeListView} options={[{ value: 'runs', label: '回测' }, { value: 'scan', label: '扫描' }]} />}>
           {listView === 'runs'
             ? (runs.length ? <div className="historical-run-stack">{runs.map((run) => { const meta = statusMeta(run.status); return <button type="button" key={run.id} className={run.id === selectedRun?.id ? 'is-active' : ''} onClick={() => { setSelectedRun(run); setPage(1); setTradePage(1); }}><span>{run.start_date} → {run.end_date}</span><strong>{run.strategy_ids.length} 个策略 · {run.signal_count} 条信号</strong><small><Tag color={meta.color}>{meta.label}</Tag>{run.processed_dates}/{run.total_dates || '--'} 交易日</small></button>; })}</div> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无历史回测" />)
-            : (scanRuns.length ? <div className="historical-run-stack">{scanRuns.map((run) => { const meta = statusMeta(run.status); return <button type="button" key={run.id} className={run.id === selectedScanRun?.id ? 'is-active' : ''} onClick={() => selectScanRun(run)}><span>{run.start_date} → {run.end_date}</span><strong>{run.strategy_ids.length} 个策略 · 96 组合</strong><small><Tag color={meta.color}>{meta.label}</Tag>{run.processed_strategies}/{run.total_strategies || '--'} 策略</small></button>; })}</div> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无参数扫描" />)}
+            : (scanRuns.length ? <div className="historical-run-stack">{scanRuns.map((run) => { const meta = statusMeta(run.status); return <button type="button" key={run.id} className={run.id === selectedScanRun?.id ? 'is-active' : ''} onClick={() => selectScanRun(run)}><span>{run.start_date} → {run.end_date}</span><strong>{run.strategy_ids.length} 个策略 · 240 组合</strong><small><Tag color={meta.color}>{meta.label}</Tag>{run.processed_strategies}/{run.total_strategies || '--'} 策略</small></button>; })}</div> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无参数扫描" />)}
         </Card>
 
         <Card className="work-card historical-result-card" title={<div className="historical-backtest-title"><div><span>{isScanView ? '参数扫描结果' : '回测结果'}</span><Text type="secondary">{isScanView ? (selectedScanRun ? `${selectedScanRun.start_date} 至 ${selectedScanRun.end_date}` : '等待任务') : selectedRun ? `${selectedRun.start_date} 至 ${selectedRun.end_date}` : '等待任务'}</Text></div><small>{isScanView ? 'SCAN RESULT' : 'RESULT'}</small></div>} extra={!isScanView && selectedRun?.status === 'running' ? <Button danger icon={<StopOutlined />} onClick={() => void cancelRun()}>取消</Button> : null}>

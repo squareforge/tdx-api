@@ -26,15 +26,16 @@ func handleTSignalState(w http.ResponseWriter, r *http.Request) {
 	}
 	state := tSignalEngine.State()
 	successResponse(w, map[string]interface{}{
-		"symbol":      state.Config.Symbol,
-		"position":    state.Config.PositionShares,
-		"trend_veto":  state.Trend,
-		"cooldown":    state.Cooldown,
-		"day":         state.Day,
-		"prev_close":  state.PrevClose,
-		"prev_volume": state.PrevVol,
-		"health":      tSignalEngine.Health(),
-		"config":      state.Config,
+		"symbol":          state.Config.Symbol,
+		"position":        state.Config.PositionShares,
+		"trend_veto":      state.Trend,
+		"cooldown":        state.Cooldown,
+		"day":             state.Day,
+		"prev_close":      state.PrevClose,
+		"prev_volume":     state.PrevVol,
+		"prev_day_return": state.PrevDayReturn,
+		"health":          tSignalEngine.Health(),
+		"config":          state.Config,
 	})
 }
 
@@ -101,7 +102,7 @@ func handleTSignalReplay(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleTSignalConfig GET/PUT /api/t-signal/config
-// 标的订阅、底仓、S1-S5 参数、费率、开关(UI文档4.2 配置面板)。
+// 标的订阅、底仓、S1-S6 参数、费率、开关(UI文档4.2 配置面板)。
 func handleTSignalConfig(w http.ResponseWriter, r *http.Request) {
 	if tSignalEngine == nil {
 		errorResponse(w, "信号引擎未初始化")

@@ -680,7 +680,7 @@ func (s *AppStore) seedDefaults() error {
 
 func defaultStrategyTemplates() []Strategy {
 	templates := []Strategy{
-		// ========== 保留的10个中线趋势策略 ==========
+		// ========== 中线趋势策略 ==========
 		{
 			ID:          "template-a-share-v3",
 			Name:        "A股V3强势启动",
@@ -694,6 +694,22 @@ func defaultStrategyTemplates() []Strategy {
 			Name:        "MACD趋势启动",
 			Description: "中线趋势：MACD金叉必须发生在中期多头且均线继续上行的结构中，过滤弱收盘和过度追涨。",
 			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":180000000}},{"id":"price_range","factor":"price_range","params":{"min":3,"max":120}},{"id":"ma_trend_filter","factor":"ma_trend","params":{"short":5,"mid":20,"long":60}},{"id":"ma_slope_filter","factor":"ma_slope","params":{"period":20,"lookback":5,"min":0.2,"max":7}},{"id":"macd_trigger","factor":"macd_golden_cross","params":{"fast":12,"slow":26,"signal":9}},{"id":"change_guard","factor":"change_range","params":{"min":-1,"max":5.5}},{"id":"close_quality","factor":"close_strength","params":{"min_position":0.6,"max_upper_shadow":2.5}}],"scores":[{"id":"volume_up","factor":"volume_up","weight":35,"params":{"days":5,"ratio":1.2}},{"id":"break_high","factor":"break_high","weight":30,"params":{"days":20}},{"id":"gain_quality","factor":"gain_days","weight":20,"params":{"days":20,"min":3,"max":25}},{"id":"slope_quality","factor":"ma_slope","weight":15,"params":{"period":20,"lookback":5,"min":0.2,"max":7}}],"pass":{"min_score":12,"top_n":8}}`,
+			Enabled:     true,
+			Readonly:    true,
+		},
+		{
+			ID:          "template-macd-calm-confirm",
+			Name:        "MACD温和确认",
+			Description: "短波段趋势：强势市场中只保留MACD金叉、中期多头、20日涨幅充足且近5日波动可控的温和启动信号。",
+			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":180000000}},{"id":"price_range","factor":"price_range","params":{"min":3,"max":120}},{"id":"ma_trend_filter","factor":"ma_trend","params":{"short":5,"mid":20,"long":60}},{"id":"ma_slope_filter","factor":"ma_slope","params":{"period":20,"lookback":5,"min":0.3,"max":5}},{"id":"macd_trigger","factor":"macd_golden_cross","params":{"fast":12,"slow":26,"signal":9}},{"id":"change_guard","factor":"change_range","params":{"min":0,"max":4}},{"id":"close_quality","factor":"close_strength","params":{"min_position":0.65,"max_upper_shadow":2.3}},{"id":"market_regime","factor":"market_momentum","params":{"days":20,"min":6,"max":100}},{"id":"gain_guard","factor":"gain_days","params":{"days":20,"min":6,"max":30}},{"id":"amplitude_guard","factor":"max_amplitude","params":{"days":5,"max":6}}],"scores":[{"id":"volume_up","factor":"volume_up","weight":35,"params":{"days":5,"ratio":1.2}},{"id":"break_high","factor":"break_high","weight":30,"params":{"days":20}},{"id":"gain_quality","factor":"gain_days","weight":20,"params":{"days":20,"min":3,"max":25}},{"id":"slope_quality","factor":"ma_slope","weight":15,"params":{"period":20,"lookback":5,"min":0.2,"max":7}}],"pass":{"min_score":20,"top_n":8}}`,
+			Enabled:     true,
+			Readonly:    true,
+		},
+		{
+			ID:          "template-macd-broad-regime",
+			Name:        "MACD宽市况精选",
+			Description: "短波段趋势：在上证指数20日涨幅达到2%后扩大候选日期，再用趋势、涨幅、波动和40分质量门槛精选。",
+			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":180000000}},{"id":"price_range","factor":"price_range","params":{"min":3,"max":120}},{"id":"ma_trend_filter","factor":"ma_trend","params":{"short":5,"mid":20,"long":60}},{"id":"ma_slope_filter","factor":"ma_slope","params":{"period":20,"lookback":5,"min":0.3,"max":5}},{"id":"macd_trigger","factor":"macd_golden_cross","params":{"fast":12,"slow":26,"signal":9}},{"id":"change_guard","factor":"change_range","params":{"min":0,"max":4}},{"id":"close_quality","factor":"close_strength","params":{"min_position":0.65,"max_upper_shadow":2.3}},{"id":"market_regime","factor":"market_momentum","params":{"days":20,"min":2,"max":100}},{"id":"gain_guard","factor":"gain_days","params":{"days":20,"min":6,"max":30}},{"id":"amplitude_guard","factor":"max_amplitude","params":{"days":5,"max":6}}],"scores":[{"id":"volume_up","factor":"volume_up","weight":35,"params":{"days":5,"ratio":1.2}},{"id":"break_high","factor":"break_high","weight":30,"params":{"days":20}},{"id":"gain_quality","factor":"gain_days","weight":20,"params":{"days":20,"min":3,"max":25}},{"id":"slope_quality","factor":"ma_slope","weight":15,"params":{"period":20,"lookback":5,"min":0.2,"max":7}}],"pass":{"min_score":40,"top_n":8}}`,
 			Enabled:     true,
 			Readonly:    true,
 		},

@@ -152,6 +152,26 @@ func TestLastFiveMinuteDirection(t *testing.T) {
 	}
 }
 
+func TestFiveMinuteBarsAggregatesOHLCV(t *testing.T) {
+	b := NewMinuteBarBuilder()
+	for i := 0; i < 5; i++ {
+		b.completed = append(b.completed, MinuteBar{
+			Time: ts(18, 10, i, 0).Format(time.RFC3339),
+			Open: 10 + float64(i)/10, High: 10.5 + float64(i)/10,
+			Low: 9.8 - float64(i)/10, Close: 10.1 + float64(i)/10,
+			Volume: 1000, Amount: 10000, Complete: true, Trusted: true,
+		})
+	}
+	bars := b.FiveMinuteBars()
+	if len(bars) != 1 {
+		t.Fatalf("应聚合为一根5分钟bar，得到 %d", len(bars))
+	}
+	bar := bars[0]
+	if bar.Open != 10 || bar.Close != 10.5 || bar.High != 10.9 || bar.Low != 9.4 || bar.Volume != 5000 || bar.Amount != 50000 {
+		t.Fatalf("5分钟OHLCV聚合错误: %+v", bar)
+	}
+}
+
 // TestParseQuoteServerTime ServerTime 解析与回退。
 func TestParseQuoteServerTime(t *testing.T) {
 	fallback := ts(18, 10, 30, 15)

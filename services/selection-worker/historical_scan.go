@@ -49,10 +49,10 @@ func defaultScanGrid() scanGrid {
 	return scanGrid{
 		BuyBases:       []string{"open", "close"},
 		SellBases:      []string{"next_open", "same_close"},
-		TakeProfits:    []float64{5, 10, 15},
+		TakeProfits:    []float64{2, 3, 5, 10, 15},
 		StopLosses:     []float64{3, 5},
 		TrailDrawdowns: []float64{5, 8},
-		MaxHoldDays:    []int{10, 20},
+		MaxHoldDays:    []int{10, 15, 20},
 	}
 }
 

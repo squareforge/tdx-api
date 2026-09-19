@@ -48,6 +48,7 @@ web/data/
 web/output.log
 web/server.exe
 archives/
+output/intraday-research/*-minute5.json
 
 # Local editor and environment files
 .idea/

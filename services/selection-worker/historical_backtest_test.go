@@ -57,6 +57,37 @@ func TestNormalizeHistoricalBacktestRequestDefaults(t *testing.T) {
 	}
 }
 
+func TestDefaultScanGridIncludesShortSwingExits(t *testing.T) {
+	grid := defaultScanGrid()
+	if len(grid.combinations()) != 240 {
+		t.Fatalf("scan combinations = %d, want 240", len(grid.combinations()))
+	}
+	if !containsScanFloat(grid.TakeProfits, 2) || !containsScanFloat(grid.TakeProfits, 3) {
+		t.Fatalf("take profits = %v, want short-swing 2%% and 3%% targets", grid.TakeProfits)
+	}
+	if !containsScanInt(grid.MaxHoldDays, 15) {
+		t.Fatalf("max hold days = %v, want 15-day candidate", grid.MaxHoldDays)
+	}
+}
+
+func containsScanFloat(values []float64, target float64) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func containsScanInt(values []int, target int) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
 func TestHistoricalHistoryCountIncludesGapFromReplayToLatestData(t *testing.T) {
 	location := time.FixedZone("CST", 8*60*60)
 	start := time.Date(2024, 1, 2, 0, 0, 0, 0, location)

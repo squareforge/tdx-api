@@ -403,40 +403,70 @@ func (b *MinuteBarBuilder) SnapshotTrusted(now time.Time) bool {
 // LastFiveMinuteDirection 返回最近一根完整5分钟K的方向。仅接受同一交易时段内连续的5根分钟bar，
 // 午休、断流或数据缺口都不会被拼成确认bar。
 func (b *MinuteBarBuilder) LastFiveMinuteDirection() (string, bool) {
-	if len(b.completed) < 5 {
+	bar, ok := b.LastFiveMinuteBar()
+	if !ok {
 		return "", false
 	}
-	for end := len(b.completed) - 1; end >= 4; end-- {
+	if bar.Close > bar.Open {
+		return "up", true
+	}
+	if bar.Close < bar.Open {
+		return "down", true
+	}
+	return "flat", true
+}
+
+// FiveMinuteBars aggregates complete, contiguous one-minute bars into five-minute bars.
+// A group is emitted only when its final minute starts at xx:x4, so a partial current
+// group can never leak into an indicator or a replay signal.
+func (b *MinuteBarBuilder) FiveMinuteBars() []MinuteBar {
+	result := make([]MinuteBar, 0, len(b.completed)/5)
+	for end := 4; end < len(b.completed); end++ {
 		endTime, err := time.Parse(time.RFC3339, b.completed[end].Time)
 		if err != nil || endTime.Minute()%5 != 4 {
 			continue
 		}
 		start := end - 4
-		valid := true
-		if !b.completed[start].Trusted {
-			continue
-		}
-		for i := start + 1; i <= end; i++ {
+		valid := b.completed[start].Trusted
+		for i := start + 1; valid && i <= end; i++ {
 			left, leftErr := time.Parse(time.RFC3339, b.completed[i-1].Time)
 			right, rightErr := time.Parse(time.RFC3339, b.completed[i].Time)
-			if leftErr != nil || rightErr != nil || !b.completed[i].Trusted || !right.Equal(left.Add(time.Minute)) {
-				valid = false
-				break
-			}
+			valid = leftErr == nil && rightErr == nil && b.completed[i].Trusted && right.Equal(left.Add(time.Minute))
 		}
 		if !valid {
 			continue
 		}
-		open, close := b.completed[start].Open, b.completed[end].Close
-		if close > open {
-			return "up", true
+		aggregated := MinuteBar{
+			Time:     b.completed[start].Time,
+			Open:     b.completed[start].Open,
+			High:     b.completed[start].High,
+			Low:      b.completed[start].Low,
+			Close:    b.completed[end].Close,
+			Complete: true,
+			Trusted:  true,
 		}
-		if close < open {
-			return "down", true
+		for i := start; i <= end; i++ {
+			minute := b.completed[i]
+			if minute.High > aggregated.High {
+				aggregated.High = minute.High
+			}
+			if minute.Low < aggregated.Low {
+				aggregated.Low = minute.Low
+			}
+			aggregated.Volume += minute.Volume
+			aggregated.Amount += minute.Amount
 		}
-		return "flat", true
+		result = append(result, aggregated)
 	}
-	return "", false
+	return result
+}
+
+func (b *MinuteBarBuilder) LastFiveMinuteBar() (MinuteBar, bool) {
+	bars := b.FiveMinuteBars()
+	if len(bars) == 0 {
+		return MinuteBar{}, false
+	}
+	return bars[len(bars)-1], true
 }
 
 // DayHighFirst15m 开盘15分钟(9:30-9:45)内完成bar的最高价(用于S4突破)。

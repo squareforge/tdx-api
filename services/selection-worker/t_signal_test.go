@@ -115,6 +115,36 @@ func TestPassFiltersOpenSellFirst(t *testing.T) {
 	}
 }
 
+func TestProtectiveAndTimedBuyBackAlerts(t *testing.T) {
+	e := newTestEngine()
+	e.state.Config.Rules.S6MaxHoldMinutes = 150
+	sell := TSignalRecord{
+		ID: "T-S6", Symbol: "sz000001", Direction: TSignalDirSellFirst,
+		Rule: TSignalRuleS6Vwap, RefPrice: 10, Target: 9.93, Stop: 10.40,
+		Status: TSignalStatusExecuted, Time: ts(18, 10, 0, 0).Format(time.RFC3339),
+	}
+	e.state.Signals = append(e.state.Signals, sell)
+	e.state.Ledger = append(e.state.Ledger, TSignalLedgerEntry{ID: "L-T-S6", SellSignalID: sell.ID, SellPrice: 10, Shares: 1000})
+
+	// A touched high must alert even if the minute closes back below the stop.
+	stopBar := MinuteBar{Time: ts(18, 10, 5, 0).Format(time.RFC3339), High: 10.41, Close: 10.20, Trusted: true, Complete: true}
+	e.checkProtectiveBuyBack(&stopBar)
+	if len(e.state.Signals) != 2 || e.state.Signals[1].Rule != TSignalRuleStopExit {
+		t.Fatalf("分钟内触及止损应发回补提示: %+v", e.state.Signals)
+	}
+
+	// Remove the pending stop alert and verify 150 trading minutes excludes lunch.
+	e.state.Signals = e.state.Signals[:1]
+	timedBar := MinuteBar{Time: ts(18, 14, 0, 0).Format(time.RFC3339), High: 10.20, Close: 10.10, Trusted: true, Complete: true}
+	e.checkTimedBuyBack(&timedBar)
+	if len(e.state.Signals) != 2 || e.state.Signals[1].Rule != TSignalRuleCloseExit {
+		t.Fatalf("达到最长交易分钟应发回补提示: %+v", e.state.Signals)
+	}
+	if got := tradingMinuteOffset(ts(18, 13, 0, 0)) - tradingMinuteOffset(ts(18, 11, 30, 0)); got != 0 {
+		t.Fatalf("午休不应计入持有分钟，得到 %d", got)
+	}
+}
+
 // TestAckAndLedger 信号成交后的记账与配对。
 func TestAckAndLedger(t *testing.T) {
 	e := newTestEngine()
@@ -159,7 +189,7 @@ func TestAckAndLedger(t *testing.T) {
 	}
 }
 
-func TestReplayMinuteBarsCreatesSignalCardsAndLedgerWithoutMutatingLiveState(t *testing.T) {
+func TestReplayMinuteBarsCancelsGapThroughTargetWithoutMutatingLiveState(t *testing.T) {
 	live := newTestEngine()
 	live.state.Config.TrendVeto = false
 	live.state.Config.Rules = DefaultTSignalRuleParams()
@@ -205,14 +235,105 @@ func TestReplayMinuteBarsCreatesSignalCardsAndLedgerWithoutMutatingLiveState(t *
 		t.Fatalf("回放帧数应等于分钟bar数，得到 %d", len(result.Frames))
 	}
 	last := result.Frames[len(result.Frames)-1]
-	if len(last.Signals) != 2 || last.Signals[0].Direction != TSignalDirSellFirst || last.Signals[1].Direction != TSignalDirBuyBack {
-		t.Fatalf("回放应产生高抛和买回信号，得到 %+v", last.Signals)
+	if len(last.Signals) != 1 || last.Signals[0].Direction != TSignalDirSellFirst || last.Signals[0].Status != TSignalStatusCancelled {
+		t.Fatalf("下一根开盘越过目标价时应取消卖出计划，得到 %+v", last.Signals)
 	}
-	if len(last.Ledger) != 1 || !last.Ledger[0].Closed || last.Ledger[0].NetPnl <= 0 {
-		t.Fatalf("回放应生成已配对盈利账本，得到 %+v", last.Ledger)
+	if len(last.Ledger) != 0 {
+		t.Fatalf("未成交计划不应写入账本，得到 %+v", last.Ledger)
 	}
 	if len(live.state.Signals) != 0 || len(live.state.Ledger) != 0 {
 		t.Fatalf("回放不得修改实时引擎状态，signals=%+v ledger=%+v", live.state.Signals, live.state.Ledger)
+	}
+}
+
+func TestReplayS6UsesNextBarOpenAndClosesAtTarget(t *testing.T) {
+	live := newTestEngine()
+	live.state.Config.TrendVeto = false
+	live.state.Config.Rules = DefaultTSignalRuleParams()
+	live.state.Config.Rules.S1Enabled = false
+	live.state.Config.Rules.S2Enabled = false
+	live.state.Config.Rules.S3Enabled = false
+	live.state.Config.Rules.S4Enabled = false
+	live.state.Config.Rules.S5Enabled = false
+	live.state.Config.Rules.S6Enabled = true
+	live.state.PrevVol = 2400
+	live.state.PrevDayReturn = 0
+
+	closes := []float64{10, 10, 10, 10, 10, 10.30, 10.25}
+	bars := make([]MinuteBar, 0, 36)
+	for group, close := range closes {
+		for minute := 0; minute < 5; minute++ {
+			at := ts(18, 9, 30+group*5+minute, 0)
+			bars = append(bars, MinuteBar{
+				Time: at.Format(time.RFC3339), Open: close, High: close, Low: close, Close: close,
+				Volume: 1000, Amount: close * 1000, Complete: true, Trusted: true,
+			})
+		}
+	}
+	entryAt := ts(18, 10, 5, 0)
+	bars = append(bars, MinuteBar{
+		Time: entryAt.Format(time.RFC3339), Open: 10.20, High: 10.22, Low: 10.10, Close: 10.12,
+		Volume: 1000, Amount: 10.12 * 1000, Complete: true, Trusted: true,
+	})
+
+	result, err := live.ReplayMinuteBars(TSignalReplayRequest{Bars: bars, PrevClose: 10})
+	if err != nil {
+		t.Fatalf("S6回放失败: %v", err)
+	}
+	last := result.Frames[len(result.Frames)-1]
+	if len(last.Signals) != 2 || last.Signals[0].Rule != TSignalRuleS6Vwap || last.Signals[1].Direction != TSignalDirBuyBack {
+		t.Fatalf("S6应形成卖出和目标回补信号，得到 %+v", last.Signals)
+	}
+	if len(last.Ledger) != 1 || !last.Ledger[0].Closed {
+		t.Fatalf("S6回放应闭环，得到 %+v", last.Ledger)
+	}
+	if last.Ledger[0].SellPrice != 10.20 {
+		t.Fatalf("卖出应使用下一根开盘价10.20，得到 %.3f", last.Ledger[0].SellPrice)
+	}
+	if last.Ledger[0].NetPnl <= 0 || result.Summary.ClosedTrades != 1 || result.Summary.Wins != 1 {
+		t.Fatalf("目标回补应产生一笔含费盈利，ledger=%+v summary=%+v", last.Ledger, result.Summary)
+	}
+	if len(live.state.Signals) != 0 || len(live.state.Ledger) != 0 {
+		t.Fatal("隔离回放不得污染实时引擎")
+	}
+}
+
+func TestUpdateConfigAllowsExplicitEmptyReset(t *testing.T) {
+	e := newTestEngine()
+	e.state.Config.Symbol = "sh600570"
+	if err := e.UpdateConfig(TSignalConfig{}, true); err != nil {
+		t.Fatalf("清空配置失败: %v", err)
+	}
+	if e.state.Config.Symbol != "" || e.state.Config.PositionShares != 0 || e.state.Config.Rules.S1DevPct != 0 || e.state.Config.Fees.MinRound != 0 {
+		t.Fatalf("清空配置后不应自动恢复默认值: %+v", e.state.Config)
+	}
+}
+
+func TestUpdateConfigChangesSymbolWithoutConfirmationWhenNoIntradayBars(t *testing.T) {
+	e := newTestEngine()
+	next := e.state.Config
+	next.Symbol = "sh600570"
+	if err := e.UpdateConfig(next, false); err != nil {
+		t.Fatalf("没有分时bar时切换标的不应要求确认: %v", err)
+	}
+	if e.state.Config.Symbol != "sh600570" {
+		t.Fatalf("标的未更新: %+v", e.state.Config)
+	}
+}
+
+func TestUpdateConfigRequiresConfirmationWhenIntradayBarsExist(t *testing.T) {
+	e := newTestEngine()
+	e.builder.current = &MinuteBar{Time: "2026-09-18T10:30:00+08:00", Close: 10}
+	next := e.state.Config
+	next.Symbol = "sh600570"
+	if err := e.UpdateConfig(next, false); err == nil {
+		t.Fatal("已有分时bar时切换标的应要求确认")
+	}
+	if err := e.UpdateConfig(next, true); err != nil {
+		t.Fatalf("确认后切换标的失败: %v", err)
+	}
+	if len(e.BarsSnapshot()) != 0 {
+		t.Fatalf("确认切换后应清空分时bar: %+v", e.BarsSnapshot())
 	}
 }
 

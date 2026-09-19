@@ -7,8 +7,8 @@ import (
 
 func TestDefaultStrategyTemplatesAreValidAndConservative(t *testing.T) {
 	templates := defaultStrategyTemplates()
-	if len(templates) != 17 {
-		t.Fatalf("template count = %d, want 17", len(templates))
+	if len(templates) != 19 {
+		t.Fatalf("template count = %d, want 19", len(templates))
 	}
 
 	seen := make(map[string]bool, len(templates))
@@ -82,11 +82,20 @@ func TestDefaultStrategyTemplatesAreValidAndConservative(t *testing.T) {
 				}
 			}
 		}
+		if item.ID == "template-macd-calm-confirm" || item.ID == "template-macd-broad-regime" {
+			for _, required := range []string{"ma_trend", "ma_slope", "macd_golden_cross", "market_momentum", "gain_days", "max_amplitude"} {
+				if !filterFactors[required] {
+					t.Fatalf("high-win-rate template %q missing filter %q", item.ID, required)
+				}
+			}
+		}
 	}
 
 	for _, id := range []string{
 		"template-a-share-v3",
 		"template-macd-trend",
+		"template-macd-calm-confirm",
+		"template-macd-broad-regime",
 		"template-pullback",
 		"template-trend-pullback-confirm",
 		"template-volume-breakout-confirm",
