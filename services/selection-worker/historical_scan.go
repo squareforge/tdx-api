@@ -22,6 +22,7 @@ type historicalScanSignal struct {
 	Symbol      string
 	Score       float64
 	SignalClose float64 // 信号日收盘价,买入基准"close"时作为限价参考
+	Execution   StrategyExecutionConfig
 }
 
 // scanParamSet 一组买卖参数组合。
@@ -120,7 +121,7 @@ func (r *AutomationRunner) generateStrategySignals(ctx context.Context, plan his
 		matches = rankHistoricalMatches(matches, plan.config.Pass.TopN)
 		for _, item := range matches {
 			signals = append(signals, historicalScanSignal{
-				SignalDate: signalDate, Symbol: item.Symbol, Score: item.Score, SignalClose: item.Latest,
+				SignalDate: signalDate, Symbol: item.Symbol, Score: item.Score, SignalClose: item.Latest, Execution: plan.config.Execution,
 			})
 		}
 	}
@@ -134,6 +135,7 @@ func replayHistoricalPortfolio(klines map[string][]FormulaKline, dates []int, si
 	for _, sig := range signals {
 		byDate[sig.SignalDate] = append(byDate[sig.SignalDate], portfolioPendingBuy{
 			symbol: sig.Symbol, score: sig.Score, signalDate: sig.SignalDate, signalClose: sig.SignalClose,
+			minOpenGap: sig.Execution.MinOpenGap, maxOpenGap: sig.Execution.MaxOpenGap,
 		})
 	}
 	sim := newPortfolioSimulator(cfg)

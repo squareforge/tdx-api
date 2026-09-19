@@ -283,6 +283,20 @@ func handleStrategyFactors(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 		{
+			ID: "low_three_bull_first_board", Name: "低位三连阳首板", Kind: "filter",
+			Description: "信号日首次涨停，前两日连续阳线；同时约束放量、成交额、近5日波动与首板前60日位置。",
+			Params: []StrategyFactorParamDef{
+				{Name: "position_lookback", Label: "位置回看天数", Type: "number", Default: 60},
+				{Name: "max_pre_position", Label: "首板前最高位置%", Type: "number", Default: 85},
+				{Name: "min_amount", Label: "最低成交额", Type: "number", Default: 500000000},
+				{Name: "max_amount", Label: "最高成交额", Type: "number", Default: 4000000000},
+				{Name: "min_volume_ratio", Label: "最低放量倍数", Type: "number", Default: 2},
+				{Name: "max_prior_volume_ratio", Label: "前日最大放量倍数", Type: "number", Default: 2},
+				{Name: "max_prior_gain", Label: "前序单日最大涨幅%", Type: "number", Default: 5},
+				{Name: "max_five_day_range", Label: "5日最大区间振幅%", Type: "number", Default: 20},
+			},
+		},
+		{
 			ID:          "formula",
 			Name:        "公式因子",
 			Kind:        "score",

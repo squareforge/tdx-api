@@ -12,18 +12,27 @@ import (
 )
 
 type StrategyConfig struct {
-	Universe        json.RawMessage      `json:"universe"`
-	PoolID          string               `json:"pool_id"`
-	Symbols         []string             `json:"symbols"`
-	Filters         []StrategyFactorRule `json:"filters"`
-	Scores          []StrategyFactorRule `json:"scores"`
-	Pass            StrategyPassConfig   `json:"pass"`
-	Period          string               `json:"period"`
-	Right           int                  `json:"right"`
-	CalcCount       int                  `json:"calc_count"`
-	BatchSize       int                  `json:"batch_size"`
-	ScanLimit       *int                 `json:"scan_limit,omitempty"`
-	ContinueOnError bool                 `json:"continue_on_error"`
+	Universe        json.RawMessage         `json:"universe"`
+	PoolID          string                  `json:"pool_id"`
+	Symbols         []string                `json:"symbols"`
+	Filters         []StrategyFactorRule    `json:"filters"`
+	Scores          []StrategyFactorRule    `json:"scores"`
+	Pass            StrategyPassConfig      `json:"pass"`
+	Period          string                  `json:"period"`
+	Right           int                     `json:"right"`
+	CalcCount       int                     `json:"calc_count"`
+	BatchSize       int                     `json:"batch_size"`
+	ScanLimit       *int                    `json:"scan_limit,omitempty"`
+	ContinueOnError bool                    `json:"continue_on_error"`
+	Execution       StrategyExecutionConfig `json:"execution"`
+}
+
+// StrategyExecutionConfig describes constraints that can only be evaluated
+// after a signal has been produced. Keeping these out of factor evaluation
+// prevents next-session prices from leaking into the signal day.
+type StrategyExecutionConfig struct {
+	MinOpenGap *float64 `json:"min_open_gap,omitempty"`
+	MaxOpenGap *float64 `json:"max_open_gap,omitempty"`
 }
 
 type StrategyFactorRule struct {
@@ -778,6 +787,12 @@ func (r *AutomationRunner) evaluateFactor(result *StrategyRunResult, symbol stri
 		fr.Hit, fr.Reason, fr.Value = hit, reason, raw
 		if hit {
 			fr.Score = clamp01(raw / 12)
+		}
+	case "low_three_bull_first_board":
+		hit, strength, value, reason := evaluateLowThreeBullFirstBoard(symbol, rows, rule)
+		fr.Hit, fr.Reason, fr.Value = hit, reason, value
+		if hit {
+			fr.Score = strength
 		}
 	case "formula":
 		formula, err := r.strategyFormula(rule)

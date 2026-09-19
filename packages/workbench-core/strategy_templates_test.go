@@ -7,8 +7,8 @@ import (
 
 func TestDefaultStrategyTemplatesAreValidAndConservative(t *testing.T) {
 	templates := defaultStrategyTemplates()
-	if len(templates) != 19 {
-		t.Fatalf("template count = %d, want 19", len(templates))
+	if len(templates) != 20 {
+		t.Fatalf("template count = %d, want 20", len(templates))
 	}
 
 	seen := make(map[string]bool, len(templates))
@@ -89,6 +89,37 @@ func TestDefaultStrategyTemplatesAreValidAndConservative(t *testing.T) {
 				}
 			}
 		}
+		if item.ID == "template-low-three-bull-first-board" {
+			if !filterFactors["low_three_bull_first_board"] {
+				t.Fatal("first-board template must include its point-in-time pattern filter")
+			}
+			for _, rule := range config.Filters {
+				if rule.Factor != "low_three_bull_first_board" {
+					continue
+				}
+				if rule.Params["max_pre_position"] != float64(60) ||
+					rule.Params["min_volume_ratio"] != float64(2.5) ||
+					rule.Params["max_five_day_range"] != float64(15) {
+					t.Fatalf("first-board calibrated pattern parameters changed: %+v", rule.Params)
+				}
+			}
+			var execution struct {
+				MinOpenGap *float64 `json:"min_open_gap"`
+				MaxOpenGap *float64 `json:"max_open_gap"`
+			}
+			var rawConfig struct {
+				Execution json.RawMessage `json:"execution"`
+			}
+			if err := json.Unmarshal([]byte(item.ConfigJSON), &rawConfig); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(rawConfig.Execution, &execution); err != nil {
+				t.Fatal(err)
+			}
+			if execution.MinOpenGap == nil || *execution.MinOpenGap != 0 || execution.MaxOpenGap == nil || *execution.MaxOpenGap != 6 {
+				t.Fatalf("first-board opening-gap constraints = %+v, want 0%%-6%%", execution)
+			}
+		}
 	}
 
 	for _, id := range []string{
@@ -111,6 +142,7 @@ func TestDefaultStrategyTemplatesAreValidAndConservative(t *testing.T) {
 		"template-range-bounce",
 		"template-ma-convergence-breakout",
 		"template-platform-breakout",
+		"template-low-three-bull-first-board",
 	} {
 		if !seen[id] {
 			t.Fatalf("missing template %q", id)

@@ -837,6 +837,14 @@ func defaultStrategyTemplates() []Strategy {
 			Enabled:     true,
 			Readonly:    true,
 		},
+		{
+			ID:          "template-low-three-bull-first-board",
+			Name:        "低位三连阳首板",
+			Description: "首板接力：首板前两日连续阳线、信号日主板首次涨停，要求放量不低于2.5倍、首板前60日位置不高于60%、近5日区间振幅不高于15%；次日仅在开盘涨幅0%-6%时参与。",
+			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":500000000}},{"id":"price_range","factor":"price_range","params":{"min":2,"max":80}},{"id":"first_board_pattern","factor":"low_three_bull_first_board","params":{"position_lookback":60,"max_pre_position":60,"min_amount":500000000,"max_amount":4000000000,"min_volume_ratio":2.5,"max_prior_volume_ratio":2,"max_prior_gain":5,"max_five_day_range":15,"limit_tolerance":0.25}}],"scores":[{"id":"pattern_quality","factor":"low_three_bull_first_board","weight":100,"params":{"position_lookback":60,"max_pre_position":60,"min_amount":500000000,"max_amount":4000000000,"min_volume_ratio":2.5,"max_prior_volume_ratio":2,"max_prior_gain":5,"max_five_day_range":15,"limit_tolerance":0.25}}],"pass":{"min_score":12,"top_n":5},"execution":{"min_open_gap":0,"max_open_gap":6}}`,
+			Enabled:     true,
+			Readonly:    true,
+		},
 	}
 	for index := range templates {
 		applyHighQualityStrategyProfile(&templates[index])
@@ -923,6 +931,10 @@ func applyDefaultStrategyUniverse(strategy *Strategy) {
 			{"pool": "market-bj"},
 		},
 	}
+	if strategy.ID == "template-low-three-bull-first-board" {
+		universe := config["universe"].(map[string]interface{})
+		universe["exclude"] = append(universe["exclude"].([]map[string]string), map[string]string{"pool": "market-gem"})
+	}
 	// System strategies evaluate their whole candidate universe by default.
 	// A zero scan_limit is the explicit full-scan value in the strategy runner.
 	config["scan_limit"] = 0
@@ -932,6 +944,9 @@ func applyDefaultStrategyUniverse(strategy *Strategy) {
 	}
 	if !strings.Contains(strategy.Description, "不含科创板和北交所") {
 		strategy.Description += " 默认范围不含科创板和北交所。"
+	}
+	if strategy.ID == "template-low-three-bull-first-board" && !strings.Contains(strategy.Description, "仅沪深主板") {
+		strategy.Description += " 仅沪深主板。"
 	}
 	if !strings.Contains(strategy.Description, "默认全量扫描") {
 		strategy.Description += " 默认全量扫描。"

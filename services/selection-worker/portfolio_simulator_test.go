@@ -60,13 +60,29 @@ func TestPortfolioLimitUpSkip(t *testing.T) {
 	}
 }
 
+func TestPortfolioStrategyOpeningGapConstraint(t *testing.T) {
+	maxGap := 6.0
+	klines := map[string][]FormulaKline{
+		"000001": pfKline([]pfBar{{date: 20260105, yclose: 10, open: 10.7, close: 10.7}}),
+	}
+	buy := pfBuy("000001", 90, 20260104, "低位三连阳首板")
+	buy.maxOpenGap = &maxGap
+	sim := newPortfolioSimulator(portfolioSimConfig{InitialCash: 100000, MaxPositions: 1})
+	sim.onDayOpen(20260105, "2026-01-05", klines, []portfolioPendingBuy{buy})
+
+	trade := pfSingleTrade(t, sim, "run1")
+	if trade.Status != "skipped" || trade.Reason != "开盘涨幅7.00%高于策略上限6.00%" {
+		t.Fatalf("trade = %+v, want skipped by strategy opening-gap constraint", trade)
+	}
+}
+
 // 止损触发后次日开盘跌停卖不出,顺延到再下一日可卖时成交。
 func TestPortfolioLimitDownDelay(t *testing.T) {
 	klines := map[string][]FormulaKline{
 		"000001": pfKline([]pfBar{
-			{date: 20260105, yclose: 10, open: 10, close: 9.5},    // 买入日,收盘-5%触发止损3%
-			{date: 20260106, yclose: 9.5, open: 8.5, close: 8.5},  // 开盘低于跌停价,卖不出
-			{date: 20260107, yclose: 8.5, open: 9.0, close: 9.0},  // 开盘可卖,顺延成交
+			{date: 20260105, yclose: 10, open: 10, close: 9.5},   // 买入日,收盘-5%触发止损3%
+			{date: 20260106, yclose: 9.5, open: 8.5, close: 8.5}, // 开盘低于跌停价,卖不出
+			{date: 20260107, yclose: 8.5, open: 9.0, close: 9.0}, // 开盘可卖,顺延成交
 		}),
 	}
 	sim := newPortfolioSimulator(portfolioSimConfig{InitialCash: 10050, MaxPositions: 1}) // 多留 50 覆盖买入费率,保证满 1000 股
@@ -177,6 +193,28 @@ func TestPortfolioTPlusOneAndStopPriority(t *testing.T) {
 	}
 	if trade.Reason != "止损(收盘≤-3%)" {
 		t.Fatalf("reason = %s, want 止损(收盘≤-3%%)", trade.Reason)
+	}
+}
+
+func TestPortfolioSameCloseStillObservesTPlusOne(t *testing.T) {
+	klines := map[string][]FormulaKline{
+		"000001": pfKline([]pfBar{
+			{date: 20260105, yclose: 10, open: 10, close: 10.3},
+			{date: 20260106, yclose: 10.3, open: 10.2, close: 10.2},
+		}),
+	}
+	sim := newPortfolioSimulator(portfolioSimConfig{
+		InitialCash: 10050, MaxPositions: 1, SellBase: "same_close", TakeProfit: 2,
+	})
+	sim.onDayOpen(20260105, "2026-01-05", klines, []portfolioPendingBuy{pfBuy("000001", 90, 20260104, "策略A")})
+	sim.onDayClose(20260105, "2026-01-05", klines)
+	if len(sim.positions) != 1 {
+		t.Fatal("same-close exit must not sell shares on their entry day")
+	}
+	sim.onDayOpen(20260106, "2026-01-06", klines, nil)
+	trade := pfSingleTrade(t, sim, "run1")
+	if trade.Status != "closed" || trade.ExitDate != "2026-01-06" || trade.ExitPrice != 10.2 {
+		t.Fatalf("entry-day close signal should execute at next open: %+v", trade)
 	}
 }
 

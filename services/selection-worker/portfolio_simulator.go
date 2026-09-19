@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 )
@@ -43,7 +44,9 @@ type portfolioPendingBuy struct {
 	score        float64
 	signalDate   int
 	strategyName string
-	signalClose  float64 // 信号日收盘价,买入基准"close"时作为限价参考
+	signalClose  float64  // 信号日收盘价,买入基准"close"时作为限价参考
+	minOpenGap   *float64 // T+1开盘相对信号日收盘的最小涨幅; nil表示不限制
+	maxOpenGap   *float64 // T+1开盘相对信号日收盘的最大涨幅; nil表示不限制
 }
 
 type portfolioSimulator struct {
@@ -166,6 +169,17 @@ func (sim *portfolioSimulator) tryBuy(buy portfolioPendingBuy, date int, dateTex
 		sim.appendSkip(buy, dateText, "开盘价无效")
 		return
 	}
+	if row.YClose > 0 {
+		openGap := (row.Open - row.YClose) * 100 / row.YClose
+		if buy.minOpenGap != nil && openGap < *buy.minOpenGap {
+			sim.appendSkip(buy, dateText, fmt.Sprintf("开盘涨幅%.2f%%低于策略下限%.2f%%", openGap, *buy.minOpenGap))
+			return
+		}
+		if buy.maxOpenGap != nil && openGap > *buy.maxOpenGap {
+			sim.appendSkip(buy, dateText, fmt.Sprintf("开盘涨幅%.2f%%高于策略上限%.2f%%", openGap, *buy.maxOpenGap))
+			return
+		}
+	}
 	if row.Open >= row.YClose*(1+portfolioPriceLimitRate(buy.symbol)) {
 		sim.appendSkip(buy, dateText, "涨停无法买入")
 		return
@@ -258,8 +272,9 @@ func (sim *portfolioSimulator) appendSkip(buy portfolioPendingBuy, attemptDate, 
 }
 
 // onDayClose 收盘结算:更新持仓估值与峰值,判定退出条件,记录最大回撤。
-// 退出判定按"止损 > 回撤 > 止盈 > 超时"优先级;卖出价由 SellBase 决定
-// (same_close 当日收盘直接成交,next_open 次日开盘执行)。
+// 退出判定按"止损 > 回撤 > 止盈 > 超时"优先级;卖出价由 SellBase 决定。
+// same_close 在可卖持仓上按触发日收盘成交，买入日触发仍按 T+1 顺延；
+// next_open 一律在下一可交易日开盘执行。
 func (sim *portfolioSimulator) onDayClose(date int, dateText string, klines map[string][]FormulaKline) {
 	for _, pos := range sim.positions {
 		row, ok := portfolioKlineOnDate(klines[pos.symbol], date)
@@ -285,10 +300,13 @@ func (sim *portfolioSimulator) onDayClose(date int, dateText string, klines map[
 		if reason == "" {
 			continue
 		}
-		if sim.cfg.SellBase == "same_close" {
+		if sim.cfg.SellBase == "same_close" && date > pos.entryDate {
 			pos.pendingExit = reason
 			sim.executeSell(pos, row.Close, date, dateText)
 		} else {
+			// A-share shares bought at today's open cannot be sold at today's
+			// close. Defer a same-close signal on the entry day to the next
+			// tradable open so every execution path observes T+1.
 			pos.pendingExit, pos.pendingExitSet = reason, true
 		}
 	}
@@ -382,7 +400,11 @@ func round2(value float64) float64 {
 
 // mergePendingBuy 把当日新信号合并进待买列表：同一股票多条策略信号只买一次，
 // 保留最高得分并拼接触发策略名。
-func mergePendingBuy(buys []portfolioPendingBuy, symbol string, score float64, signalDate int, strategyName string, signalClose float64) []portfolioPendingBuy {
+func mergePendingBuy(buys []portfolioPendingBuy, symbol string, score float64, signalDate int, strategyName string, signalClose float64, execution ...StrategyExecutionConfig) []portfolioPendingBuy {
+	var incoming StrategyExecutionConfig
+	if len(execution) > 0 {
+		incoming = execution[0]
+	}
 	for i := range buys {
 		if buys[i].symbol != symbol {
 			continue
@@ -396,7 +418,31 @@ func mergePendingBuy(buys []portfolioPendingBuy, symbol string, score float64, s
 			}
 			buys[i].strategyName += strategyName
 		}
+		// Multiple strategies on one stock are alternatives. If either signal is
+		// unconstrained, the combined order remains unconstrained; otherwise use
+		// the union of their opening-gap intervals.
+		buys[i].minOpenGap = mergeMinOpenGap(buys[i].minOpenGap, incoming.MinOpenGap)
+		buys[i].maxOpenGap = mergeMaxOpenGap(buys[i].maxOpenGap, incoming.MaxOpenGap)
 		return buys
 	}
-	return append(buys, portfolioPendingBuy{symbol: symbol, score: score, signalDate: signalDate, strategyName: strategyName, signalClose: signalClose})
+	return append(buys, portfolioPendingBuy{
+		symbol: symbol, score: score, signalDate: signalDate, strategyName: strategyName, signalClose: signalClose,
+		minOpenGap: incoming.MinOpenGap, maxOpenGap: incoming.MaxOpenGap,
+	})
+}
+
+func mergeMinOpenGap(left, right *float64) *float64 {
+	if left == nil || right == nil {
+		return nil
+	}
+	value := math.Min(*left, *right)
+	return &value
+}
+
+func mergeMaxOpenGap(left, right *float64) *float64 {
+	if left == nil || right == nil {
+		return nil
+	}
+	value := math.Max(*left, *right)
+	return &value
 }

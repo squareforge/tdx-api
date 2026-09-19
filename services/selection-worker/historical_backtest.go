@@ -454,7 +454,7 @@ func (r *AutomationRunner) runHistoricalBacktest(ctx context.Context, run Histor
 					RunID: run.ID, StrategyID: plan.strategy.ID, StrategyName: plan.strategy.Name, SignalDate: dateText,
 					Symbol: item.Symbol, Latest: item.Latest, Score: item.Score, DetailJSON: mustJSON(item), TrackingJSON: trackingJSON,
 				})
-				pendingBuys = mergePendingBuy(pendingBuys, item.Symbol, item.Score, signalDate, plan.strategy.Name, item.Latest)
+				pendingBuys = mergePendingBuy(pendingBuys, item.Symbol, item.Score, signalDate, plan.strategy.Name, item.Latest, plan.config.Execution)
 				updateHistoricalSummary(summaries[plan.strategy.ID], tracking, req.Horizons)
 				key := dateText + ":" + item.Symbol
 				entry := consensus[key]

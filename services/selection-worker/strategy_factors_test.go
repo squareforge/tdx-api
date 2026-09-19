@@ -143,3 +143,62 @@ func TestWorkerAdvancedBreakoutAndVolumeFactors(t *testing.T) {
 		t.Fatalf("volume burst after contraction should pass: %+v", got)
 	}
 }
+
+func firstBoardFactorRows() []FormulaKline {
+	rows := make([]FormulaKline, 61)
+	for index := range rows {
+		rows[index] = FormulaKline{
+			Date: 20260101 + index, YClose: 10, Open: 9.9, High: 10.2, Low: 9.8,
+			Close: 10, Vol: 1000, Amount: 8e8,
+		}
+	}
+	// Two bullish sessions before the first limit-up day.
+	rows[57].Open, rows[57].Close, rows[57].YClose, rows[57].Vol = 9.85, 9.95, 9.9, 800
+	rows[58].Open, rows[58].Close, rows[58].YClose, rows[58].Vol = 9.9, 10, 9.95, 1000
+	rows[59].Open, rows[59].Close, rows[59].YClose, rows[59].Vol = 9.95, 10, 10, 1000
+	rows[60] = FormulaKline{
+		Date: 20260302, YClose: 10, Open: 10, High: 11, Low: 10,
+		Close: 11, Vol: 2500, Amount: 1e9,
+	}
+	return rows
+}
+
+func TestLowThreeBullFirstBoardFactor(t *testing.T) {
+	rows := firstBoardFactorRows()
+	params := map[string]interface{}{
+		"position_lookback": 60.0, "max_pre_position": 85.0,
+		"min_amount": 5e8, "max_amount": 4e9, "min_volume_ratio": 2.0,
+		"max_prior_volume_ratio": 2.0, "max_prior_gain": 5.0,
+		"max_five_day_range": 20.0, "limit_tolerance": 0.25,
+	}
+	got := workerEvalFactor("low_three_bull_first_board", 100, params, rows, true)
+	if !got.Hit {
+		t.Fatalf("valid low three-bull first-board pattern should pass: %+v", got)
+	}
+	scored := workerEvalFactor("low_three_bull_first_board", 100, params, rows, false)
+	if !scored.Hit || scored.Score <= 0 || scored.Score > 100 {
+		t.Fatalf("valid pattern should receive a bounded score: %+v", scored)
+	}
+}
+
+func TestLowThreeBullFirstBoardRejectsSecondBoard(t *testing.T) {
+	rows := firstBoardFactorRows()
+	rows[59].YClose = rows[59].Close / 1.1
+	rows[59].High = rows[59].Close
+	got := workerEvalFactor("low_three_bull_first_board", 100, map[string]interface{}{
+		"position_lookback": 60.0, "min_amount": 5e8, "max_amount": 4e9,
+	}, rows, true)
+	if got.Hit {
+		t.Fatalf("second consecutive limit-up must not be treated as a first board: %+v", got)
+	}
+}
+
+func TestLowThreeBullFirstBoardRejectsNonMainBoard(t *testing.T) {
+	rows := firstBoardFactorRows()
+	rule := StrategyFactorRule{Params: map[string]interface{}{"position_lookback": 60.0}}
+	for _, symbol := range []string{"300001", "688001", "900901", "200001", "830001"} {
+		if hit, _, _, _ := evaluateLowThreeBullFirstBoard(symbol, rows, rule); hit {
+			t.Fatalf("non-main-board symbol %s must be rejected", symbol)
+		}
+	}
+}

@@ -34,6 +34,11 @@ interface StrategyEditorConfig {
     top_n?: number;
     [key: string]: unknown;
   };
+  execution: {
+    min_open_gap?: number;
+    max_open_gap?: number;
+    [key: string]: unknown;
+  };
 }
 
 interface StrategyFactorEditorProps {
@@ -82,6 +87,9 @@ function normalizeConfig(value?: string): StrategyEditorConfig {
     scores: normalizeRules(parsed.scores),
     pass: parsed.pass && typeof parsed.pass === 'object' && !Array.isArray(parsed.pass)
       ? parsed.pass as StrategyEditorConfig['pass']
+      : {},
+    execution: parsed.execution && typeof parsed.execution === 'object' && !Array.isArray(parsed.execution)
+      ? parsed.execution as StrategyEditorConfig['execution']
       : {}
   };
 }
@@ -172,6 +180,13 @@ export function StrategyFactorEditor({ value, onChange, factors, disabled = fals
 
   function updatePassField(key: string, nextValue: unknown) {
     emit({ ...config, pass: { ...config.pass, [key]: nextValue } });
+  }
+
+  function updateExecutionField(key: string, nextValue: number | null) {
+    const execution = { ...config.execution };
+    if (nextValue === null) delete execution[key];
+    else execution[key] = nextValue;
+    emit({ ...config, execution });
   }
 
   function applyJSON() {
@@ -326,6 +341,8 @@ export function StrategyFactorEditor({ value, onChange, factors, disabled = fals
                   <label><span>计算根数</span><InputNumber size="small" min={20} value={numberValue(config.calc_count, 260)} onChange={(next) => updateConfigField('calc_count', next ?? 260)} disabled={disabled} /></label>
                   <label><span>批量大小</span><InputNumber size="small" min={1} value={numberValue(config.batch_size, 50)} onChange={(next) => updateConfigField('batch_size', next ?? 50)} disabled={disabled} /></label>
                   <label className="strategy-factor-runtime-switch"><span>错误后继续</span><Switch size="small" checked={Boolean(config.continue_on_error)} onChange={(next) => updateConfigField('continue_on_error', next)} disabled={disabled} /></label>
+                  <label><span>次日最低开盘涨幅%</span><InputNumber size="small" value={config.execution.min_open_gap} placeholder="不限" onChange={(next) => updateExecutionField('min_open_gap', next)} disabled={disabled} /></label>
+                  <label><span>次日最高开盘涨幅%</span><InputNumber size="small" value={config.execution.max_open_gap} placeholder="不限" onChange={(next) => updateExecutionField('max_open_gap', next)} disabled={disabled} /></label>
                 </div>
               </section>
             </div>
