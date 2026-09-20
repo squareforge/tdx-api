@@ -324,17 +324,17 @@ def rank_candidate(prepared: pd.DataFrame) -> tuple[float, str]:
     risk_score = band_score(dist_ma20, best=0.06, low=0.00, high=0.30)
 
     score = (
-        trend_score * 25
+        trend_score * 15  # 降低:25->15 减少追高倾向
         + pullback_score * 20
         + volume_score * 20
         + strength_score * 15
-        + liquidity_score * 10
-        + risk_score * 10
+        + liquidity_score * 5  # 降低:10->5 为RISK腾出空间
+        + risk_score * 25  # 提高:10->25 强化稳定性权重
     )
     reason = (
-        f"trend={trend_score * 25:.1f}/25, pullback={pullback_score * 20:.1f}/20, "
+        f"trend={trend_score * 15:.1f}/15, pullback={pullback_score * 20:.1f}/20, "
         f"volume={volume_score * 20:.1f}/20, strength={strength_score * 15:.1f}/15, "
-        f"liquidity={liquidity_score * 10:.1f}/10, risk={risk_score * 10:.1f}/10"
+        f"liquidity={liquidity_score * 5:.1f}/5, risk={risk_score * 25:.1f}/25"
     )
     return round(score, 3), reason
 
