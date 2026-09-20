@@ -48,18 +48,21 @@ type StrategyPassConfig struct {
 }
 
 type StrategyRunResult struct {
-	Strategy      Strategy                   `json:"strategy"`
-	Total         int                        `json:"total"`
-	Matched       int                        `json:"matched"`
-	Items         []StrategySelectionItem    `json:"items"`
-	Errors        map[string]string          `json:"errors,omitempty"`
-	FormulaCache  map[string]map[string]bool `json:"-"`
-	FormulaDetail map[string]map[string]any  `json:"-"`
-	KlineCache    map[string][]FormulaKline  `json:"-"`
-	PoolCache     map[string]map[string]bool `json:"-"`
-	FormulaByName map[string]Formula         `json:"-"`
-	FormulaByID   map[string]Formula         `json:"-"`
-	Config        StrategyConfig             `json:"config"`
+	Strategy         Strategy                      `json:"strategy"`
+	Total            int                           `json:"total"`
+	Matched          int                           `json:"matched"`
+	Items            []StrategySelectionItem       `json:"items"`
+	Errors           map[string]string             `json:"errors,omitempty"`
+	FormulaCache     map[string]map[string]bool    `json:"-"`
+	FormulaDetail    map[string]map[string]any     `json:"-"`
+	KlineCache       map[string][]FormulaKline     `json:"-"`
+	PoolCache        map[string]map[string]bool    `json:"-"`
+	FormulaByName    map[string]Formula            `json:"-"`
+	FormulaByID      map[string]Formula            `json:"-"`
+	RawKlineCache    map[string][]FormulaKline     `json:"-"`
+	FundamentalData  *strategyFundamentalData      `json:"-"`
+	FundamentalRanks map[string]map[string]float64 `json:"-"`
+	Config           StrategyConfig                `json:"config"`
 }
 
 type StrategySelectionItem struct {
@@ -131,16 +134,18 @@ func (r *AutomationRunner) executeStrategy(ctx context.Context, strategy Strateg
 	}
 
 	result := StrategyRunResult{
-		Strategy:      strategy,
-		Config:        cfg,
-		Total:         len(symbols),
-		Errors:        map[string]string{},
-		FormulaCache:  map[string]map[string]bool{},
-		FormulaDetail: map[string]map[string]any{},
-		KlineCache:    map[string][]FormulaKline{},
-		PoolCache:     map[string]map[string]bool{},
-		FormulaByName: map[string]Formula{},
-		FormulaByID:   map[string]Formula{},
+		Strategy:         strategy,
+		Config:           cfg,
+		Total:            len(symbols),
+		Errors:           map[string]string{},
+		FormulaCache:     map[string]map[string]bool{},
+		FormulaDetail:    map[string]map[string]any{},
+		KlineCache:       map[string][]FormulaKline{},
+		PoolCache:        map[string]map[string]bool{},
+		FormulaByName:    map[string]Formula{},
+		FormulaByID:      map[string]Formula{},
+		RawKlineCache:    map[string][]FormulaKline{},
+		FundamentalRanks: map[string]map[string]float64{},
 	}
 	// 批量加载候选股票 K 线并盘中补K，与系统策略日报路径保持一致，
 	// 避免逐只串行拉取导致全市场策略超时。
@@ -160,6 +165,9 @@ func (r *AutomationRunner) executeStrategy(ctx context.Context, strategy Strateg
 		result.Errors[symbol] = reason
 	}
 	if err := r.prepareStrategyMarketContext(ctx, &result); err != nil {
+		return StrategyRunResult{}, err
+	}
+	if err := r.prepareStrategyFundamentalContext(ctx, &result, symbols, 0, 0); err != nil {
 		return StrategyRunResult{}, err
 	}
 	if !r.strategyMarketContextPasses(&result) {
@@ -526,6 +534,9 @@ func (r *AutomationRunner) evaluateFactor(result *StrategyRunResult, symbol stri
 	// Factors return a normalized strength in [0,1]. Score rules then apply
 	// their configured weight, while filter rules only use the hit flag.
 	switch rule.Factor {
+	case "market_cap_range", "market_cap_ascending", "dividend_yield_percentile", "peg_range", "raw_price_range":
+		hit, strength, value, reason := evaluateFundamentalStrategyFactor(result, symbol, rows, rule, filter)
+		fr.Hit, fr.Score, fr.Value, fr.Reason = hit, strength, value, reason
 	case "market_momentum":
 		days := intParam(rule.Params, "days", 20)
 		minPct := floatParam(rule.Params, "min", -math.MaxFloat64)
@@ -896,11 +907,31 @@ func strategyAvgVol(rows []FormulaKline, days int) float64 {
 }
 
 func strategyNormalizeSymbol(symbol string) string {
+	symbol = strings.TrimSpace(strings.ToUpper(symbol))
+	if len(symbol) == 8 {
+		prefix, code := symbol[:2], symbol[2:]
+		if (prefix == "SH" || prefix == "SZ" || prefix == "BJ") && isSixDigitStrategySymbol(code) {
+			symbol = code
+		}
+	}
+	symbol = strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(symbol, ".XSHG"), ".XSHE"), ".XBJ")
 	items := normalizeSymbols([]string{symbol})
 	if len(items) == 0 {
-		return strings.TrimSpace(strings.ToUpper(symbol))
+		return symbol
 	}
 	return items[0]
+}
+
+func isSixDigitStrategySymbol(symbol string) bool {
+	if len(symbol) != 6 {
+		return false
+	}
+	for _, char := range symbol {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func highestHigh(rows []FormulaKline, days int) float64 {

@@ -845,6 +845,30 @@ func defaultStrategyTemplates() []Strategy {
 			Enabled:     true,
 			Readonly:    true,
 		},
+		{
+			ID:          "template-jq-ma5-momentum",
+			Name:        "聚宽MA5百分之一动量",
+			Description: "聚宽双均线示例的系统化版本：收盘价至少高于MA5 1%，控制短线乖离、单日涨幅与流动性后，按均线距离、量能和收盘强度排序。",
+			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":100000000}},{"id":"price_range","factor":"price_range","params":{"min":2,"max":120}},{"id":"ma5_trigger","factor":"distance_from_ma","params":{"period":5,"min":1,"max":6}},{"id":"change_guard","factor":"change_range","params":{"min":-1,"max":6.5}}],"scores":[{"id":"ma5_distance","factor":"distance_from_ma","weight":50,"params":{"period":5,"optimal_min":1,"optimal_max":3}},{"id":"volume_quality","factor":"volume_change_rate","weight":25,"params":{"days":5}},{"id":"close_quality","factor":"close_strength","weight":25,"params":{"min_position":0.55,"max_upper_shadow":3}}],"pass":{"min_score":12,"top_n":10}}`,
+			Enabled:     true,
+			Readonly:    true,
+		},
+		{
+			ID:          "template-jq-small-cap-rotation",
+			Name:        "聚宽20至30亿小市值轮动",
+			Description: "聚宽小市值策略适配版：每周首个交易日从点时总市值20至30亿元的股票中按市值升序选3只；股本按当日已生效记录计算，避免历史回测使用未来数据。",
+			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":10000000}},{"id":"weekly_rebalance","factor":"rebalance_day","params":{"mode":"week_first"}},{"id":"market_cap_band","factor":"market_cap_range","params":{"min_yi":20,"max_yi":30}}],"scores":[{"id":"smallest_cap_first","factor":"market_cap_range","weight":100,"params":{"min_yi":20,"max_yi":30}}],"pass":{"min_score":1,"top_n":3}}`,
+			Enabled:     true,
+			Readonly:    true,
+		},
+		{
+			ID:          "template-jq-yellow-banner-value",
+			Name:        "聚宽正黄旗高股息价值",
+			Description: "聚宽正黄旗大妈选股法适配版：月初从近一年股息率市场前25%、点时PEG介于-1和3、原始股价低于9元的股票中，按市值与股息质量选10只；财报只在实际披露后参与计算。",
+			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":10000000}},{"id":"monthly_rebalance","factor":"rebalance_day","params":{"mode":"month_first"}},{"id":"low_raw_price","factor":"raw_price_range","params":{"min":0.5,"max":9}},{"id":"high_dividend","factor":"dividend_yield_percentile","params":{"min_percentile":75,"min_yield":0}},{"id":"peg_band","factor":"peg_range","params":{"min":-1,"max":3}}],"scores":[{"id":"small_cap_first","factor":"market_cap_ascending","weight":70,"params":{}},{"id":"dividend_quality","factor":"dividend_yield_percentile","weight":30,"params":{"min_percentile":75,"min_yield":0}}],"pass":{"min_score":1,"top_n":10},"execution":{"min_open_gap":-9,"max_open_gap":9}}`,
+			Enabled:     true,
+			Readonly:    true,
+		},
 	}
 	for index := range templates {
 		applyHighQualityStrategyProfile(&templates[index])
@@ -932,6 +956,10 @@ func applyDefaultStrategyUniverse(strategy *Strategy) {
 		},
 	}
 	if strategy.ID == "template-low-three-bull-first-board" {
+		universe := config["universe"].(map[string]interface{})
+		universe["exclude"] = append(universe["exclude"].([]map[string]string), map[string]string{"pool": "market-gem"})
+	}
+	if strategy.ID == "template-jq-yellow-banner-value" {
 		universe := config["universe"].(map[string]interface{})
 		universe["exclude"] = append(universe["exclude"].([]map[string]string), map[string]string{"pool": "market-gem"})
 	}

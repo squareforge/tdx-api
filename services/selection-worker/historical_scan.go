@@ -53,7 +53,7 @@ func defaultScanGrid() scanGrid {
 		TakeProfits:    []float64{2, 3, 5, 10, 15},
 		StopLosses:     []float64{3, 5},
 		TrailDrawdowns: []float64{5, 8},
-		MaxHoldDays:    []int{10, 15, 20},
+		MaxHoldDays:    []int{5, 10, 15, 20},
 	}
 }
 
@@ -89,7 +89,8 @@ func (r *AutomationRunner) generateStrategySignals(ctx context.Context, plan his
 		strategyResult := &StrategyRunResult{
 			Strategy: plan.strategy, Config: plan.config, Errors: map[string]string{}, KlineCache: map[string][]FormulaKline{},
 			PoolCache: map[string]map[string]bool{}, FormulaCache: map[string]map[string]bool{}, FormulaDetail: map[string]map[string]any{},
-			FormulaByName: map[string]Formula{}, FormulaByID: map[string]Formula{},
+			FormulaByName: map[string]Formula{}, FormulaByID: map[string]Formula{}, RawKlineCache: map[string][]FormulaKline{},
+			FundamentalData: plan.fundamentalData, FundamentalRanks: map[string]map[string]float64{},
 		}
 		if strategyUsesMarketContext(plan.config) {
 			if rows, ok := historicalRowsThroughDate(klines[strategyBenchmarkSymbol], signalDate); ok {
@@ -106,6 +107,9 @@ func (r *AutomationRunner) generateStrategySignals(ctx context.Context, plan his
 				continue
 			}
 			strategyResult.KlineCache[symbol] = rows
+			if rawRows, rawOK := historicalRowsThroughDate(plan.rawKlines[symbol], signalDate); rawOK {
+				strategyResult.RawKlineCache[symbol] = rawRows
+			}
 			available = append(available, symbol)
 		}
 		if err := r.prepareStrategyFormulasWithKlines(ctx, strategyResult, available, strategyResult.KlineCache); err != nil {
@@ -197,6 +201,19 @@ func (r *AutomationRunner) runParameterScan(ctx context.Context, runID string, r
 		}
 	}
 	klines, _ := r.loadSystemBatchKlines(ctx, loadSymbols, historyCount)
+	if historicalPlansUseFundamentals(plans) {
+		rawKlines, _ := r.loadSystemBatchKlinesWithRecover(ctx, symbols, historyCount, "none")
+		fundamentalData, loadErr := loadStrategyFundamentalData(ctx, symbols, dateInt(start), dateInt(end))
+		if loadErr != nil {
+			return fmt.Errorf("点时基本面数据加载失败: %w", loadErr)
+		}
+		for index := range plans {
+			if strategyUsesFundamentals(plans[index].config) {
+				plans[index].fundamentalData = fundamentalData
+				plans[index].rawKlines = rawKlines
+			}
+		}
+	}
 	dates := historicalTradingDates(klines, dateInt(start), dateInt(end))
 	if len(dates) == 0 {
 		return errors.New("所选日期区间没有可用交易日K线")

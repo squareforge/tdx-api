@@ -7,8 +7,8 @@ import (
 
 func TestDefaultStrategyTemplatesAreValidAndConservative(t *testing.T) {
 	templates := defaultStrategyTemplates()
-	if len(templates) != 20 {
-		t.Fatalf("template count = %d, want 20", len(templates))
+	if len(templates) != 23 {
+		t.Fatalf("template count = %d, want 23", len(templates))
 	}
 
 	seen := make(map[string]bool, len(templates))
@@ -120,6 +120,19 @@ func TestDefaultStrategyTemplatesAreValidAndConservative(t *testing.T) {
 				t.Fatalf("first-board opening-gap constraints = %+v, want 0%%-6%%", execution)
 			}
 		}
+		if item.ID == "template-jq-yellow-banner-value" {
+			if !filterFactors["rebalance_day"] || !filterFactors["dividend_yield_percentile"] || !filterFactors["peg_range"] || !filterFactors["raw_price_range"] {
+				t.Fatalf("yellow-banner template is missing point-in-time value filters: %+v", filterFactors)
+			}
+			if !excluded["market-gem"] {
+				t.Fatal("yellow-banner template must exclude GEM in addition to STAR/BJ")
+			}
+		}
+		if item.ID == "template-jq-small-cap-rotation" {
+			if !filterFactors["rebalance_day"] || !filterFactors["market_cap_range"] {
+				t.Fatalf("small-cap template is missing point-in-time filters: %+v", filterFactors)
+			}
+		}
 	}
 
 	for _, id := range []string{
@@ -143,6 +156,9 @@ func TestDefaultStrategyTemplatesAreValidAndConservative(t *testing.T) {
 		"template-ma-convergence-breakout",
 		"template-platform-breakout",
 		"template-low-three-bull-first-board",
+		"template-jq-ma5-momentum",
+		"template-jq-small-cap-rotation",
+		"template-jq-yellow-banner-value",
 	} {
 		if !seen[id] {
 			t.Fatalf("missing template %q", id)

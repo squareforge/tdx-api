@@ -188,11 +188,15 @@ func (c *MarketServiceClient) KlineHistory(ctx context.Context, code, klineType 
 }
 
 func (c *MarketServiceClient) KlineHistoryBatch(ctx context.Context, symbols []string, klineType string, limit int) (*MarketKlineBatch, error) {
+	return c.KlineHistoryBatchWithRecover(ctx, symbols, klineType, limit, "qfq")
+}
+
+func (c *MarketServiceClient) KlineHistoryBatchWithRecover(ctx context.Context, symbols []string, klineType string, limit int, recover string) (*MarketKlineBatch, error) {
 	var resp MarketKlineBatch
 	if err := c.post(ctx, "/api/hikyuu/kline/batch", map[string]interface{}{
 		"symbols": symbols,
 		"period":  klineType,
-		"recover": "qfq",
+		"recover": recover,
 		"limit":   limit,
 	}, &resp); err != nil {
 		return nil, err

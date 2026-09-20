@@ -297,6 +297,35 @@ func handleStrategyFactors(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 		{
+			ID: "rebalance_day", Name: "周期首个交易日", Kind: "filter",
+			Description: "只在每周或每月的第一个交易日触发调仓。",
+			Params:      []StrategyFactorParamDef{{Name: "mode", Label: "周期", Type: "string", Default: "week_first"}},
+		},
+		{
+			ID: "market_cap_range", Name: "点时市值区间", Kind: "filter",
+			Description: "使用信号日收盘价与当日已生效总股本计算历史总市值。",
+			Params:      []StrategyFactorParamDef{{Name: "min_yi", Label: "最低市值(亿)", Type: "number", Default: 20}, {Name: "max_yi", Label: "最高市值(亿)", Type: "number", Default: 30}},
+		},
+		{
+			ID: "market_cap_ascending", Name: "点时市值升序", Kind: "score",
+			Description: "按信号日点时总市值从小到大计算横截面分位。",
+		},
+		{
+			ID: "dividend_yield_percentile", Name: "近一年股息率分位", Kind: "filter",
+			Description: "按除权除息表计算截至信号日近一年现金股息率并做市场横截面排名。",
+			Params:      []StrategyFactorParamDef{{Name: "min_percentile", Label: "最低分位%", Type: "number", Default: 75}, {Name: "min_yield", Label: "最低股息率%", Type: "number", Default: 0}},
+		},
+		{
+			ID: "peg_range", Name: "点时PEG区间", Kind: "filter",
+			Description: "只使用信号日前已披露的PE、净利润增速计算PEG。",
+			Params:      []StrategyFactorParamDef{{Name: "min", Label: "最低PEG", Type: "number", Default: -1}, {Name: "max", Label: "最高PEG", Type: "number", Default: 3}},
+		},
+		{
+			ID: "raw_price_range", Name: "原始价格区间", Kind: "filter",
+			Description: "使用不复权收盘价做价格过滤，适合复刻聚宽低价条件。",
+			Params:      []StrategyFactorParamDef{{Name: "min", Label: "最低价格", Type: "number", Default: 0.5}, {Name: "max", Label: "最高价格", Type: "number", Default: 9}},
+		},
+		{
 			ID:          "formula",
 			Name:        "公式因子",
 			Kind:        "score",

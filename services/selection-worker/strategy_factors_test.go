@@ -187,7 +187,7 @@ func TestWorkerAdvancedStrategyFactorsAreRegistered(t *testing.T) {
 		"macd_histogram", "macd_positive", "narrow_range", "price_above_ma_cluster",
 		"price_break_high", "range_volatility", "rsi_value", "support_not_broken", "turnover_surge",
 		"volume_below_average", "volume_burst_after_shrink", "volume_change_rate",
-		"volume_consecutive_rise", "volume_ratio", "volume_steady_rise",
+		"volume_consecutive_rise", "volume_ratio", "volume_steady_rise", "rebalance_day",
 	}
 	rows := workerFactorRows(make([]float64, 100), nil)
 	for index := range rows {

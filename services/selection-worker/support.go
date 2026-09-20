@@ -230,6 +230,11 @@ func getAllCodeModels() ([]*tdx.CodeModel, error) {
 		if err == nil && len(models) > 0 {
 			return models, nil
 		}
+		if localModels, localErr := loadHikyuuStockCodeModels(context.Background()); localErr == nil {
+			return localModels, nil
+		} else if err == nil {
+			err = localErr
+		}
 		if !allowDirectMarketFallback() {
 			return nil, err
 		}

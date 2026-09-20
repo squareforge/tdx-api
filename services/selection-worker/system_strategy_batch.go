@@ -224,6 +224,10 @@ func normalizeSystemStrategyConfig(config *StrategyConfig) {
 }
 
 func (r *AutomationRunner) loadSystemBatchKlines(ctx context.Context, symbols []string, calcCount int) (map[string][]FormulaKline, map[string]string) {
+	return r.loadSystemBatchKlinesWithRecover(ctx, symbols, calcCount, "qfq")
+}
+
+func (r *AutomationRunner) loadSystemBatchKlinesWithRecover(ctx context.Context, symbols []string, calcCount int, recover string) (map[string][]FormulaKline, map[string]string) {
 	loaded := make(map[string][]FormulaKline, len(symbols))
 	failed := map[string]string{}
 	if !useMarketService() {
@@ -239,7 +243,7 @@ func (r *AutomationRunner) loadSystemBatchKlines(ctx context.Context, symbols []
 			}
 			continue
 		}
-		resp, err := marketClient.KlineHistoryBatch(ctx, batch, "day", calcCount)
+		resp, err := marketClient.KlineHistoryBatchWithRecover(ctx, batch, "day", calcCount, recover)
 		if err != nil {
 			for _, symbol := range batch {
 				failed[symbol] = err.Error()
@@ -269,16 +273,18 @@ func (r *AutomationRunner) loadSystemBatchKlines(ctx context.Context, symbols []
 
 func (r *AutomationRunner) executeSystemStrategyWithKlines(ctx context.Context, plan systemStrategyBatchPlan, klines map[string][]FormulaKline, loadErrors map[string]string) (StrategyRunResult, error) {
 	result := StrategyRunResult{
-		Strategy:      plan.strategy,
-		Config:        plan.config,
-		Total:         len(plan.symbols),
-		Errors:        map[string]string{},
-		FormulaCache:  map[string]map[string]bool{},
-		FormulaDetail: map[string]map[string]any{},
-		KlineCache:    klines,
-		PoolCache:     map[string]map[string]bool{},
-		FormulaByName: map[string]Formula{},
-		FormulaByID:   map[string]Formula{},
+		Strategy:         plan.strategy,
+		Config:           plan.config,
+		Total:            len(plan.symbols),
+		Errors:           map[string]string{},
+		FormulaCache:     map[string]map[string]bool{},
+		FormulaDetail:    map[string]map[string]any{},
+		KlineCache:       klines,
+		PoolCache:        map[string]map[string]bool{},
+		FormulaByName:    map[string]Formula{},
+		FormulaByID:      map[string]Formula{},
+		RawKlineCache:    map[string][]FormulaKline{},
+		FundamentalRanks: map[string]map[string]float64{},
 	}
 	available := make([]string, 0, len(plan.symbols))
 	for _, symbol := range plan.symbols {
@@ -290,6 +296,9 @@ func (r *AutomationRunner) executeSystemStrategyWithKlines(ctx context.Context, 
 	}
 	if len(available) == 0 {
 		return result, errors.New("候选股票K线均未加载成功")
+	}
+	if err := r.prepareStrategyFundamentalContext(ctx, &result, available, 0, 0); err != nil {
+		return result, err
 	}
 	if !r.strategyMarketContextPasses(&result) {
 		result.Errors = nil

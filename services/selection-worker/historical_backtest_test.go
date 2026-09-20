@@ -62,14 +62,14 @@ func TestNormalizeHistoricalBacktestRequestDefaults(t *testing.T) {
 
 func TestDefaultScanGridIncludesShortSwingExits(t *testing.T) {
 	grid := defaultScanGrid()
-	if len(grid.combinations()) != 240 {
-		t.Fatalf("scan combinations = %d, want 240", len(grid.combinations()))
+	if len(grid.combinations()) != 320 {
+		t.Fatalf("scan combinations = %d, want 320", len(grid.combinations()))
 	}
 	if !containsScanFloat(grid.TakeProfits, 2) || !containsScanFloat(grid.TakeProfits, 3) {
 		t.Fatalf("take profits = %v, want short-swing 2%% and 3%% targets", grid.TakeProfits)
 	}
-	if !containsScanInt(grid.MaxHoldDays, 15) {
-		t.Fatalf("max hold days = %v, want 15-day candidate", grid.MaxHoldDays)
+	if !containsScanInt(grid.MaxHoldDays, 5) || !containsScanInt(grid.MaxHoldDays, 15) {
+		t.Fatalf("max hold days = %v, want 5-day and 15-day candidates", grid.MaxHoldDays)
 	}
 }
 

@@ -37,9 +37,11 @@ type historicalBacktestRequest struct {
 }
 
 type historicalStrategyPlan struct {
-	strategy Strategy
-	config   StrategyConfig
-	symbols  []string
+	strategy        Strategy
+	config          StrategyConfig
+	symbols         []string
+	fundamentalData *strategyFundamentalData
+	rawKlines       map[string][]FormulaKline
 }
 
 type historicalHorizonAccumulator struct {
@@ -372,6 +374,19 @@ func (r *AutomationRunner) runHistoricalBacktest(ctx context.Context, run Histor
 		}
 	}
 	klines, loadErrors := r.loadSystemBatchKlines(ctx, loadSymbols, historyCount)
+	if historicalPlansUseFundamentals(plans) {
+		rawKlines, _ := r.loadSystemBatchKlinesWithRecover(ctx, symbols, historyCount, "none")
+		fundamentalData, loadErr := loadStrategyFundamentalData(ctx, symbols, dateInt(start), dateInt(end))
+		if loadErr != nil {
+			return nil, fmt.Errorf("点时基本面数据加载失败: %w", loadErr)
+		}
+		for index := range plans {
+			if strategyUsesFundamentals(plans[index].config) {
+				plans[index].fundamentalData = fundamentalData
+				plans[index].rawKlines = rawKlines
+			}
+		}
+	}
 	loadedCount := countLoadedStrategySymbols(symbols, klines)
 	failedCount := countFailedStrategySymbols(symbols, loadErrors)
 	dates := historicalTradingDates(klines, dateInt(start), dateInt(end))
@@ -411,7 +426,8 @@ func (r *AutomationRunner) runHistoricalBacktest(ctx context.Context, run Histor
 			strategyResult := &StrategyRunResult{
 				Strategy: plan.strategy, Config: plan.config, Errors: map[string]string{}, KlineCache: map[string][]FormulaKline{},
 				PoolCache: map[string]map[string]bool{}, FormulaCache: map[string]map[string]bool{}, FormulaDetail: map[string]map[string]any{},
-				FormulaByName: map[string]Formula{}, FormulaByID: map[string]Formula{},
+				FormulaByName: map[string]Formula{}, FormulaByID: map[string]Formula{}, RawKlineCache: map[string][]FormulaKline{},
+				FundamentalData: plan.fundamentalData, FundamentalRanks: map[string]map[string]float64{},
 			}
 			available := make([]string, 0, len(plan.symbols))
 			if strategyUsesMarketContext(plan.config) {
@@ -428,6 +444,9 @@ func (r *AutomationRunner) runHistoricalBacktest(ctx context.Context, run Histor
 					continue
 				}
 				strategyResult.KlineCache[symbol] = rows
+				if rawRows, rawOK := historicalRowsThroughDate(plan.rawKlines[symbol], signalDate); rawOK {
+					strategyResult.RawKlineCache[symbol] = rawRows
+				}
 				available = append(available, symbol)
 			}
 			if err := r.prepareStrategyFormulasWithKlines(ctx, strategyResult, available, strategyResult.KlineCache); err != nil {

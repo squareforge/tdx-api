@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math"
+	"time"
 )
 
 type macdSnapshot struct {
@@ -28,6 +29,26 @@ type bollSnapshot struct {
 // [0,1]; the runner applies the configured score weight afterwards.
 func evaluateAdvancedStrategyFactor(rows []FormulaKline, rule StrategyFactorRule, filter bool) (recognized, hit bool, strength float64, value any, reason string) {
 	switch rule.Factor {
+	case "rebalance_day":
+		if len(rows) < 2 {
+			return true, false, 0, nil, "调仓日判断至少需要2根K线"
+		}
+		previous, current := rows[len(rows)-2], rows[len(rows)-1]
+		previousDate := strategyDateTime(previous.Date)
+		currentDate := strategyDateTime(current.Date)
+		mode := stringParam(rule.Params, "mode", "week_first")
+		switch mode {
+		case "month_first":
+			hit = previousDate.Year() != currentDate.Year() || previousDate.Month() != currentDate.Month()
+			return true, hit, 1, current.Date, fmt.Sprintf("%d为当月首个交易日: %t", current.Date, hit)
+		case "week_first":
+			previousYear, previousWeek := previousDate.ISOWeek()
+			currentYear, currentWeek := currentDate.ISOWeek()
+			hit = previousYear != currentYear || previousWeek != currentWeek
+			return true, hit, 1, current.Date, fmt.Sprintf("%d为本周首个交易日: %t", current.Date, hit)
+		default:
+			return true, false, 0, nil, "未知调仓周期: " + mode
+		}
 	case "macd_approaching":
 		fast, slow, signal := intParam(rule.Params, "fast", 12), intParam(rule.Params, "slow", 26), intParam(rule.Params, "signal", 9)
 		points := macdSeries(rows, fast, slow, signal)
@@ -385,6 +406,10 @@ func evaluateAdvancedStrategyFactor(rows []FormulaKline, rule StrategyFactorRule
 		return true, duration > 0, intervalStrength(float64(duration), optimalMin, optimalMax), duration, fmt.Sprintf("窄幅整理持续%d日", duration)
 	}
 	return false, false, 0, nil, ""
+}
+
+func strategyDateTime(date int) time.Time {
+	return time.Date(date/10000, time.Month((date/100)%100), date%100, 0, 0, 0, 0, time.Local)
 }
 
 func boolParam(params map[string]interface{}, key string, fallback bool) bool {
