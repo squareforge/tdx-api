@@ -1,6 +1,9 @@
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import app
@@ -27,6 +30,59 @@ class AppTaskTest(unittest.TestCase):
         self.assertEqual(snapshot["stage"], "失败")
         self.assertEqual(snapshot["message"], "停止导入")
         self.assertEqual(snapshot["progress"], 100)
+
+
+class QueryConcurrencyTest(unittest.TestCase):
+    def setUp(self):
+        app.active_imports = 0
+        app.pending_imports = 0
+        app.active_queries = 0
+
+    def tearDown(self):
+        app.active_imports = 0
+        app.pending_imports = 0
+        app.active_queries = 0
+
+    def test_queries_run_concurrently_up_to_configured_limit(self):
+        entered = threading.Barrier(2)
+        release = threading.Event()
+        failures = []
+
+        def fake_run(*_args, **_kwargs):
+            entered.wait(timeout=2)
+            release.wait(timeout=2)
+            return SimpleNamespace(returncode=0, stdout='{"ok": true}\n', stderr="")
+
+        def run_query():
+            try:
+                app.run_json_process("query.py", [])
+            except Exception as exc:
+                failures.append(exc)
+
+        with patch.object(app, "query_slots", threading.BoundedSemaphore(2)), \
+                patch.object(app.subprocess, "run", side_effect=fake_run):
+            threads = [threading.Thread(target=run_query) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            deadline = time.monotonic() + 2
+            while app.active_queries < 2 and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertEqual(app.active_queries, 2)
+            release.set()
+            for thread in threads:
+                thread.join(timeout=2)
+
+        self.assertEqual(failures, [])
+        self.assertEqual(app.active_queries, 0)
+
+    def test_pending_import_rejects_new_queries(self):
+        app.pending_imports = 1
+
+        with self.assertRaises(app.HTTPException) as ctx:
+            app.begin_query_process()
+
+        self.assertEqual(ctx.exception.status_code, 503)
+        self.assertEqual(app.active_queries, 0)
 
 
 class CreateTaskGuardTest(unittest.TestCase):

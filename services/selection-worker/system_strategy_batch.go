@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
+	"strconv"
+	"sync"
 	"time"
 )
 
@@ -236,28 +239,56 @@ func (r *AutomationRunner) loadSystemBatchKlinesWithRecover(ctx context.Context,
 		}
 		return loaded, failed
 	}
-	for _, batch := range chunkSymbols(symbols, 128) {
-		if err := ctx.Err(); err != nil {
-			for _, symbol := range batch {
-				failed[symbol] = err.Error()
+	type batchResult struct {
+		symbols []string
+		resp    *MarketKlineBatch
+		err     error
+	}
+	batches := chunkSymbols(symbols, 128)
+	results := make(chan batchResult, len(batches))
+	semaphore := make(chan struct{}, strategyKlineBatchConcurrency())
+	var workers sync.WaitGroup
+	for _, batch := range batches {
+		batch := batch
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			select {
+			case semaphore <- struct{}{}:
+			case <-ctx.Done():
+				results <- batchResult{symbols: batch, err: ctx.Err()}
+				return
+			}
+			defer func() { <-semaphore }()
+			resp, err := marketClient.KlineHistoryBatchWithRecover(ctx, batch, "day", calcCount, recover)
+			results <- batchResult{symbols: batch, resp: resp, err: err}
+		}()
+	}
+	go func() {
+		workers.Wait()
+		close(results)
+	}()
+	for result := range results {
+		if result.err != nil {
+			for _, symbol := range result.symbols {
+				failed[symbol] = result.err.Error()
 			}
 			continue
 		}
-		resp, err := marketClient.KlineHistoryBatchWithRecover(ctx, batch, "day", calcCount, recover)
-		if err != nil {
-			for _, symbol := range batch {
-				failed[symbol] = err.Error()
+		if result.resp == nil {
+			for _, symbol := range result.symbols {
+				failed[symbol] = "行情服务未返回批量结果"
 			}
 			continue
 		}
-		for symbol, item := range resp.Data {
+		for symbol, item := range result.resp.Data {
 			if item == nil || len(item.List) == 0 {
 				failed[symbol] = "K线为空"
 				continue
 			}
 			loaded[symbol] = protocolKlinesToFormulaRows(item.List, calcCount)
 		}
-		for symbol, message := range resp.Errors {
+		for symbol, message := range result.resp.Errors {
 			failed[symbol] = message
 		}
 	}
@@ -269,6 +300,17 @@ func (r *AutomationRunner) loadSystemBatchKlinesWithRecover(ctx context.Context,
 		}
 	}
 	return loaded, failed
+}
+
+func strategyKlineBatchConcurrency() int {
+	value, err := strconv.Atoi(os.Getenv("STRATEGY_KLINE_BATCH_CONCURRENCY"))
+	if err != nil || value <= 0 {
+		return 4
+	}
+	if value > 8 {
+		return 8
+	}
+	return value
 }
 
 func (r *AutomationRunner) executeSystemStrategyWithKlines(ctx context.Context, plan systemStrategyBatchPlan, klines map[string][]FormulaKline, loadErrors map[string]string) (StrategyRunResult, error) {

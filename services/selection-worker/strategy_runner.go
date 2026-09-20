@@ -176,7 +176,7 @@ func (r *AutomationRunner) executeStrategy(ctx context.Context, strategy Strateg
 		result.Errors = nil
 		return result, nil
 	}
-	if err := r.prepareStrategyFormulas(ctx, &result, symbols); err != nil {
+	if err := r.prepareStrategyFormulasWithKlines(ctx, &result, symbols, result.KlineCache); err != nil {
 		return StrategyRunResult{}, err
 	}
 

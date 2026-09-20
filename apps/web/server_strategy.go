@@ -79,7 +79,9 @@ func handleStrategyOperations(w http.ResponseWriter, r *http.Request) {
 			errorResponse(w, "只支持POST请求")
 			return
 		}
-		handleStrategyRun(w, r, id)
+		proxyToService("SELECTION_WORKER_URL", func(w http.ResponseWriter, r *http.Request) {
+			handleStrategyRun(w, r, id)
+		})(w, r)
 		return
 	}
 	if len(parts) == 2 && parts[1] == "apply-universe" {

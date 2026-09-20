@@ -38,6 +38,7 @@ SCHEDULER_ENABLED = os.getenv("HIKYUU_SCHEDULER_ENABLED", "true").lower() in ("1
 AFTER_CLOSE_CRON = os.getenv("HIKYUU_AFTER_CLOSE_CRON", "30 16 * * 1-5")
 MAX_TASKS = int(os.getenv("HIKYUU_MAX_TASKS", "200"))
 MAX_CONCURRENT_TASKS = int(os.getenv("HIKYUU_MAX_CONCURRENT_TASKS", "2"))
+MAX_CONCURRENT_QUERIES = max(1, int(os.getenv("HIKYUU_MAX_CONCURRENT_QUERIES", "4")))
 DATA_REVISION_FILE = STOCKS_DIR / ".data-revision"
 SYNC_SCOPE_KEYS = ("day", "min", "min5", "trans", "time", "finance", "block", "weight")
 SYNC_SCOPE_LABELS = {
@@ -100,9 +101,10 @@ app = FastAPI(title=APP_NAME)
 tasks: Dict[str, Dict[str, Any]] = {}
 task_order: List[str] = []
 task_lock = threading.Lock()
-data_access_lock = threading.Lock()
+query_slots = threading.BoundedSemaphore(MAX_CONCURRENT_QUERIES)
 data_state = threading.Condition()
 active_imports = 0
+pending_imports = 0
 active_queries = 0
 scheduler: Optional[BackgroundScheduler] = None
 
@@ -422,11 +424,15 @@ def find_scope_conflict(scope: Dict[str, bool], active_items: List[Dict[str, Any
 
 
 def begin_import_run() -> None:
-    global active_imports
+    global active_imports, pending_imports
     with data_state:
-        while active_queries > 0:
-            data_state.wait()
-        active_imports += 1
+        pending_imports += 1
+        try:
+            while active_queries > 0:
+                data_state.wait()
+            active_imports += 1
+        finally:
+            pending_imports -= 1
 
 
 def end_import_run() -> None:
@@ -439,8 +445,8 @@ def end_import_run() -> None:
 def begin_query_process() -> None:
     global active_queries
     with data_state:
-        if active_imports > 0:
-            raise HTTPException(status_code=503, detail="hikyuu 数据同步中，请稍后重试")
+        if active_imports > 0 or pending_imports > 0:
+            raise HTTPException(status_code=503, detail="hikyuu 数据同步准备中或同步中，请稍后重试")
         active_queries += 1
 
 
@@ -457,9 +463,9 @@ def run_json_process(script: str, arguments: List[str]) -> Any:
     env["HIKYUU_STOCKS_DIR"] = str(STOCKS_DIR)
     env["HIKYUU_CONFIG_DIR"] = str(CONFIG_DIR)
     env["TZ"] = TZ_NAME
-    begin_query_process()
-    try:
-        with data_access_lock:
+    with query_slots:
+        begin_query_process()
+        try:
             completed = subprocess.run(
                 [PYTHON_BIN, script, *arguments],
                 capture_output=True,
@@ -468,12 +474,12 @@ def run_json_process(script: str, arguments: List[str]) -> Any:
                 timeout=QUERY_TIMEOUT_SECONDS,
                 check=False,
             )
-    except subprocess.TimeoutExpired as exc:
-        raise HTTPException(status_code=504, detail="hikyuu 查询超时") from exc
-    except OSError as exc:
-        raise HTTPException(status_code=503, detail=f"hikyuu 查询进程启动失败: {exc}") from exc
-    finally:
-        end_query_process()
+        except subprocess.TimeoutExpired as exc:
+            raise HTTPException(status_code=504, detail="hikyuu 查询超时") from exc
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail=f"hikyuu 查询进程启动失败: {exc}") from exc
+        finally:
+            end_query_process()
 
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip() or "hikyuu 查询失败"

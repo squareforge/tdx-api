@@ -94,3 +94,40 @@ func TestRunAutomationTaskOnWorker(t *testing.T) {
 		t.Fatalf("runAutomationTaskOnWorker() = %#v", run)
 	}
 }
+
+func TestStrategyRunProxiesToSelectionWorker(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		if r.URL.Path != "/api/strategies/template-test/run" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"id":"run-1","status":"success"}}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("SELECTION_WORKER_URL", server.URL)
+	request := httptest.NewRequest(http.MethodPost, "/api/strategies/template-test/run", nil)
+	response := httptest.NewRecorder()
+
+	handleStrategyOperations(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", response.Code, response.Body.String())
+	}
+	var envelope struct {
+		Code int `json:"code"`
+		Data struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if envelope.Code != 0 || envelope.Data.ID != "run-1" || envelope.Data.Status != "success" {
+		t.Fatalf("unexpected response: %+v", envelope)
+	}
+}
