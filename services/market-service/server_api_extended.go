@@ -877,7 +877,11 @@ func handleGetWorkday(w http.ResponseWriter, r *http.Request) {
 		target = parsed
 	}
 
-	isWorkday := manager.Workday.Is(target)
+	isWorkday, err := workdayStatus(manager.Workday, target, time.Now())
+	if err != nil {
+		errorResponse(w, fmt.Sprintf("刷新交易日失败: %v", err))
+		return
+	}
 
 	response := map[string]interface{}{
 		"date": map[string]string{
