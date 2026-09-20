@@ -354,3 +354,76 @@ func fetchHikyuuKline(ctx context.Context, code, klineType string, limit int) (*
 	}
 	return hikyuuClient.FetchKline(ctx, code, period, recover, limit)
 }
+
+func fetchQuotesWithFallback(ctx context.Context, symbols []Symbol) (protocol.QuotesResp, error) {
+	if len(symbols) == 0 {
+		return protocol.QuotesResp{}, nil
+	}
+	var tdxErr error
+	if client != nil {
+		codes := make([]string, 0, len(symbols))
+		for _, symbol := range symbols {
+			codes = append(codes, symbol.TDXCode)
+		}
+		quotes, err := client.GetQuote(codes...)
+		if err == nil && len(quotes) == len(symbols) {
+			return quotes, nil
+		}
+		tdxErr = err
+		if tdxErr == nil {
+			tdxErr = fmt.Errorf("通达信行情返回不完整")
+		}
+	} else {
+		tdxErr = errors.New("通达信行情客户端未初始化")
+	}
+
+	if hikyuuClient == nil || !hikyuuClient.Enabled() {
+		return nil, tdxErr
+	}
+	canonical := make([]string, 0, len(symbols))
+	for _, symbol := range symbols {
+		canonical = append(canonical, symbol.Symbol)
+	}
+	data, failures, err := hikyuuClient.FetchKlineBatch(ctx, canonical, "day", "none", 2)
+	if err != nil {
+		return nil, fmt.Errorf("通达信: %v; 本地Hikyuu: %w", tdxErr, err)
+	}
+	quotes := make(protocol.QuotesResp, 0, len(symbols))
+	missing := make([]string, 0)
+	for _, symbol := range symbols {
+		resp := data[symbol.Symbol]
+		if resp == nil || len(resp.List) == 0 {
+			message := failures[symbol.Symbol]
+			if message == "" {
+				message = "无日线数据"
+			}
+			missing = append(missing, symbol.Symbol+": "+message)
+			continue
+		}
+		latest := *resp.List[len(resp.List)-1]
+		if latest.Last <= 0 && len(resp.List) > 1 {
+			latest.Last = resp.List[len(resp.List)-2].Close
+		}
+		if latest.Last <= 0 {
+			latest.Last = latest.Open
+		}
+		quotes = append(quotes, &protocol.Quote{
+			Exchange:   exchangeForSymbol(symbol),
+			Code:       symbol.Code,
+			Kline:      &latest,
+			ServerTime: latest.Time.Format(time.RFC3339),
+			Rate:       latest.RiseRate(),
+		})
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("本地Hikyuu收盘快照缺失: %s", strings.Join(missing, "; "))
+	}
+	return quotes, nil
+}
+
+func localMarketFallbackError(prefix string, localErr error) string {
+	if localErr != nil {
+		return fmt.Sprintf("%s: 本地Hikyuu: %v; 通达信行情客户端未初始化", prefix, localErr)
+	}
+	return prefix + ": 通达信行情客户端未初始化"
+}

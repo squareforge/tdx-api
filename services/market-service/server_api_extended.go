@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -100,11 +101,7 @@ func handleBatchQuote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	codes := make([]string, 0, len(symbols))
-	for _, symbol := range symbols {
-		codes = append(codes, symbol.TDXCode)
-	}
-	quotes, err := client.GetQuote(codes...)
+	quotes, err := fetchQuotesWithFallback(r.Context(), symbols)
 	if err != nil {
 		errorResponse(w, fmt.Sprintf("获取行情失败: %v", err))
 		return
@@ -135,11 +132,16 @@ func handleGetKlineHistory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if hikyuuResp, hikyuuErr := fetchHikyuuKline(r.Context(), code, klineType, int(limit)); hikyuuErr == nil && hikyuuResp != nil && len(hikyuuResp.List) > 0 {
+	hikyuuResp, hikyuuErr := fetchHikyuuKline(r.Context(), code, klineType, int(limit))
+	if hikyuuErr == nil && hikyuuResp != nil && len(hikyuuResp.List) > 0 {
 		successResponse(w, hikyuuResp)
 		return
 	} else if hikyuuErr != nil && hikyuuClient != nil && hikyuuClient.Enabled() {
 		log.Printf("hikyuu 历史K线查询失败(%s,%s)，回退原有数据源: %v", code, klineType, hikyuuErr)
+	}
+	if client == nil {
+		errorResponse(w, localMarketFallbackError("获取K线失败", hikyuuErr))
+		return
 	}
 
 	var resp *protocol.KlineResp
@@ -217,6 +219,13 @@ func handleGetIndex(w http.ResponseWriter, r *http.Request) {
 
 	var resp *protocol.KlineResp
 	var err error
+	if hikyuuResp, hikyuuErr := fetchHikyuuKline(r.Context(), code, klineType, int(limit)); hikyuuErr == nil && hikyuuResp != nil && len(hikyuuResp.List) > 0 {
+		successResponse(w, hikyuuResp)
+		return
+	} else if client == nil {
+		errorResponse(w, localMarketFallbackError("获取指数数据失败", hikyuuErr))
+		return
+	}
 
 	// 根据类型选择对应的指数接口
 	switch klineType {
@@ -270,6 +279,16 @@ func handleGetIndexAll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	limit := parsePositiveInt(r.URL.Query().Get("limit"))
+	if hikyuuResp, hikyuuErr := fetchHikyuuKline(r.Context(), code, klineType, limit); hikyuuErr == nil && hikyuuResp != nil && len(hikyuuResp.List) > 0 {
+		successResponse(w, map[string]interface{}{
+			"count": len(hikyuuResp.List), "list": hikyuuResp.List,
+			"meta": map[string]interface{}{"source": "hikyuu", "type": strings.ToLower(klineType)},
+		})
+		return
+	} else if client == nil {
+		errorResponse(w, localMarketFallbackError("获取指数历史数据失败", hikyuuErr))
+		return
+	}
 	list, err := fetchIndexAll(code, klineType)
 	if err != nil {
 		errorResponse(w, fmt.Sprintf("获取指数历史数据失败: %v", err))
@@ -362,6 +381,24 @@ func handleGetMarketCount(w http.ResponseWriter, r *http.Request) {
 	resp := Response{
 		Exchanges: make([]ExchangeCount, 0, len(exchanges)),
 	}
+	if client == nil {
+		models, err := getAllCodeModels()
+		if err != nil {
+			errorResponse(w, "获取市场数量失败: "+err.Error())
+			return
+		}
+		counts := map[string]uint16{}
+		for _, model := range models {
+			counts[strings.ToLower(model.Exchange)]++
+		}
+		for _, name := range []string{"sh", "sz", "bj"} {
+			count := counts[name]
+			resp.Exchanges = append(resp.Exchanges, ExchangeCount{Exchange: name, Count: count})
+			resp.Total += uint32(count)
+		}
+		successResponse(w, resp)
+		return
+	}
 
 	for _, ex := range exchanges {
 		countResp, err := client.GetCount(ex)
@@ -381,11 +418,6 @@ func handleGetMarketCount(w http.ResponseWriter, r *http.Request) {
 
 // 获取全部股票代码列表
 func handleGetStockCodes(w http.ResponseWriter, r *http.Request) {
-	if tdx.DefaultCodes == nil {
-		errorResponse(w, "股票代码缓存未初始化")
-		return
-	}
-
 	limit := parsePositiveInt(r.URL.Query().Get("limit"))
 	prefixParam := strings.TrimSpace(r.URL.Query().Get("prefix"))
 	includePrefix := true
@@ -393,7 +425,22 @@ func handleGetStockCodes(w http.ResponseWriter, r *http.Request) {
 		includePrefix = strings.ToLower(prefixParam) != "false"
 	}
 
-	codes := tdx.DefaultCodes.GetStockCodes()
+	codes := []string{}
+	if tdx.DefaultCodes != nil {
+		codes = tdx.DefaultCodes.GetStockCodes()
+	} else {
+		models, err := getAllCodeModels()
+		if err != nil {
+			errorResponse(w, "获取股票代码失败: "+err.Error())
+			return
+		}
+		for _, model := range models {
+			fullCode := model.FullCode()
+			if protocol.IsStock(fullCode) {
+				codes = append(codes, fullCode)
+			}
+		}
+	}
 	if limit > 0 && len(codes) > limit {
 		codes = codes[:limit]
 	}
@@ -414,11 +461,6 @@ func handleGetStockCodes(w http.ResponseWriter, r *http.Request) {
 
 // 获取全部ETF代码列表
 func handleGetETFCodes(w http.ResponseWriter, r *http.Request) {
-	if tdx.DefaultCodes == nil {
-		errorResponse(w, "代码缓存未初始化")
-		return
-	}
-
 	limit := parsePositiveInt(r.URL.Query().Get("limit"))
 	prefixParam := strings.TrimSpace(r.URL.Query().Get("prefix"))
 	includePrefix := true
@@ -426,7 +468,22 @@ func handleGetETFCodes(w http.ResponseWriter, r *http.Request) {
 		includePrefix = strings.ToLower(prefixParam) != "false"
 	}
 
-	codes := tdx.DefaultCodes.GetETFCodes()
+	codes := []string{}
+	if tdx.DefaultCodes != nil {
+		codes = tdx.DefaultCodes.GetETFCodes()
+	} else {
+		models, err := getAllCodeModels()
+		if err != nil {
+			errorResponse(w, "获取ETF代码失败: "+err.Error())
+			return
+		}
+		for _, model := range models {
+			fullCode := model.FullCode()
+			if protocol.IsETF(fullCode) {
+				codes = append(codes, fullCode)
+			}
+		}
+	}
 	if limit > 0 && len(codes) > limit {
 		codes = codes[:limit]
 	}
@@ -736,6 +793,13 @@ func handleGetKlineAllTDX(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var list []*protocol.Kline
+	if hikyuuResp, hikyuuErr := fetchHikyuuKline(r.Context(), symbol.Symbol, klineType, limit); hikyuuErr == nil && hikyuuResp != nil && len(hikyuuResp.List) > 0 {
+		respondKlineSuccess(w, "hikyuu", klineType, hikyuuResp.List)
+		return
+	} else if client == nil {
+		errorResponse(w, localMarketFallbackError("获取K线失败", hikyuuErr))
+		return
+	}
 	if symbol.Market == MarketIndex {
 		list, err = fetchIndexAll(symbol.TDXCode, klineType)
 	} else {
@@ -1016,7 +1080,11 @@ func getAllCodeModels() ([]*tdx.CodeModel, error) {
 		}
 	}
 	if client == nil {
-		return nil, errors.New("行情客户端未初始化")
+		if localModels, localErr := loadHikyuuCodeModels(context.Background()); localErr == nil {
+			return localModels, nil
+		} else {
+			return nil, fmt.Errorf("行情客户端未初始化，且本地代码库不可用: %w", localErr)
+		}
 	}
 
 	aggregate := []*tdx.CodeModel{}
@@ -1149,6 +1217,9 @@ func parseBool(value string) bool {
 }
 
 func fetchStockKlineAllTDX(code, klineType string) ([]*protocol.Kline, error) {
+	if client == nil {
+		return nil, errors.New("通达信行情客户端未初始化")
+	}
 	switch strings.ToLower(klineType) {
 	case "minute1":
 		resp, err := client.GetKlineMinuteAll(code)
@@ -1253,6 +1324,9 @@ func respondKlineSuccess(w http.ResponseWriter, source, klineType string, list [
 			"同花顺接口一次性返回前复权数据，响应时长取决于网络与标的数据量（通常 2-8 秒）",
 			"建议调用方在 Python 等客户端中设置 ≥10 秒超时时间，并准备兜底策略",
 		}
+	case "hikyuu":
+		meta["batch_limit"] = len(list)
+		meta["notes"] = []string{"通达信不可用，当前返回本地Hikyuu历史行情"}
 	default:
 		meta["notes"] = []string{"未知数据源，请检查 source 参数"}
 	}
@@ -1265,6 +1339,9 @@ func respondKlineSuccess(w http.ResponseWriter, source, klineType string, list [
 }
 
 func fetchIndexAll(code, klineType string) ([]*protocol.Kline, error) {
+	if client == nil {
+		return nil, errors.New("通达信行情客户端未初始化")
+	}
 	switch strings.ToLower(klineType) {
 	case "minute1":
 		resp, err := client.GetIndexAll(protocol.TypeKlineMinute, code)

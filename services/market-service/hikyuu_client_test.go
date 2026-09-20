@@ -128,3 +128,95 @@ func TestHikyuuDataServiceClientFetchKlineBatch(t *testing.T) {
 		t.Fatalf("unexpected failures: %+v", failures)
 	}
 }
+
+func TestFetchQuotesWithFallbackUsesHikyuuClose(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/hikyuu/kline/batch" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"code": 0, "message": "success",
+			"data": map[string]interface{}{
+				"period": "day", "recover": "none",
+				"data": map[string]interface{}{
+					"601899.SH": map[string]interface{}{
+						"symbol": "601899.SH", "period": "day", "recover": "none", "count": 2,
+						"list": []map[string]interface{}{
+							{"time": "2026-09-17T15:00:00+08:00", "open": 10.0, "high": 10.5, "low": 9.8, "close": 10.2, "volume": 1000, "amount": 500.0},
+							{"time": "2026-09-18T15:00:00+08:00", "last": 10.2, "open": 10.2, "high": 10.8, "low": 10.1, "close": 10.6, "volume": 1200, "amount": 600.0},
+						},
+					},
+				},
+				"errors": map[string]string{},
+			},
+		})
+	}))
+	defer server.Close()
+
+	oldTDX, oldHikyuu := client, hikyuuClient
+	client = nil
+	hikyuuClient = &HikyuuDataServiceClient{baseURL: server.URL, httpClient: server.Client()}
+	t.Cleanup(func() {
+		client, hikyuuClient = oldTDX, oldHikyuu
+	})
+
+	symbol, err := NormalizeSymbol("601899.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	quotes, err := fetchQuotesWithFallback(context.Background(), []Symbol{symbol})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(quotes) != 1 || quotes[0].Kline == nil {
+		t.Fatalf("unexpected quotes: %+v", quotes)
+	}
+	if quotes[0].Kline.Close != protocol.Yuan(10.6) || quotes[0].Kline.Last != protocol.Yuan(10.2) {
+		t.Fatalf("unexpected quote kline: %+v", quotes[0].Kline)
+	}
+}
+
+func TestHandleGetKlineAllTDXUsesHikyuuWithoutTDXClient(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/hikyuu/kline" || r.URL.Query().Get("type") != "week" {
+			t.Fatalf("unexpected request: %s", r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"code": 0, "message": "success",
+			"data": map[string]interface{}{
+				"symbol": "601899.SH", "period": "week", "recover": "qfq", "count": 1,
+				"list": []map[string]interface{}{{
+					"time": "2026-09-18T15:00:00+08:00", "last": 32.2, "open": 31.8,
+					"high": 32.5, "low": 30.5, "close": 31.4, "volume": 1000, "amount": 600.0,
+				}},
+			},
+		})
+	}))
+	defer server.Close()
+
+	oldTDX, oldHikyuu := client, hikyuuClient
+	client = nil
+	hikyuuClient = &HikyuuDataServiceClient{baseURL: server.URL, httpClient: server.Client()}
+	t.Cleanup(func() {
+		client, hikyuuClient = oldTDX, oldHikyuu
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/kline-all/tdx?code=601899.sh&type=week&limit=800", nil)
+	handleGetKlineAllTDX(recorder, request)
+	var response struct {
+		Code int `json:"code"`
+		Data struct {
+			Count int `json:"count"`
+			Meta  struct {
+				Source string `json:"source"`
+			} `json:"meta"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != 0 || response.Data.Count != 1 || response.Data.Meta.Source != "hikyuu" {
+		t.Fatalf("unexpected response: %+v body=%s", response, recorder.Body.String())
+	}
+}

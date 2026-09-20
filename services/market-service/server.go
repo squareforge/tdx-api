@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +33,12 @@ var (
 func initMarketRuntime(startCron bool, syncData bool) error {
 	marketRuntimeMu.Lock()
 	defer marketRuntimeMu.Unlock()
+	if hikyuuClient == nil {
+		hikyuuClient = NewHikyuuDataServiceClient()
+		if hikyuuClient.Enabled() {
+			log.Printf("已配置 hikyuu 数据服务: %s", hikyuuClient.baseURL)
+		}
+	}
 	if client != nil {
 		if startCron && syncData && manager != nil && !managerCronOn {
 			// 新版 tdx.Manage 定时器按需惰性启动,无需显式 Start
@@ -38,18 +46,29 @@ func initMarketRuntime(startCron bool, syncData bool) error {
 		}
 		return nil
 	}
+	if envBool("MARKET_HIKYUU_ONLY", false) {
+		message := "通达信运行时已禁用，实时接口使用本地Hikyuu收盘快照降级"
+		log.Print(message)
+		startupWarnings = appendUniqueString(startupWarnings, message)
+		initMarketProviders()
+		return nil
+	}
 
 	var err error
 	// 连接通达信服务器
 	client, err = tdx.DialDefault(tdx.WithDebug(false))
 	if err != nil {
+		client = nil
+		if hikyuuClient.Enabled() {
+			message := fmt.Sprintf("连接通达信服务器失败，已切换本地Hikyuu降级模式: %v", err)
+			log.Print(message)
+			startupWarnings = appendUniqueString(startupWarnings, message)
+			initMarketProviders()
+			return nil
+		}
 		return fmt.Errorf("连接服务器失败: %w", err)
 	}
 	log.Println("成功连接到通达信服务器")
-	hikyuuClient = NewHikyuuDataServiceClient()
-	if hikyuuClient.Enabled() {
-		log.Printf("已配置 hikyuu 数据服务: %s", hikyuuClient.baseURL)
-	}
 	initMarketProviders()
 
 	// 初始化代码缓存
@@ -90,6 +109,15 @@ func initMarketRuntime(startCron bool, syncData bool) error {
 		managerCronOn = true
 	}
 	return nil
+}
+
+func appendUniqueString(items []string, value string) []string {
+	for _, item := range items {
+		if item == value {
+			return items
+		}
+	}
+	return append(items, value)
 }
 
 func envBool(name string, defaultValue bool) bool {
@@ -152,11 +180,7 @@ func handleGetQuote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	codes := make([]string, 0, len(symbols))
-	for _, symbol := range symbols {
-		codes = append(codes, symbol.TDXCode)
-	}
-	quotes, err := client.GetQuote(codes...)
+	quotes, err := fetchQuotesWithFallback(r.Context(), symbols)
 	if err != nil {
 		errorResponse(w, fmt.Sprintf("获取行情失败: %v", err))
 		return
@@ -177,11 +201,16 @@ func handleGetKline(w http.ResponseWriter, r *http.Request) {
 	var resp *protocol.KlineResp
 	var err error
 
-	if hikyuuResp, hikyuuErr := fetchHikyuuKline(r.Context(), code, klineType, 0); hikyuuErr == nil && hikyuuResp != nil && len(hikyuuResp.List) > 0 {
+	hikyuuResp, hikyuuErr := fetchHikyuuKline(r.Context(), code, klineType, 0)
+	if hikyuuErr == nil && hikyuuResp != nil && len(hikyuuResp.List) > 0 {
 		successResponse(w, hikyuuResp)
 		return
 	} else if hikyuuErr != nil && hikyuuClient != nil && hikyuuClient.Enabled() {
 		log.Printf("hikyuu K线查询失败(%s,%s)，回退原有数据源: %v", code, klineType, hikyuuErr)
+	}
+	if client == nil {
+		errorResponse(w, localMarketFallbackError("获取K线失败", hikyuuErr))
+		return
 	}
 
 	switch klineType {
@@ -393,6 +422,10 @@ func handleGetMinute(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, "股票代码不能为空")
 		return
 	}
+	if client == nil {
+		errorResponse(w, "分时数据不可用: 当前为本地Hikyuu日线降级模式")
+		return
+	}
 
 	resp, usedDate, err := getMinuteWithFallback(code, date)
 	if err != nil {
@@ -422,6 +455,10 @@ func handleGetTrade(w http.ResponseWriter, r *http.Request) {
 	date := r.URL.Query().Get("date")
 	if code == "" {
 		errorResponse(w, "股票代码不能为空")
+		return
+	}
+	if client == nil {
+		errorResponse(w, "分时成交不可用: 当前为本地Hikyuu日线降级模式")
 		return
 	}
 
@@ -507,13 +544,20 @@ func handleGetStockInfo(w http.ResponseWriter, r *http.Request) {
 	result := make(map[string]interface{})
 
 	// 1. 获取五档行情
-	quotes, err := client.GetQuote(code)
+	symbols, normalizeErr := normalizeCodeParam(code)
+	quotes, err := fetchQuotesWithFallback(r.Context(), symbols)
+	if normalizeErr != nil {
+		err = normalizeErr
+	}
 	if err == nil && len(quotes) > 0 {
 		result["quote"] = quotes[0]
 	}
 
 	// 2. 获取最近30天的日K线（使用前复权）
-	kline, err := getQfqKlineDay(code)
+	kline, err := fetchHikyuuKline(r.Context(), code, "day", 30)
+	if err != nil && client != nil {
+		kline, err = getQfqKlineDay(code)
+	}
 	if err == nil && len(kline.List) > 30 {
 		// 只返回最近30条
 		kline.List = kline.List[len(kline.List)-30:]
@@ -524,12 +568,14 @@ func handleGetStockInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. 获取今日分时数据
-	minute, minuteDate, err := getMinuteWithFallback(code, "")
-	if err == nil && minute != nil {
-		result["minute"] = map[string]interface{}{
-			"date":  minuteDate,
-			"Count": minute.Count,
-			"List":  minute.List,
+	if client != nil {
+		minute, minuteDate, minuteErr := getMinuteWithFallback(code, "")
+		if minuteErr == nil && minute != nil {
+			result["minute"] = map[string]interface{}{
+				"date":  minuteDate,
+				"Count": minute.Count,
+				"List":  minute.List,
+			}
 		}
 	}
 
@@ -771,6 +817,9 @@ func splitCodes(param string) []string {
 }
 
 func getMinuteWithFallback(code, date string) (*protocol.MinuteResp, string, error) {
+	if client == nil {
+		return nil, "", errors.New("行情客户端未初始化")
+	}
 	target := strings.TrimSpace(date)
 	if target != "" {
 		normalized, err := normalizeMinuteDate(target)
@@ -912,7 +961,16 @@ func listenAndServe(defaultPort string) {
 		port = ":" + port
 	}
 	log.Printf("服务启动成功，访问 http://localhost%s\n", port)
-	log.Fatal(http.ListenAndServe(port, nil))
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				log.Printf("行情接口异常 %s %s: %v\n%s", r.Method, r.URL.Path, recovered, debug.Stack())
+				errorResponse(w, "行情服务内部异常，请稍后重试")
+			}
+		}()
+		http.DefaultServeMux.ServeHTTP(w, r)
+	})
+	log.Fatal(http.ListenAndServe(port, handler))
 }
 
 func main() {

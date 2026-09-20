@@ -15,6 +15,7 @@ services:
       - TZ=Asia/Shanghai
       - PORT=8081
       - MARKET_SYNC_ON_START=true
+      - MARKET_HIKYUU_ONLY=${MARKET_HIKYUU_ONLY:-true}
       - MARKET_DATA_DIR=/app/data/database
       - HIKYUU_DATA_SERVICE_URL=http://hikyuu-data-service:8091
     dns:
