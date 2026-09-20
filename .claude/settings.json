@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s http://localhost:8080)",
+      "Bash(docker exec *)",
+      "Bash(curl -s http://localhost:18091/api/health)",
+      "Bash(python3 scripts/backtest_strategy_comparison.py)",
+      "Bash(sqlite3 data/hikyuu/stocks/stock.db \".tables\")",
+      "Bash(sqlite3 data/hikyuu/stocks/stock.db \".schema\")",
+      "Bash(sqlite3 data/hikyuu/stocks/stock.db \"SELECT name FROM sqlite_master WHERE type='table' LIMIT 20\")",
+      "Bash(sqlite3 data/hikyuu/stocks/stock.db \"SELECT sql FROM sqlite_master WHERE type='table' LIMIT 5\")",
+      "Bash(awk '{print $NF}')",
+      "Bash(chmod +x scripts/start_parameter_scan.sh)",
+      "Bash(bash scripts/start_parameter_scan.sh)",
+      "Bash(curl -s http://localhost:8080/api/strategies)",
+      "Bash(sqlite3 data/database/workbench.db \"SELECT id, name FROM strategies ORDER BY id\")",
+      "Bash(curl -s -X POST http://localhost:18082/api/historical-backtests/scan -H 'Content-Type: application/json' -d '{ *)",
+      "Bash(curl -s \"http://localhost:18082/api/historical-backtests/scan/e565faab-6a99-4916-afb4-c849815c9b10\")",
+      "Bash(curl -s http://localhost:18082/api/historical-backtests/scan/runs)"
+    ]
+  }
+}

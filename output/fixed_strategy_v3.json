@@ -1,0 +1,211 @@
+{
+  "name": "修正版V3-回踩突破策略",
+  "description": "基于相关性分析修正的策略：RISK因子提权，TREND因子降权并改为区间评分",
+  "version": "3.0",
+  "changes": [
+    "🔴 CRITICAL: RISK因子从低权重提升到最高权重(25分) - 因为正相关+0.361",
+    "🔴 CRITICAL: TREND因子从高权重降低到中等(15分) - 因为负相关-0.367",
+    "✅ TREND改为区间评分：25-35%为最优区间，不是越高越好",
+    "✅ STRENGTH因子降权到10分 - 因为负相关-0.112",
+    "✅ VOLUME因子保持20分 - 正相关+0.150有效",
+    "✅ 增加市场状态过滤，避免逆市操作",
+    "✅ 涨幅上限45%硬过滤"
+  ],
+
+  "analysis_findings": {
+    "problem": "排名算法反向 - Top3优于其他信号的概率为0%",
+    "root_cause": "TREND因子负相关-0.367，但给了高权重；RISK因子正相关+0.361，但给了低权重",
+    "impact": "Top3成功率33.3% < 整体42.3%，Top3平均-1.82% < 其他-1.57%",
+    "solution": "按相关性重新分配权重"
+  },
+
+  "config": {
+    "universe": {
+      "include": [
+        {"pool_id": "market-all-a"}
+      ]
+    },
+    "scan_limit": 300,
+    "period": "day",
+    "right": 1,
+    "calc_count": 260,
+    "batch_size": 50,
+    "continue_on_error": true,
+
+    "filters": [
+      {
+        "id": "market_not_weak",
+        "factor": "market_momentum",
+        "weight": 0,
+        "params": {
+          "days": 20,
+          "min": -3,
+          "max": 100
+        },
+        "comment": "上证指数20日跌幅不超过3%"
+      },
+      {
+        "id": "gain_upper_limit",
+        "factor": "gain_days",
+        "weight": 0,
+        "params": {
+          "days": 20,
+          "min": 15,
+          "max": 45
+        },
+        "comment": "⚠️ 关键：20日涨幅上限45%，避免追高（TREND负相关-0.367的根源）"
+      },
+      {
+        "id": "pullback_required",
+        "factor": "drawdown_from_high",
+        "weight": 0,
+        "params": {
+          "days": 60,
+          "min": 8,
+          "max": 20
+        },
+        "comment": "距60日高点回撤8-20%"
+      },
+      {
+        "id": "ma_bullish",
+        "factor": "ma_trend",
+        "weight": 0,
+        "params": {
+          "short": 5,
+          "mid": 10,
+          "long": 20
+        },
+        "comment": "均线多头排列"
+      },
+      {
+        "id": "price_range",
+        "factor": "price_range",
+        "weight": 0,
+        "params": {
+          "min": 10,
+          "max": 100
+        },
+        "comment": "价格10-100元"
+      },
+      {
+        "id": "min_liquidity",
+        "factor": "min_amount",
+        "weight": 0,
+        "params": {
+          "value": 300000000
+        },
+        "comment": "日成交额至少3亿"
+      },
+      {
+        "id": "stability_required",
+        "factor": "max_amplitude",
+        "weight": 0,
+        "params": {
+          "days": 5,
+          "max": 8
+        },
+        "comment": "5日平均振幅不超过8%，避免妖股"
+      }
+    ],
+
+    "scores": [
+      {
+        "id": "stability_score",
+        "factor": "max_amplitude",
+        "weight": 25,
+        "params": {
+          "days": 5,
+          "max": 7
+        },
+        "comment": "⭐ 最高权重！RISK因子正相关+0.361，振幅越小越稳定"
+      },
+      {
+        "id": "volume_confirmation",
+        "factor": "volume_up",
+        "weight": 20,
+        "params": {
+          "days": 5,
+          "ratio": 1.3
+        },
+        "comment": "放量确认，正相关+0.150"
+      },
+      {
+        "id": "trend_moderate",
+        "factor": "gain_days",
+        "weight": 15,
+        "params": {
+          "days": 20,
+          "min": 15,
+          "max": 45,
+          "optimal_min": 25,
+          "optimal_max": 35
+        },
+        "comment": "⚠️ 降权！TREND负相关-0.367。25-35%为最优区间，不是越高越好"
+      },
+      {
+        "id": "pullback_position",
+        "factor": "drawdown_from_high",
+        "weight": 15,
+        "params": {
+          "days": 60,
+          "min": 8,
+          "max": 20,
+          "optimal_min": 10,
+          "optimal_max": 15
+        },
+        "comment": "回撤位置打分，10-15%最优"
+      },
+      {
+        "id": "liquidity_bonus",
+        "factor": "min_amount",
+        "weight": 15,
+        "params": {
+          "value": 300000000
+        },
+        "comment": "流动性打分"
+      },
+      {
+        "id": "close_strength",
+        "factor": "close_strength",
+        "weight": 10,
+        "params": {
+          "min_position": 0.7,
+          "max_upper_shadow": 3
+        },
+        "comment": "降权！STRENGTH负相关-0.112"
+      }
+    ],
+
+    "pass": {
+      "min_score": 55,
+      "top_n": 5
+    },
+
+    "execution": {
+      "min_open_gap": -0.025,
+      "max_open_gap": 0.015,
+      "comment": "次日开盘在[-2.5%, +1.5%]区间内才买入"
+    }
+  },
+
+  "expected_improvement": {
+    "before": {
+      "top3_outperform": "0%",
+      "top3_win_rate": "33.3%",
+      "top3_avg_return": "-1.82%"
+    },
+    "after": {
+      "top3_outperform": ">60%",
+      "top3_win_rate": ">50%",
+      "top3_avg_return": ">整体平均"
+    }
+  },
+
+  "verification_steps": [
+    "1. 应用此配置创建新策略",
+    "2. 运行信号生成并追踪3-5天",
+    "3. 运行 python3 scripts/dual_track_evaluation.py",
+    "4. 验证 Top3 是否优于其他信号",
+    "5. 如果 Top3优于其他>60%，说明修正成功"
+  ]
+}
