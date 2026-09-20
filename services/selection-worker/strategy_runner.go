@@ -65,6 +65,11 @@ type StrategyRunResult struct {
 type StrategySelectionItem struct {
 	Symbol        string                 `json:"symbol"`
 	Score         float64                `json:"score"`
+	StrategyScore float64                `json:"strategy_score"`
+	RankScore     float64                `json:"rank_score"`
+	Rank          int                    `json:"rank"`
+	RankFactors   StrategyRankFactors    `json:"rank_factors"`
+	RankReason    string                 `json:"rank_reason"`
 	Hit           bool                   `json:"hit"`
 	Latest        float64                `json:"latest"`
 	Reasons       []string               `json:"reasons"`
@@ -116,15 +121,7 @@ func (r *AutomationRunner) executeStrategy(ctx context.Context, strategy Strateg
 	if err := json.Unmarshal([]byte(strategy.ConfigJSON), &cfg); err != nil {
 		return StrategyRunResult{}, err
 	}
-	if cfg.Period == "" {
-		cfg.Period = "day"
-	}
-	if cfg.CalcCount <= 0 {
-		cfg.CalcCount = 260
-	}
-	if cfg.BatchSize <= 0 {
-		cfg.BatchSize = 50
-	}
+	normalizeSystemStrategyConfig(&cfg)
 	symbols, err := r.strategyUniverse(cfg)
 	if err != nil {
 		return StrategyRunResult{}, err
@@ -188,15 +185,7 @@ func (r *AutomationRunner) executeStrategy(ctx context.Context, strategy Strateg
 		}
 		items = append(items, item)
 	}
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].Score == items[j].Score {
-			return items[i].Symbol < items[j].Symbol
-		}
-		return items[i].Score > items[j].Score
-	})
-	if result.Config.Pass.TopN > 0 && len(items) > result.Config.Pass.TopN {
-		items = items[:result.Config.Pass.TopN]
-	}
+	items = rankStrategyMatches(items, result.Config.Pass.TopN)
 	result.Items = items
 	result.Matched = len(items)
 	if len(result.Errors) == 0 {
@@ -504,7 +493,7 @@ func (r *AutomationRunner) evaluateStrategySymbol(ctx context.Context, strategy 
 		}
 		item.Reasons = append(item.Reasons, fr.Reason)
 	}
-	item.Score = score
+	item.StrategyScore = score
 	minScore := result.Config.Pass.MinScore
 	if minScore <= 0 {
 		minScore = 1
@@ -513,6 +502,8 @@ func (r *AutomationRunner) evaluateStrategySymbol(ctx context.Context, strategy 
 	if !item.Hit {
 		return item, false
 	}
+	item.RankScore, item.RankFactors, item.RankReason = evaluateUnifiedStrategyRank(rows)
+	item.Score = item.RankScore
 	return item, true
 }
 
@@ -970,4 +961,161 @@ func chooseInt(value, fallback int) int {
 		return value
 	}
 	return fallback
+}
+
+const strategyRankingMinimumBars = 120
+
+const (
+	strategyRankTrendWeight        = 15.0
+	strategyRankPullbackWeight     = 20.0
+	strategyRankVolumeWeight       = 20.0
+	strategyRankStrengthWeight     = 15.0
+	strategyRankLiquidityWeight    = 5.0
+	strategyRankPositionRiskWeight = 25.0
+)
+
+// StrategyRankFactors contains the weighted contribution of each shared
+// ranking factor. The six values add up to RankScore and have a 100-point cap.
+type StrategyRankFactors struct {
+	Trend        float64 `json:"trend"`
+	Pullback     float64 `json:"pullback"`
+	Volume       float64 `json:"volume"`
+	Strength     float64 `json:"strength"`
+	Liquidity    float64 `json:"liquidity"`
+	PositionRisk float64 `json:"position_risk"`
+}
+
+func evaluateUnifiedStrategyRank(rows []FormulaKline) (float64, StrategyRankFactors, string) {
+	if len(rows) < strategyRankingMinimumBars {
+		return 0, StrategyRankFactors{}, fmt.Sprintf("统一排名数据不足，需要至少%d根K线", strategyRankingMinimumBars)
+	}
+
+	end := len(rows)
+	current := rows[end-1]
+	ma20 := strategyMAAt(rows, end, 20)
+	ma60 := strategyMAAt(rows, end, 60)
+	ma120 := strategyMAAt(rows, end, 120)
+	ma20Prev5 := strategyMAAt(rows, end-5, 20)
+	ma60Prev20 := strategyMAAt(rows, end-20, 60)
+	if current.Close <= 0 || ma20 <= 0 || ma60 <= 0 || ma120 <= 0 || ma20Prev5 <= 0 || ma60Prev20 <= 0 {
+		return 0, StrategyRankFactors{}, "统一排名价格或均线数据无效"
+	}
+
+	ma20Slope := ma20/ma20Prev5 - 1
+	ma60Slope := ma60/ma60Prev20 - 1
+	ma20MA60Gap := ma20/ma60 - 1
+	ma60MA120Gap := ma60/ma120 - 1
+	trendRatio := clamp01(ma20Slope/0.06)*0.35 +
+		clamp01(ma60Slope/0.08)*0.25 +
+		strategyBandScore(ma20MA60Gap, 0.12, 0.02, 0.35)*0.25 +
+		strategyBandScore(ma60MA120Gap, 0.12, 0.01, 0.35)*0.15
+
+	recentHigh := 0.0
+	for _, row := range rows[end-5:] {
+		if row.High > recentHigh {
+			recentHigh = row.High
+		}
+	}
+	pullbackRatio := 0.0
+	if recentHigh > 0 {
+		pullbackRatio = strategyBandScore(math.Abs(current.Close/recentHigh-1), 0.06, 0.02, 0.14)
+	}
+
+	vol20 := strategyAverageVolumeAt(rows, end, 20)
+	vol60 := strategyAverageVolumeAt(rows, end, 60)
+	volumeRatio := 0.0
+	volumeTrend := 0.0
+	if vol20 > 0 {
+		volumeRatio = current.Vol / vol20
+	}
+	if vol60 > 0 {
+		volumeTrend = vol20 / vol60
+	}
+	volumeQuality := strategyBandScore(volumeRatio, 1.25, 0.80, 2.80)*0.65 +
+		clamp01((volumeTrend-1.0)/0.8)*0.35
+
+	base20 := rows[end-21].Close
+	base60 := rows[end-61].Close
+	if base20 <= 0 || base60 <= 0 {
+		return 0, StrategyRankFactors{}, "统一排名阶段涨幅基准价格无效"
+	}
+	ret20 := current.Close/base20 - 1
+	ret60 := current.Close/base60 - 1
+	strengthRatio := strategyBandScore(ret20, 0.30, 0.08, 0.80)*0.55 +
+		strategyBandScore(ret60, 0.55, 0.15, 1.50)*0.45
+	liquidityRatio := clamp01((current.Amount - 100_000_000) / (2_000_000_000 - 100_000_000))
+	positionRiskRatio := strategyBandScore(current.Close/ma20-1, 0.06, 0.00, 0.30)
+
+	factors := StrategyRankFactors{
+		Trend:        roundStrategyRank(trendRatio * strategyRankTrendWeight),
+		Pullback:     roundStrategyRank(pullbackRatio * strategyRankPullbackWeight),
+		Volume:       roundStrategyRank(volumeQuality * strategyRankVolumeWeight),
+		Strength:     roundStrategyRank(strengthRatio * strategyRankStrengthWeight),
+		Liquidity:    roundStrategyRank(liquidityRatio * strategyRankLiquidityWeight),
+		PositionRisk: roundStrategyRank(positionRiskRatio * strategyRankPositionRiskWeight),
+	}
+	score := roundStrategyRank(factors.Trend + factors.Pullback + factors.Volume + factors.Strength + factors.Liquidity + factors.PositionRisk)
+	reason := fmt.Sprintf(
+		"统一排名 %.3f：趋势 %.3f/15，回撤 %.3f/20，量能 %.3f/20，强度 %.3f/15，流动性 %.3f/5，位置风险 %.3f/25",
+		score, factors.Trend, factors.Pullback, factors.Volume, factors.Strength, factors.Liquidity, factors.PositionRisk,
+	)
+	return score, factors, reason
+}
+
+func rankStrategyMatches(items []StrategySelectionItem, topN int) []StrategySelectionItem {
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].RankScore == items[j].RankScore {
+			if items[i].StrategyScore == items[j].StrategyScore {
+				return items[i].Symbol < items[j].Symbol
+			}
+			return items[i].StrategyScore > items[j].StrategyScore
+		}
+		return items[i].RankScore > items[j].RankScore
+	})
+	for index := range items {
+		items[index].Rank = index + 1
+	}
+	if topN > 0 && len(items) > topN {
+		return items[:topN]
+	}
+	return items
+}
+
+func strategyBandScore(value, best, low, high float64) float64 {
+	if value < low || value > high || best <= low || best >= high {
+		return 0
+	}
+	if value == best {
+		return 1
+	}
+	if value < best {
+		return clamp01((value - low) / (best - low))
+	}
+	return clamp01((high - value) / (high - best))
+}
+
+func strategyMAAt(rows []FormulaKline, end, days int) float64 {
+	if days <= 0 || end < days || end > len(rows) {
+		return 0
+	}
+	sum := 0.0
+	for _, row := range rows[end-days : end] {
+		sum += row.Close
+	}
+	return sum / float64(days)
+}
+
+func strategyAverageVolumeAt(rows []FormulaKline, end, days int) float64 {
+	if days <= 0 || end < days || end > len(rows) {
+		return 0
+	}
+	sum := 0.0
+	for _, row := range rows[end-days : end] {
+		sum += row.Vol
+	}
+	return sum / float64(days)
+}
+
+func roundStrategyRank(value float64) float64 {
+	return math.Round(value*1000) / 1000
 }

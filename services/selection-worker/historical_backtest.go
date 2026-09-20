@@ -530,16 +530,7 @@ func historicalRowsThroughDate(rows []FormulaKline, signalDate int) ([]FormulaKl
 }
 
 func rankHistoricalMatches(items []StrategySelectionItem, topN int) []StrategySelectionItem {
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].Score == items[j].Score {
-			return items[i].Symbol < items[j].Symbol
-		}
-		return items[i].Score > items[j].Score
-	})
-	if topN > 0 && len(items) > topN {
-		return items[:topN]
-	}
-	return items
+	return rankStrategyMatches(items, topN)
 }
 
 func historicalTrackingBars(rows []FormulaKline) []workbench.TrackingBar {

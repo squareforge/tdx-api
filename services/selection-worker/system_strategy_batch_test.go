@@ -39,3 +39,11 @@ func TestLoadSystemBatchKlinesUsesMarketService(t *testing.T) {
 		t.Fatalf("expected per-symbol failure, got %+v", failures)
 	}
 }
+
+func TestNormalizeSystemStrategyConfigLoadsSharedRankingHistory(t *testing.T) {
+	config := StrategyConfig{CalcCount: 20}
+	normalizeSystemStrategyConfig(&config)
+	if config.CalcCount != strategyRankingMinimumBars {
+		t.Fatalf("calc count = %d, want shared ranking minimum %d", config.CalcCount, strategyRankingMinimumBars)
+	}
+}

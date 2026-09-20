@@ -253,7 +253,7 @@ func (s *AppStore) ListHistoricalBacktestSignals(runID string, query HistoricalB
 	}
 	listArgs := append(append([]interface{}{}, args...), query.Limit, query.Offset)
 	rows, err := s.db.Query(`SELECT id,run_id,strategy_id,strategy_name,signal_date,symbol,latest,score,detail_json,tracking_json,created_at
-		FROM historical_backtest_signals WHERE `+where+` ORDER BY signal_date DESC,strategy_name,symbol LIMIT ? OFFSET ?`, listArgs...)
+		FROM historical_backtest_signals WHERE `+where+` ORDER BY signal_date DESC,strategy_name,score DESC,symbol LIMIT ? OFFSET ?`, listArgs...)
 	if err != nil {
 		return page, err
 	}

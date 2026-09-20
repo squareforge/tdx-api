@@ -5,6 +5,92 @@ import (
 	"testing"
 )
 
+func unifiedRankingRows() []FormulaKline {
+	rows := make([]FormulaKline, 160)
+	previous := 10.0
+	for index := range rows {
+		closePrice := 10 * math.Pow(1.003, float64(index))
+		rows[index] = FormulaKline{
+			Date: 20260101 + index, YClose: previous, Open: closePrice * 0.99,
+			High: closePrice * 1.01, Low: closePrice * 0.98, Close: closePrice,
+			Vol: 1000, Amount: 2e9,
+		}
+		previous = closePrice
+	}
+	last := len(rows) - 1
+	rows[last].High = rows[last].Close / 0.94
+	rows[last].Vol = 1266.6666667
+	return rows
+}
+
+func TestUnifiedStrategyRankUsesSharedWeights(t *testing.T) {
+	score, factors, reason := evaluateUnifiedStrategyRank(unifiedRankingRows())
+	if score <= 0 || score > 100 {
+		t.Fatalf("rank score = %.3f, want 0-100", score)
+	}
+	if math.Abs(factors.Pullback-strategyRankPullbackWeight) > 0.001 {
+		t.Fatalf("pullback contribution = %.3f, want %.1f", factors.Pullback, strategyRankPullbackWeight)
+	}
+	if math.Abs(factors.Liquidity-strategyRankLiquidityWeight) > 0.001 {
+		t.Fatalf("liquidity contribution = %.3f, want %.1f", factors.Liquidity, strategyRankLiquidityWeight)
+	}
+	if factors.Trend > strategyRankTrendWeight || factors.Volume > strategyRankVolumeWeight ||
+		factors.Strength > strategyRankStrengthWeight || factors.PositionRisk > strategyRankPositionRiskWeight {
+		t.Fatalf("factor contribution exceeds configured weight: %+v", factors)
+	}
+	sum := factors.Trend + factors.Pullback + factors.Volume + factors.Strength + factors.Liquidity + factors.PositionRisk
+	if math.Abs(score-roundStrategyRank(sum)) > 0.001 {
+		t.Fatalf("rank score %.3f != factor sum %.3f", score, sum)
+	}
+	if reason == "" {
+		t.Fatal("rank reason must explain the shared factor contributions")
+	}
+}
+
+func TestStrategyScoreGatesBeforeUnifiedRanking(t *testing.T) {
+	rows := unifiedRankingRows()
+	runner := &AutomationRunner{}
+	result := &StrategyRunResult{
+		Config: StrategyConfig{
+			Scores: []StrategyFactorRule{{ID: "liquidity", Factor: "min_amount", Weight: 30, Params: map[string]interface{}{"value": 1e8}}},
+			Pass:   StrategyPassConfig{MinScore: 30},
+		},
+		KlineCache: map[string][]FormulaKline{"000001": rows}, PoolCache: map[string]map[string]bool{},
+		FormulaCache: map[string]map[string]bool{}, FormulaDetail: map[string]map[string]any{},
+	}
+	item, ok := runner.evaluateStrategySymbol(t.Context(), Strategy{}, result, "000001")
+	if !ok {
+		t.Fatalf("candidate meeting native threshold should pass: %+v", item)
+	}
+	if item.StrategyScore != 30 {
+		t.Fatalf("strategy score = %.3f, want 30", item.StrategyScore)
+	}
+	if item.RankScore <= 0 || item.Score != item.RankScore {
+		t.Fatalf("final score must expose unified rank score: %+v", item)
+	}
+
+	result.Config.Pass.MinScore = 31
+	failed, ok := runner.evaluateStrategySymbol(t.Context(), Strategy{}, result, "000001")
+	if ok || failed.StrategyScore != 30 || failed.RankScore != 0 {
+		t.Fatalf("native score below threshold must fail before shared ranking: %+v", failed)
+	}
+}
+
+func TestRankStrategyMatchesUsesNativeScoreAsTieBreaker(t *testing.T) {
+	items := []StrategySelectionItem{
+		{Symbol: "000003", RankScore: 70, StrategyScore: 90, Score: 70},
+		{Symbol: "000002", RankScore: 80, StrategyScore: 60, Score: 80},
+		{Symbol: "000001", RankScore: 80, StrategyScore: 75, Score: 80},
+	}
+	ranked := rankStrategyMatches(items, 2)
+	if len(ranked) != 2 || ranked[0].Symbol != "000001" || ranked[1].Symbol != "000002" {
+		t.Fatalf("ranked items = %+v", ranked)
+	}
+	if ranked[0].Rank != 1 || ranked[1].Rank != 2 {
+		t.Fatalf("rank numbers = %d,%d", ranked[0].Rank, ranked[1].Rank)
+	}
+}
+
 func workerFactorRows(closes []float64, highs []float64) []FormulaKline {
 	rows := make([]FormulaKline, len(closes))
 	previous := 0.0

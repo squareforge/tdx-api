@@ -20,6 +20,7 @@ const { Text } = Typography;
 type ResultView = 'ranking' | 'signals' | 'consensus' | 'trades';
 interface StockDirectoryItem { code?: string; name?: string; }
 interface StockDirectory { codes?: StockDirectoryItem[]; }
+interface StrategySelectionDetail { rank?: number; rank_score?: number; strategy_score?: number; }
 
 function parseJSON<T>(value?: string, fallback?: T): T {
   try { return JSON.parse(value || '') as T; } catch { return fallback as T; }
@@ -378,11 +379,13 @@ export function HistoricalBacktestWorkspace() {
 
   const signalColumns = [
     { title: '信号日', dataIndex: 'signal_date', width: 108 },
+    { title: '名次', key: 'rank', width: 66, render: (_value: unknown, row: HistoricalBacktestSignal) => parseJSON<StrategySelectionDetail>(row.detail_json, {}).rank || '--' },
     { title: '代码', dataIndex: 'symbol', width: 92, render: (value: string) => <Button type="link" className="code-link" onClick={() => openQuote(value)}>{value}</Button> },
     { title: '名称', dataIndex: 'symbol', width: 118, render: (value: string) => <strong>{stockName(value) || '--'}</strong> },
     { title: '策略', dataIndex: 'strategy_name', width: 170 },
     { title: '信号价', dataIndex: 'latest', width: 88, render: (value: number) => value?.toFixed(2) || '--' },
-    { title: '得分', dataIndex: 'score', width: 72 },
+    { title: '统一分', dataIndex: 'score', width: 78, render: (value: number) => Number(value || 0).toFixed(1) },
+    { title: '策略分', key: 'strategy_score', width: 78, render: (_value: unknown, row: HistoricalBacktestSignal) => { const value = parseJSON<StrategySelectionDetail>(row.detail_json, {}).strategy_score; return Number.isFinite(value) ? Number(value).toFixed(1) : '--'; } },
     ...[3, 5, 10].map((days) => ({ title: `D${days}`, key: `d${days}`, width: 92, render: (_: unknown, row: HistoricalBacktestSignal) => horizonCell(row.tracking_json, days) }))
   ];
 
@@ -511,7 +514,7 @@ export function HistoricalBacktestWorkspace() {
               {view === 'signals' ? <Space wrap><Select value={signalStrategy} onChange={(value) => { setSignalStrategy(value); setPage(1); }} options={[{ value: 'all', label: '全部策略' }, ...runStrategyOptions]} /><Input allowClear placeholder="股票代码" value={signalKeyword} onChange={(event) => { setSignalKeyword(event.target.value); setPage(1); }} /></Space> : null}
             </div>
             {view === 'ranking' ? <Table<HistoricalStrategySummary> size="small" rowKey="strategy_id" dataSource={summaries} columns={rankingColumns} pagination={false} scroll={{ x: 1050 }} locale={{ emptyText: selectedRun.status === 'running' ? '完成后生成策略统计' : '暂无策略统计' }} /> : null}
-            {view === 'signals' ? <Table<HistoricalBacktestSignal> size="small" rowKey="id" dataSource={signals.items} columns={signalColumns} scroll={{ x: 1000 }} pagination={{ current: page, pageSize: 100, total: signals.total, showSizeChanger: false, onChange: (next) => setPage(next) }} locale={{ emptyText: '暂无历史信号' }} /> : null}
+            {view === 'signals' ? <Table<HistoricalBacktestSignal> size="small" rowKey="id" dataSource={signals.items} columns={signalColumns} scroll={{ x: 1160 }} pagination={{ current: page, pageSize: 100, total: signals.total, showSizeChanger: false, onChange: (next) => setPage(next) }} locale={{ emptyText: '暂无历史信号' }} /> : null}
             {view === 'consensus' ? <Table<HistoricalConsensusSummary> size="small" rowKey={(row) => `${row.signal_date}-${row.symbol}`} dataSource={consensus} columns={consensusColumns} sortDirections={['ascend', 'descend']} pagination={{ pageSize: 50, showSizeChanger: false }} scroll={{ x: 1050 }} locale={{ emptyText: selectedRun.status === 'running' ? '完成后生成共振统计' : '暂无多策略共振信号' }} /> : null}
             {view === 'trades' ? <>
               {portfolio ? <div className="historical-portfolio-facts">

@@ -14,6 +14,13 @@ interface SelectionRunRecord { run: AutomationRun; results: SelectionResult[]; }
 interface RunDayGroup { date: string; runs: SelectionRunRecord[]; }
 interface StockDirectoryItem { code?: string; name?: string; }
 interface StockDirectory { codes?: StockDirectoryItem[]; }
+interface StrategySelectionDetail {
+  rank?: number;
+  score?: number;
+  rank_score?: number;
+  strategy_score?: number;
+  rank_reason?: string;
+}
 
 function eventDate(value?: string): Dayjs | null {
   const date = value ? dayjs(value) : null;
@@ -56,6 +63,17 @@ function trackingLabel(value?: SelectionHorizon) {
   return value.reason?.replace(/^已获得(\d+)\/(\d+)个交易日$/, '已获得 $1/$2 个交易日') || (value.status === 'unavailable' ? '暂无数据' : '待观察');
 }
 function trackingColor(value?: SelectionHorizon) { if (!value || value.status !== 'complete') return 'default'; return value.success ? 'success' : 'error'; }
+function selectionDetail(result: SelectionResult): StrategySelectionDetail {
+  try { return JSON.parse(result.detail_json || '{}') as StrategySelectionDetail; } catch { return {}; }
+}
+function compareSelectionRank(left: SelectionResult, right: SelectionResult) {
+  const leftDetail = selectionDetail(left);
+  const rightDetail = selectionDetail(right);
+  const leftRank = Number.isFinite(leftDetail.rank) && Number(leftDetail.rank) > 0 ? Number(leftDetail.rank) : Number.MAX_SAFE_INTEGER;
+  const rightRank = Number.isFinite(rightDetail.rank) && Number(rightDetail.rank) > 0 ? Number(rightDetail.rank) : Number.MAX_SAFE_INTEGER;
+  if (leftRank === Number.MAX_SAFE_INTEGER && rightRank === Number.MAX_SAFE_INTEGER) return left.symbol.localeCompare(right.symbol);
+  return leftRank - rightRank || Number(rightDetail.rank_score || rightDetail.score || 0) - Number(leftDetail.rank_score || leftDetail.score || 0) || left.symbol.localeCompare(right.symbol);
+}
 
 function buildRunRecords(runs: AutomationRun[], results: SelectionResult[]) {
   const resultMap = new Map<string, SelectionResult[]>();
@@ -67,7 +85,7 @@ function buildRunRecords(runs: AutomationRun[], results: SelectionResult[]) {
     const first = items[0];
     runMap.set(runID, { id: runID, task_id: first.task_id, task_name: first.task_name, task_type: 'stock_selection', status: 'success', started_at: first.created_at, finished_at: first.created_at, matched_count: items.length });
   });
-  return [...runMap.values()].map((run) => ({ run, results: [...(resultMap.get(run.id) || [])].sort((a, b) => a.symbol.localeCompare(b.symbol)) })).sort((left, right) => (right.run.started_at || right.run.finished_at || '').localeCompare(left.run.started_at || left.run.finished_at || ''));
+  return [...runMap.values()].map((run) => ({ run, results: [...(resultMap.get(run.id) || [])].sort(compareSelectionRank) })).sort((left, right) => (right.run.started_at || right.run.finished_at || '').localeCompare(left.run.started_at || left.run.finished_at || ''));
 }
 
 export function SelectionResultsWorkspace() {
@@ -139,6 +157,7 @@ export function SelectionResultsWorkspace() {
   const modalRun = selectedRun?.run;
   const modalResults = selectedRun?.results || [];
   const modalColumns = [
+    { title: '名次', key: 'rank', width: 66, render: (_value: unknown, record: SelectionResult) => selectionDetail(record).rank || '--' },
     {
       title: '代码',
       dataIndex: 'symbol',
@@ -151,6 +170,8 @@ export function SelectionResultsWorkspace() {
     },
     { title: '名称', dataIndex: 'symbol', width: 120, render: (value: string) => <strong>{stockName(value) || '--'}</strong> },
     { title: '公式', dataIndex: 'formula_name', width: 170 },
+    { title: '统一分', key: 'rank_score', width: 82, render: (_value: unknown, record: SelectionResult) => { const detail = selectionDetail(record); const value = detail.rank_score ?? detail.score; return Number.isFinite(value) ? Number(value).toFixed(1) : '--'; } },
+    { title: '策略分', key: 'strategy_score', width: 82, render: (_value: unknown, record: SelectionResult) => { const value = selectionDetail(record).strategy_score; return Number.isFinite(value) ? Number(value).toFixed(1) : '--'; } },
     { title: '最新值', dataIndex: 'latest', width: 100, render: (value: number) => value ? value.toFixed(2) : '--' },
     ...[1, 5, 10].map((days) => ({
       title: `D${days}`,
@@ -180,8 +201,8 @@ export function SelectionResultsWorkspace() {
         </Card>
       )}
 
-      <Modal open={resultModalOpen} onCancel={() => setResultModalOpen(false)} footer={null} width={1040} centered destroyOnHidden className="app-themed-modal selection-run-modal" title={<div className="quote-dialog-title selection-run-dialog-title"><div><strong>{modalRun?.task_name || '选股执行结果'}</strong><span>{modalRun ? `${runTypeLabel(modalRun.task_type)} · ${formatRunDate(runDateKey(modalRun))} ${formatRunTime(modalRun)}` : '本次执行的全部命中标的'}</span></div><small>RUN RESULTS</small></div>}>
-        {modalRun ? <div className="selection-run-modal-content"><div className="selection-run-facts"><div><span>执行状态</span><strong><Tag color={runStatus(modalRun.status).color}>{runStatus(modalRun.status).label}</Tag></strong></div><div><span>命中数量</span><strong>{modalRun.matched_count ?? modalResults.length} 只</strong></div><div><span>执行耗时</span><strong>{formatRunDuration(modalRun)}</strong></div><div><span>开始时间</span><strong>{modalRun.started_at || '--'}</strong></div><div><span>结束时间</span><strong>{modalRun.finished_at || '--'}</strong></div></div><Table<SelectionResult> size="small" rowKey="id" dataSource={modalResults} pagination={{ pageSize: 12, size: 'small' }} scroll={{ x: 935 }} onRow={(record) => ({ onClick: () => setSelectedResult(record) })} rowClassName={(record) => (record.id === selectedResult?.id ? 'row-active' : '')} locale={{ emptyText: '本次执行没有命中标的' }} columns={modalColumns} />{selectedResult ? <div className="selection-run-result-detail"><Text type="secondary">当前标的</Text><strong>{stockName(selectedResult.symbol) || '名称未知'} · {selectedResult.symbol}</strong><span>{selectedResult.formula_name} · 信号时间 {selectedResult.created_at}</span></div> : null}</div> : null}
+      <Modal open={resultModalOpen} onCancel={() => setResultModalOpen(false)} footer={null} width={1120} centered destroyOnHidden className="app-themed-modal selection-run-modal" title={<div className="quote-dialog-title selection-run-dialog-title"><div><strong>{modalRun?.task_name || '选股执行结果'}</strong><span>{modalRun ? `${runTypeLabel(modalRun.task_type)} · ${formatRunDate(runDateKey(modalRun))} ${formatRunTime(modalRun)}` : '本次执行的全部命中标的'}</span></div><small>RUN RESULTS</small></div>}>
+        {modalRun ? <div className="selection-run-modal-content"><div className="selection-run-facts"><div><span>执行状态</span><strong><Tag color={runStatus(modalRun.status).color}>{runStatus(modalRun.status).label}</Tag></strong></div><div><span>命中数量</span><strong>{modalRun.matched_count ?? modalResults.length} 只</strong></div><div><span>执行耗时</span><strong>{formatRunDuration(modalRun)}</strong></div><div><span>开始时间</span><strong>{modalRun.started_at || '--'}</strong></div><div><span>结束时间</span><strong>{modalRun.finished_at || '--'}</strong></div></div><Table<SelectionResult> size="small" rowKey="id" dataSource={modalResults} pagination={{ pageSize: 12, size: 'small' }} scroll={{ x: 1110 }} onRow={(record) => ({ onClick: () => setSelectedResult(record) })} rowClassName={(record) => (record.id === selectedResult?.id ? 'row-active' : '')} locale={{ emptyText: '本次执行没有命中标的' }} columns={modalColumns} />{selectedResult ? <div className="selection-run-result-detail"><Text type="secondary">当前标的</Text><strong>{stockName(selectedResult.symbol) || '名称未知'} · {selectedResult.symbol}</strong><span>{selectedResult.formula_name} · 信号时间 {selectedResult.created_at}</span>{selectionDetail(selectedResult).rank_reason ? <span>{selectionDetail(selectedResult).rank_reason}</span> : null}</div> : null}</div> : null}
       </Modal>
       <StockQuoteModal target={quoteTarget} onClose={() => setQuoteTarget(null)} />
     </div>

@@ -257,7 +257,7 @@ export function DailyReviewWorkspace() {
             {view !== 'overview' ? <Table<DailyReviewStock>
               size="small" rowKey="symbol" loading={loading} dataSource={visibleStocks} columns={stockColumns}
               sortDirections={['ascend', 'descend']} pagination={{ pageSize: 50, showSizeChanger: false, showTotal: (total) => `共 ${total} 只` }} scroll={{ x: 1540 }}
-              expandable={{ expandedRowRender: (stock) => <div className="daily-review-signal-detail">{stock.signals.map((signal) => <div key={signal.id}><strong>{signal.strategy_name}</strong><span>得分 {signal.score.toFixed(1)}</span><span>{parseJSON<{ reasons?: string[] }>(signal.detail_json, {}).reasons?.join('；') || '无附加说明'}</span></div>)}</div> }}
+              expandable={{ expandedRowRender: (stock) => <div className="daily-review-signal-detail">{stock.signals.map((signal) => { const detail = parseJSON<{ rank?: number; strategy_score?: number; reasons?: string[]; rank_reason?: string }>(signal.detail_json, {}); return <div key={signal.id}><strong>{signal.strategy_name}</strong><span>第 {detail.rank || '--'} 名 · 统一分 {signal.score.toFixed(1)} · 策略分 {Number(detail.strategy_score || 0).toFixed(1)}</span><span>{detail.rank_reason || detail.reasons?.join('；') || '无附加说明'}</span></div>; })}</div> }}
               locale={{ emptyText: view === 'consensus' ? '当天没有多策略共振股票' : '当天没有选股信号' }}
             /> : null}
           </>}

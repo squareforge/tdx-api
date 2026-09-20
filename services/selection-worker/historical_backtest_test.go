@@ -25,16 +25,19 @@ func TestHistoricalRowsThroughDateDoesNotExposeFutureBars(t *testing.T) {
 
 func TestRankHistoricalMatchesAppliesDailyTopN(t *testing.T) {
 	items := []StrategySelectionItem{
-		{Symbol: "000003", Score: 70},
-		{Symbol: "000002", Score: 80},
-		{Symbol: "000001", Score: 80},
+		{Symbol: "000003", Score: 70, RankScore: 70, StrategyScore: 90},
+		{Symbol: "000002", Score: 80, RankScore: 80, StrategyScore: 70},
+		{Symbol: "000001", Score: 80, RankScore: 80, StrategyScore: 80},
 	}
 	ranked := rankHistoricalMatches(items, 2)
 	if len(ranked) != 2 {
 		t.Fatalf("len(ranked) = %d, want 2", len(ranked))
 	}
 	if ranked[0].Symbol != "000001" || ranked[1].Symbol != "000002" {
-		t.Fatalf("ranked symbols = %s,%s, want stable score/symbol order", ranked[0].Symbol, ranked[1].Symbol)
+		t.Fatalf("ranked symbols = %s,%s, want rank score then strategy score order", ranked[0].Symbol, ranked[1].Symbol)
+	}
+	if ranked[0].Rank != 1 || ranked[1].Rank != 2 {
+		t.Fatalf("ranks = %d,%d, want 1,2", ranked[0].Rank, ranked[1].Rank)
 	}
 }
 

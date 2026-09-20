@@ -212,6 +212,9 @@ func normalizeSystemStrategyConfig(config *StrategyConfig) {
 	if config.CalcCount <= 0 {
 		config.CalcCount = 260
 	}
+	if config.CalcCount < strategyRankingMinimumBars {
+		config.CalcCount = strategyRankingMinimumBars
+	}
 	if config.BatchSize <= 0 {
 		config.BatchSize = 50
 	}
@@ -308,15 +311,7 @@ func (r *AutomationRunner) executeSystemStrategyWithKlines(ctx context.Context, 
 			items = append(items, item)
 		}
 	}
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].Score == items[j].Score {
-			return items[i].Symbol < items[j].Symbol
-		}
-		return items[i].Score > items[j].Score
-	})
-	if result.Config.Pass.TopN > 0 && len(items) > result.Config.Pass.TopN {
-		items = items[:result.Config.Pass.TopN]
-	}
+	items = rankStrategyMatches(items, result.Config.Pass.TopN)
 	result.Items = items
 	result.Matched = len(items)
 	if len(result.Errors) == 0 {
