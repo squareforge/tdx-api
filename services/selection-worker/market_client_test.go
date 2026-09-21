@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -109,6 +110,40 @@ func TestMarketServiceClientKlineHistory(t *testing.T) {
 	}
 	if resp.List[1].Close != 1200 {
 		t.Fatalf("unexpected close: %v", resp.List[1].Close)
+	}
+}
+
+func TestMarketServiceClientTrackingWorkdayWindow(t *testing.T) {
+	client, closeServer := newTestMarketClient(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/workday":
+			if r.URL.Query().Get("date") != "2026-09-21" || r.URL.Query().Get("count") != "30" {
+				t.Fatalf("unexpected workday query: %s", r.URL.RawQuery)
+			}
+			previous := make([]map[string]string, 30)
+			for index := range previous {
+				previous[index] = map[string]string{"iso": fmt.Sprintf("2026-08-%02d", 30-index)}
+			}
+			previous[29]["iso"] = "2026-08-10"
+			writeMarketTestResponse(t, w, map[string]interface{}{"previous": previous})
+		case "/api/workday/range":
+			if r.URL.Query().Get("start") != "2026-08-10" || r.URL.Query().Get("end") != "2026-09-21" {
+				t.Fatalf("unexpected range query: %s", r.URL.RawQuery)
+			}
+			writeMarketTestResponse(t, w, map[string]interface{}{"count": 31})
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	})
+	defer closeServer()
+
+	start, err := client.PreviousTradingDate(context.Background(), "2026-09-21", 30)
+	if err != nil || start != "2026-08-10" {
+		t.Fatalf("start = %q, err = %v", start, err)
+	}
+	count, err := client.TradingDayCount(context.Background(), start, "2026-09-21")
+	if err != nil || count != 31 {
+		t.Fatalf("count = %d, err = %v", count, err)
 	}
 }
 

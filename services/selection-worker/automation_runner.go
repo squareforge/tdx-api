@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -45,12 +46,34 @@ type StockSelectionPayload struct {
 }
 
 type SelectionTrackingPayload struct {
-	Limit           int     `json:"limit"`
+	HistoryBuffer   int     `json:"history_buffer"`
 	Horizons        []int   `json:"horizons"`
 	TargetReturn    float64 `json:"target_return"`
 	DrawdownLimit   float64 `json:"drawdown_limit"`
 	ContinueOnError bool    `json:"continue_on_error"`
 }
+
+type SelectionTrackingRunResult struct {
+	Summary        SelectionTrackingSummary `json:"summary"`
+	Policy         map[string]float64       `json:"policy"`
+	Errors         map[string]string        `json:"errors"`
+	SymbolErrors   map[string]string        `json:"symbol_errors"`
+	Freshness      *MarketHikyuuFreshness   `json:"freshness,omitempty"`
+	CandidateCount int                      `json:"candidate_count"`
+	SymbolCount    int                      `json:"symbol_count"`
+	UpdatedCount   int                      `json:"updated_count"`
+	FailedCount    int                      `json:"failed_count"`
+	SkippedSymbols int                      `json:"skipped_symbols"`
+	HistoryStart   string                   `json:"history_start,omitempty"`
+	ExpectedDate   string                   `json:"expected_date,omitempty"`
+	KlineCount     int                      `json:"kline_count,omitempty"`
+}
+
+const (
+	defaultSelectionTrackingHistoryBuffer = 30
+	maxSelectionTrackingKlineCount        = 2000
+	selectionTrackingLoadAttempts         = 3
+)
 
 type SystemSyncPayload struct {
 	Scope           string   `json:"scope"`
@@ -250,7 +273,11 @@ func (r *AutomationRunner) runTask(ctx context.Context, task AutomationTask) (Au
 	}
 	message := logText
 	if message == "" {
-		message = fmt.Sprintf("完成，命中 %d 条", matchedCount)
+		if task.Type == "selection_tracking" {
+			message = selectionTrackingRunMessage(result, matchedCount)
+		} else {
+			message = fmt.Sprintf("完成，命中 %d 条", matchedCount)
+		}
 	}
 	_ = r.store.UpdateTaskRunState(task.ID, status, message)
 
@@ -322,14 +349,32 @@ func (r *AutomationRunner) triggerSelectionTrackingOncePerDay() {
 }
 
 func (r *AutomationRunner) runSelectionTracking(ctx context.Context, task AutomationTask) (interface{}, int, error) {
-	payload := SelectionTrackingPayload{Limit: 500, Horizons: []int{3, 5, 10}, ContinueOnError: true}
+	payload := SelectionTrackingPayload{HistoryBuffer: defaultSelectionTrackingHistoryBuffer, Horizons: []int{3, 5, 10}, ContinueOnError: true}
 	if strings.TrimSpace(task.PayloadJSON) != "" {
 		if err := json.Unmarshal([]byte(task.PayloadJSON), &payload); err != nil {
 			return nil, 0, err
 		}
 	}
-	if payload.Limit <= 0 || payload.Limit > selectionTrackingMaxLimit() {
-		payload.Limit = selectionTrackingMaxLimit()
+	if len(payload.Horizons) == 0 {
+		payload.Horizons = []int{3, 5, 10}
+	}
+	if payload.HistoryBuffer <= 0 || payload.HistoryBuffer > defaultSelectionTrackingHistoryBuffer {
+		payload.HistoryBuffer = defaultSelectionTrackingHistoryBuffer
+	}
+	targetReturn, drawdownLimit := workbench.DefaultTrackingPolicy(payload.TargetReturn, payload.DrawdownLimit)
+	items, err := r.store.ListIncompleteSelectionTrackingResults(payload.Horizons)
+	if err != nil {
+		return nil, 0, err
+	}
+	result := SelectionTrackingRunResult{
+		Summary:        workbench.SummarizeSelectionTracking(nil, payload.Horizons),
+		Policy:         map[string]float64{"target_return": targetReturn, "drawdown_limit": drawdownLimit},
+		Errors:         map[string]string{},
+		SymbolErrors:   map[string]string{},
+		CandidateCount: len(items),
+	}
+	if len(items) == 0 {
+		return result, 0, nil
 	}
 	if !useMarketService() {
 		return nil, 0, errors.New("选股跟踪前无法校验Hikyuu K线完整性：MARKET_SERVICE_URL 未配置")
@@ -346,39 +391,195 @@ func (r *AutomationRunner) runSelectionTracking(ctx context.Context, task Automa
 	if !freshness.OK {
 		return map[string]interface{}{"freshness": freshness}, 0, errors.New(hikyuuFreshnessError(freshness))
 	}
-	items, err := r.store.ListSelectionResults("", "", "", false, payload.Limit)
-	if err != nil {
-		return nil, 0, err
-	}
-	targetReturn, drawdownLimit := workbench.DefaultTrackingPolicy(payload.TargetReturn, payload.DrawdownLimit)
-	tracked := make([]SelectionTrackingItem, 0, len(items))
-	errorsByResult := map[string]string{}
+	result.Freshness = freshness
+	result.ExpectedDate = expectedDate
+
+	itemsBySymbol := map[string][]SelectionResult{}
+	signalDates := map[string]int{}
+	invalidDateItems := make([]SelectionResult, 0)
+	oldestDate := ""
 	for _, item := range items {
-		bars, loadErr := loadTrackingKline(ctx, item.Symbol, 800)
-		if loadErr != nil {
-			errorsByResult[item.ID] = loadErr.Error()
-			if !payload.ContinueOnError {
-				return nil, len(tracked), loadErr
-			}
+		signalDate, signalDateInt, ok := selectionTrackingSignalDate(item.CreatedAt)
+		if !ok {
+			invalidDateItems = append(invalidDateItems, item)
 			continue
 		}
-		tracking := workbench.EvaluateSelectionTracking(item, toTrackingBars(bars), payload.Horizons, targetReturn, drawdownLimit, time.Now())
-		raw, marshalErr := json.Marshal(tracking)
-		if marshalErr != nil {
-			return nil, len(tracked), marshalErr
+		symbol := strings.ToUpper(strings.TrimSpace(item.Symbol))
+		if symbol == "" {
+			result.Errors[item.ID] = "股票代码为空"
+			continue
 		}
-		if updateErr := r.store.UpdateSelectionTracking(item.ID, string(raw)); updateErr != nil {
-			return nil, len(tracked), updateErr
+		item.Symbol = symbol
+		itemsBySymbol[symbol] = append(itemsBySymbol[symbol], item)
+		if current, exists := signalDates[symbol]; !exists || signalDateInt < current {
+			signalDates[symbol] = signalDateInt
 		}
-		item.TrackingJSON = string(raw)
+		if oldestDate == "" || signalDate < oldestDate {
+			oldestDate = signalDate
+		}
+	}
+
+	tracked := make([]SelectionTrackingItem, 0, len(items))
+	now := time.Now()
+	for _, item := range invalidDateItems {
+		tracking := workbench.EvaluateSelectionTracking(item, nil, payload.Horizons, targetReturn, drawdownLimit, now)
+		if updateErr := r.saveSelectionTracking(item, tracking); updateErr != nil {
+			result.Errors[item.ID] = updateErr.Error()
+			continue
+		}
+		item.TrackingJSON = mustJSON(tracking)
 		tracked = append(tracked, SelectionTrackingItem{Result: item, Tracking: tracking})
 	}
-	return map[string]interface{}{
-		"summary":   workbench.SummarizeSelectionTracking(tracked, payload.Horizons),
-		"policy":    map[string]float64{"target_return": targetReturn, "drawdown_limit": drawdownLimit},
-		"errors":    errorsByResult,
-		"freshness": freshness,
-	}, len(tracked), nil
+
+	symbols := make([]string, 0, len(itemsBySymbol))
+	for symbol := range itemsBySymbol {
+		symbols = append(symbols, symbol)
+	}
+	sort.Strings(symbols)
+	result.SymbolCount = len(symbols)
+	if len(symbols) > 0 {
+		historyStart, dateErr := marketClient.PreviousTradingDate(ctx, oldestDate, payload.HistoryBuffer)
+		if dateErr != nil {
+			return result, len(tracked), fmt.Errorf("确定选股跟踪历史起点失败: %w", dateErr)
+		}
+		klineCount, countErr := marketClient.TradingDayCount(ctx, historyStart, expectedDate)
+		if countErr != nil {
+			return result, len(tracked), fmt.Errorf("计算选股跟踪K线长度失败: %w", countErr)
+		}
+		if klineCount > maxSelectionTrackingKlineCount {
+			klineCount = maxSelectionTrackingKlineCount
+		}
+		result.HistoryStart = historyStart
+		result.KlineCount = klineCount
+
+		klines, loadErrors := r.loadTrackingKlinesWithRetry(ctx, symbols, klineCount)
+		for _, symbol := range symbols {
+			rows, loaded := klines[symbol]
+			if loaded && !trackingRowsCoverDate(rows, signalDates[symbol]) && len(rows) >= klineCount {
+				rows, loadErrors[symbol] = r.expandTrackingKlineCoverage(ctx, symbol, signalDates[symbol], rows, klineCount)
+				if loadErrors[symbol] == "" {
+					klines[symbol] = rows
+				}
+			}
+			if reason := strings.TrimSpace(loadErrors[symbol]); reason != "" {
+				result.SymbolErrors[symbol] = reason
+				for _, item := range itemsBySymbol[symbol] {
+					result.Errors[item.ID] = reason
+				}
+				continue
+			}
+			for _, item := range itemsBySymbol[symbol] {
+				tracking := workbench.EvaluateSelectionTracking(item, toTrackingBars(klines[symbol]), payload.Horizons, targetReturn, drawdownLimit, now)
+				if updateErr := r.saveSelectionTracking(item, tracking); updateErr != nil {
+					result.Errors[item.ID] = updateErr.Error()
+					continue
+				}
+				item.TrackingJSON = mustJSON(tracking)
+				tracked = append(tracked, SelectionTrackingItem{Result: item, Tracking: tracking})
+			}
+		}
+	}
+
+	result.Summary = workbench.SummarizeSelectionTracking(tracked, payload.Horizons)
+	result.UpdatedCount = len(tracked)
+	result.FailedCount = len(result.Errors)
+	result.SkippedSymbols = len(result.SymbolErrors)
+	return result, len(tracked), nil
+}
+
+func selectionTrackingRunMessage(value interface{}, updated int) string {
+	result, ok := value.(SelectionTrackingRunResult)
+	if !ok {
+		return fmt.Sprintf("完成，更新 %d 条", updated)
+	}
+	if result.FailedCount > 0 {
+		return fmt.Sprintf("完成，更新 %d/%d 条，跳过 %d 只股票、%d 条记录", result.UpdatedCount, result.CandidateCount, result.SkippedSymbols, result.FailedCount)
+	}
+	return fmt.Sprintf("完成，更新 %d/%d 条", result.UpdatedCount, result.CandidateCount)
+}
+
+func selectionTrackingSignalDate(raw string) (string, int, bool) {
+	value := strings.TrimSpace(raw)
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		local := parsed.In(time.FixedZone("CST", 8*60*60))
+		return local.Format("2006-01-02"), dateInt(local), true
+	}
+	if len(value) >= 10 {
+		if parsed, err := time.ParseInLocation("2006-01-02", value[:10], time.Local); err == nil {
+			return parsed.Format("2006-01-02"), dateInt(parsed), true
+		}
+	}
+	return "", 0, false
+}
+
+func (r *AutomationRunner) saveSelectionTracking(item SelectionResult, tracking SelectionTracking) error {
+	raw, err := json.Marshal(tracking)
+	if err != nil {
+		return err
+	}
+	return r.store.UpdateSelectionTracking(item.ID, string(raw))
+}
+
+func (r *AutomationRunner) loadTrackingKlinesWithRetry(ctx context.Context, symbols []string, klineCount int) (map[string][]FormulaKline, map[string]string) {
+	loaded := make(map[string][]FormulaKline, len(symbols))
+	failures := map[string]string{}
+	pending := append([]string(nil), symbols...)
+	for attempt := 0; attempt < selectionTrackingLoadAttempts && len(pending) > 0; attempt++ {
+		batchLoaded, batchFailures := r.loadSystemBatchKlines(ctx, pending, klineCount)
+		for symbol, rows := range batchLoaded {
+			loaded[symbol] = rows
+			delete(failures, symbol)
+		}
+		next := make([]string, 0, len(batchFailures))
+		for _, symbol := range pending {
+			if _, ok := loaded[symbol]; ok {
+				continue
+			}
+			reason := strings.TrimSpace(batchFailures[symbol])
+			if reason == "" {
+				reason = "K线加载失败"
+			}
+			failures[symbol] = reason
+			next = append(next, symbol)
+		}
+		pending = next
+		if err := ctx.Err(); err != nil {
+			break
+		}
+	}
+	return loaded, failures
+}
+
+func (r *AutomationRunner) expandTrackingKlineCoverage(ctx context.Context, symbol string, signalDate int, rows []FormulaKline, currentCount int) ([]FormulaKline, string) {
+	for currentCount < maxSelectionTrackingKlineCount && !trackingRowsCoverDate(rows, signalDate) && len(rows) >= currentCount {
+		nextCount := currentCount * 2
+		if nextCount > maxSelectionTrackingKlineCount {
+			nextCount = maxSelectionTrackingKlineCount
+		}
+		loaded, failures := r.loadTrackingKlinesWithRetry(ctx, []string{symbol}, nextCount)
+		if reason := strings.TrimSpace(failures[symbol]); reason != "" {
+			return rows, reason
+		}
+		expanded, ok := loaded[symbol]
+		if !ok || len(expanded) == 0 {
+			return rows, "扩展K线范围后仍无数据"
+		}
+		rows = expanded
+		currentCount = nextCount
+	}
+	if !trackingRowsCoverDate(rows, signalDate) && len(rows) >= currentCount {
+		return rows, fmt.Sprintf("最近%d根K线仍未覆盖信号日期%d", currentCount, signalDate)
+	}
+	return rows, ""
+}
+
+func trackingRowsCoverDate(rows []FormulaKline, signalDate int) bool {
+	for _, row := range rows {
+		if row.Date > 0 && row.Date <= signalDate {
+			return true
+		}
+	}
+	return false
 }
 
 func hikyuuFreshnessError(freshness *MarketHikyuuFreshness) string {
@@ -396,13 +597,6 @@ func hikyuuFreshnessError(freshness *MarketHikyuuFreshness) string {
 		details = append(details, "市场状态未知")
 	}
 	return fmt.Sprintf("Hikyuu K线完整性校验未通过（目标交易日 %s）：%s", freshness.ExpectedDate, strings.Join(details, ", "))
-}
-
-func selectionTrackingMaxLimit() int {
-	if n := envInt("SELECTION_TRACKING_MAX_RESULTS", 500); n >= 100 && n <= 5000 {
-		return n
-	}
-	return 500
 }
 
 func (r *AutomationRunner) resolveTaskWebhooks(task AutomationTask) []Webhook {

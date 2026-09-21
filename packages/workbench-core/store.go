@@ -1073,7 +1073,7 @@ func fixedSelectionTrackingAutomationTask() AutomationTask {
 		Type:        "selection_tracking",
 		Cron:        "0 15 17 * * 1-5",
 		Enabled:     true,
-		PayloadJSON: `{"limit":500,"horizons":[3,5,10],"target_return":3,"drawdown_limit":5,"continue_on_error":true}`,
+		PayloadJSON: `{"horizons":[3,5,10],"history_buffer":30,"target_return":3,"drawdown_limit":5,"continue_on_error":true}`,
 		WebhookIDs:  "[]",
 		Readonly:    true,
 		System:      true,
@@ -2233,6 +2233,55 @@ func (s *AppStore) ListSelectionResults(taskID, formulaID, symbol string, onlyLa
 	}
 	if list == nil {
 		list = []SelectionResult{}
+	}
+	return list, rows.Err()
+}
+
+// ListIncompleteSelectionTrackingResults returns every selection result whose
+// requested tracking horizons can still change. Complete and terminally
+// unavailable horizons are left out of the daily refresh queue.
+func (s *AppStore) ListIncompleteSelectionTrackingResults(horizons []int) ([]SelectionResult, error) {
+	seen := map[int]bool{}
+	normalized := make([]int, 0, len(horizons))
+	for _, horizon := range horizons {
+		if horizon <= 0 || seen[horizon] {
+			continue
+		}
+		seen[horizon] = true
+		normalized = append(normalized, horizon)
+	}
+	if len(normalized) == 0 {
+		normalized = []int{3, 5, 10}
+	}
+
+	statusChecks := make([]string, 0, len(normalized))
+	args := make([]interface{}, 0, len(normalized))
+	for _, horizon := range normalized {
+		statusChecks = append(statusChecks, `COALESCE(json_extract(tracking_json, ?), '') NOT IN ('complete','unavailable')`)
+		args = append(args, fmt.Sprintf("$.horizons.d%d.status", horizon))
+	}
+	query := `SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,tracking_json,created_at
+		FROM selection_results
+		WHERE CASE
+			WHEN TRIM(COALESCE(tracking_json,''))='' OR json_valid(tracking_json)=0 THEN 1
+			WHEN ` + strings.Join(statusChecks, " OR ") + ` THEN 1
+			ELSE 0
+		END=1
+		ORDER BY created_at ASC,id ASC`
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	list := make([]SelectionResult, 0)
+	for rows.Next() {
+		var item SelectionResult
+		if err := rows.Scan(&item.ID, &item.RunID, &item.TaskID, &item.TaskName, &item.FormulaID, &item.FormulaName, &item.Symbol, &item.Latest, &item.DetailJSON, &item.TrackingJSON, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		list = append(list, item)
 	}
 	return list, rows.Err()
 }

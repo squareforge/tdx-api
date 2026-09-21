@@ -111,7 +111,11 @@ func renderWebhookText(event WebhookEvent) string {
 		lines = append(lines, "状态: "+event.Status)
 	}
 	if event.MatchedCount > 0 {
-		lines = append(lines, fmt.Sprintf("命中数量: %d", event.MatchedCount))
+		label := "命中数量"
+		if event.TaskType == "selection_tracking" {
+			label = "更新数量"
+		}
+		lines = append(lines, fmt.Sprintf("%s: %d", label, event.MatchedCount))
 	}
 	if len(event.MatchedSymbols) > 0 {
 		symbols := event.MatchedSymbols

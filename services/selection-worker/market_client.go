@@ -84,6 +84,11 @@ type MarketHikyuuFreshness struct {
 	CheckedAt       string                                 `json:"checked_at"`
 }
 
+type MarketWorkdayDate struct {
+	ISO     string `json:"iso"`
+	Numeric string `json:"numeric"`
+}
+
 func NewMarketServiceClient() *MarketServiceClient {
 	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("MARKET_SERVICE_URL")), "/")
 	return &MarketServiceClient{
@@ -269,6 +274,44 @@ func (c *MarketServiceClient) ExpectedTradingDate(ctx context.Context, date stri
 		return "", errors.New("无法确定最近交易日")
 	}
 	return resp.Previous[0].ISO, nil
+}
+
+func (c *MarketServiceClient) PreviousTradingDate(ctx context.Context, date string, count int) (string, error) {
+	if count <= 0 {
+		return strings.TrimSpace(date), nil
+	}
+	if count > 30 {
+		count = 30
+	}
+	query := url.Values{}
+	query.Set("date", strings.TrimSpace(date))
+	query.Set("count", strconv.Itoa(count))
+	var resp struct {
+		Previous []MarketWorkdayDate `json:"previous"`
+	}
+	if err := c.get(ctx, "/api/workday", query, &resp); err != nil {
+		return "", err
+	}
+	if len(resp.Previous) < count || strings.TrimSpace(resp.Previous[count-1].ISO) == "" {
+		return "", fmt.Errorf("无法取得%s之前的%d个交易日", date, count)
+	}
+	return resp.Previous[count-1].ISO, nil
+}
+
+func (c *MarketServiceClient) TradingDayCount(ctx context.Context, start, end string) (int, error) {
+	query := url.Values{}
+	query.Set("start", strings.TrimSpace(start))
+	query.Set("end", strings.TrimSpace(end))
+	var resp struct {
+		Count int `json:"count"`
+	}
+	if err := c.get(ctx, "/api/workday/range", query, &resp); err != nil {
+		return 0, err
+	}
+	if resp.Count <= 0 {
+		return 0, fmt.Errorf("%s至%s没有可用交易日", start, end)
+	}
+	return resp.Count, nil
 }
 
 // Quotes 批量获取实时行情快照(单批建议不超过50只)。
