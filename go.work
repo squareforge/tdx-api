@@ -6,5 +6,6 @@ use (
 	./packages/workbench-core
 	./services/ai-service
 	./services/market-service
+	./services/quote-core-service
 	./services/selection-worker
 )
