@@ -143,9 +143,15 @@ func marketServicePost(ctx context.Context, path string, payload interface{}, ou
 func marketServiceCodeModels(ctx context.Context) ([]*tdx.CodeModel, error) {
 	var data struct {
 		Codes []struct {
-			Code     string `json:"code"`
-			Name     string `json:"name"`
-			Exchange string `json:"exchange"`
+			Code              string  `json:"code"`
+			Name              string  `json:"name"`
+			Exchange          string  `json:"exchange"`
+			CodeType          uint16  `json:"code_type,string"`
+			CodeTypeHex       string  `json:"code_type_hex"`
+			CodeTypeSource    string  `json:"code_type_source"`
+			CodeTypeUpdatedAt int64   `json:"code_type_updated_at,string"`
+			PrevClose         float64 `json:"prev_close,string"`
+			FiveDayVol        int64   `json:"five_day_vol,string"`
 		} `json:"codes"`
 	}
 	if err := marketServiceGet(ctx, "/api/codes", nil, &data); err != nil {
@@ -154,11 +160,21 @@ func marketServiceCodeModels(ctx context.Context) ([]*tdx.CodeModel, error) {
 
 	models := make([]*tdx.CodeModel, 0, len(data.Codes))
 	for _, item := range data.Codes {
-		models = append(models, &tdx.CodeModel{
-			Name:     item.Name,
-			Code:     item.Code,
-			Exchange: strings.ToLower(strings.TrimSpace(item.Exchange)),
-		})
+		model := &tdx.CodeModel{
+			Name:              item.Name,
+			Code:              item.Code,
+			Exchange:          strings.ToLower(strings.TrimSpace(item.Exchange)),
+			CodeType:          item.CodeType,
+			CodeTypeHex:       item.CodeTypeHex,
+			CodeTypeSource:    item.CodeTypeSource,
+			CodeTypeUpdatedAt: item.CodeTypeUpdatedAt,
+			PrevClose:         item.PrevClose,
+			FiveDayVol:        item.FiveDayVol,
+		}
+		if model.CodeType == 0 {
+			model.FillCodeTypeByRule()
+		}
+		models = append(models, model)
 	}
 	return models, nil
 }

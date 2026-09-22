@@ -2,10 +2,13 @@ package tdx
 
 import (
 	"errors"
+	"fmt"
 	"iter"
 	"math"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/injoyai/conv"
 	"github.com/injoyai/tdx/lib/xorms"
@@ -182,6 +185,9 @@ func (this *Codes) update() ([]*CodeModel, error) {
 	if err := this.db.Find(&list); err != nil {
 		return nil, err
 	}
+	if err := this.backfillCodeTypes(list); err != nil {
+		return nil, err
+	}
 
 	//如果更新过,则不更新
 	updated, err := this.updated.Updated(this.updateKey)
@@ -210,9 +216,12 @@ func (this *Codes) update() ([]*CodeModel, error) {
 				Multiple:  v.Multiple,
 				Decimal:   v.Decimal,
 				LastPrice: v.LastPrice,
+				PrevClose: v.LastPrice,
 			}
+			code.FillCodeTypeByRule()
 			if val, ok := mCode[exchange.String()+v.Code]; ok {
-				if val.Name != v.Name {
+				if val.Name != v.Name || val.LastPrice != v.LastPrice || val.PrevClose != code.PrevClose ||
+					(val.CodeTypeSource != "stock_info_list" && val.CodeType != code.CodeType) {
 					update = append(update, code)
 				}
 				delete(mCode, exchange.String()+v.Code)
@@ -258,7 +267,9 @@ func (this *Codes) update() ([]*CodeModel, error) {
 				}
 			}
 			for _, v := range update {
-				if _, err = session.Where("Exchange=? and Code=? ", v.Exchange, v.Code).Cols("Name,LastPrice").Update(v); err != nil {
+				if _, err = session.Where("Exchange=? and Code=? and (CodeTypeSource is null or CodeTypeSource='' or CodeTypeSource='tdx_rule')", v.Exchange, v.Code).
+					Cols("Name", "LastPrice", "PrevClose", "CodeType", "CodeTypeHex", "CodeTypeSource", "CodeTypeUpdatedAt").
+					Update(v); err != nil {
 					return err
 				}
 			}
@@ -274,6 +285,32 @@ func (this *Codes) update() ([]*CodeModel, error) {
 	return list, err
 }
 
+func (this *Codes) backfillCodeTypes(list []*CodeModel) error {
+	updates := []*CodeModel(nil)
+	for _, item := range list {
+		if item == nil || item.CodeType != 0 {
+			continue
+		}
+		item.FillCodeTypeByRule()
+		if item.CodeType != 0 {
+			updates = append(updates, item)
+		}
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+	return this.db.SessionFunc(func(session *xorm.Session) error {
+		for _, item := range updates {
+			if _, err := session.ID(item.ID).
+				Cols("CodeType", "CodeTypeHex", "CodeTypeSource", "CodeTypeUpdatedAt").
+				Update(item); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 /*
 
 
@@ -281,15 +318,21 @@ func (this *Codes) update() ([]*CodeModel, error) {
  */
 
 type CodeModel struct {
-	ID        int64   `json:"id"`                      //主键
-	Name      string  `json:"name"`                    //名称,有时候名称会变,例STxxx
-	Code      string  `json:"code" xorm:"index"`       //代码
-	Exchange  string  `json:"exchange" xorm:"index"`   //交易所
-	Multiple  uint16  `json:"multiple"`                //倍数
-	Decimal   int8    `json:"decimal"`                 //小数位
-	LastPrice float64 `json:"lastPrice"`               //昨收价格
-	EditDate  int64   `json:"editDate" xorm:"updated"` //修改时间
-	InDate    int64   `json:"inDate" xorm:"created"`   //创建时间
+	ID                int64   `json:"id"`                      //主键
+	Name              string  `json:"name"`                    //名称,有时候名称会变,例STxxx
+	Code              string  `json:"code" xorm:"index"`       //代码
+	Exchange          string  `json:"exchange" xorm:"index"`   //交易所
+	Multiple          uint16  `json:"multiple"`                //倍数
+	Decimal           int8    `json:"decimal"`                 //小数位
+	LastPrice         float64 `json:"lastPrice"`               //兼容旧字段,历史上存放昨收
+	CodeType          uint16  `json:"codeType" xorm:"index"`   //行情协议 CodeInfo.m_cCodeType
+	CodeTypeHex       string  `json:"codeTypeHex"`             //行情协议 CodeInfo.m_cCodeType 十六进制
+	CodeTypeSource    string  `json:"codeTypeSource"`          //tdx_rule 或 stock_info_list
+	CodeTypeUpdatedAt int64   `json:"codeTypeUpdatedAt"`       //代码类型更新时间
+	PrevClose         float64 `json:"prevClose"`               //昨收
+	FiveDayVol        int64   `json:"fiveDayVol"`              //5日量
+	EditDate          int64   `json:"editDate" xorm:"updated"` //修改时间
+	InDate            int64   `json:"inDate" xorm:"created"`   //创建时间
 }
 
 func (*CodeModel) TableName() string {
@@ -299,6 +342,63 @@ func (*CodeModel) TableName() string {
 // FullCode 获取完整代码 sz000001
 func (this *CodeModel) FullCode() string {
 	return this.Exchange + this.Code
+}
+
+func (this *CodeModel) FillCodeTypeByRule() {
+	if this == nil {
+		return
+	}
+	codeType := CodeTypeByRule(this.Exchange, this.Code)
+	if codeType == 0 {
+		return
+	}
+	this.CodeType = codeType
+	this.CodeTypeHex = CodeTypeHex(codeType)
+	this.CodeTypeSource = "tdx_rule"
+	this.CodeTypeUpdatedAt = time.Now().Unix()
+}
+
+func CodeTypeHex(codeType uint16) string {
+	if codeType == 0 {
+		return ""
+	}
+	return fmt.Sprintf("0x%04X", codeType)
+}
+
+func CodeTypeByRule(exchange, code string) uint16 {
+	exchange = strings.ToLower(strings.TrimSpace(exchange))
+	code = strings.TrimSpace(code)
+	fullCode := exchange + code
+	const (
+		stockMarket = uint16(0x1000)
+		shBourse    = uint16(0x0100)
+		szBourse    = uint16(0x0200)
+		kindIndex   = uint16(0x0000)
+		kindStockA  = uint16(0x0001)
+		kindBond    = uint16(0x0003)
+		kindETF     = uint16(0x0009)
+	)
+	var bourse uint16
+	switch exchange {
+	case protocol.ExchangeSH.String():
+		bourse = shBourse
+	case protocol.ExchangeSZ.String():
+		bourse = szBourse
+	default:
+		return 0
+	}
+	switch {
+	case protocol.IsIndex(fullCode):
+		return stockMarket | bourse | kindIndex
+	case protocol.IsStock(fullCode):
+		return stockMarket | bourse | kindStockA
+	case protocol.IsETF(fullCode):
+		return stockMarket | bourse | kindETF
+	case protocol.IsConvertibleBond(fullCode):
+		return stockMarket | bourse | kindBond
+	default:
+		return 0
+	}
 }
 
 func (this *CodeModel) Price(p protocol.Price) protocol.Price {

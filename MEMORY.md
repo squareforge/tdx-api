@@ -15,7 +15,7 @@
 
 - `apps/web`: Web UI and API gateway
 - `services/market-service`: market-data API
-- `services/quote-core-service`: experimental Investment Winner / H5-style TCP quote gateway
+- `services/quote-core-service`: experimental external binary TCP quote gateway
 - `services/hikyuu-data-service`: full and after-close historical-data ingestion backed by HDF5
 - `services/selection-worker`: scheduled selection, shared K-line loading and historical strategy replay
 - `packages/tdx-core`: TDX protocol client and data models
@@ -34,7 +34,8 @@
 - Hikyuu owns full initialization and after-close incremental persistence. The fixed close task runs at 16:30 on weekdays, verifies the exchange calendar, waits for Hikyuu to finish, and only then triggers the system-strategy daily batch. Its timeout is two hours.
 - Compose disables Hikyuu's internal scheduler because `selection-worker` owns the close-sync workflow; this avoids duplicate HDF5 writers.
 - Fixed D1/D5/D10 tracking runs at 17:15.
-- Quote core service starts as a sidecar probe for the Investment Winner / H5-style TCP protocol. Its first milestone is `RT_LOGIN` probing against `39.98.157.150:8090`; it is not yet wired into `market-service` fallback.
+- Quote core service starts as a sidecar probe for the external binary TCP quote protocol. Its first milestone is `RT_LOGIN` probing against `222.66.65.68:8888` and `115.28.252.213:8888`; it is not yet wired into `market-service` fallback. `39.98.157.150:8090` is the separate JSON push-subscription protocol.
+- External quote symbols reuse the existing `codes` table instead of introducing a separate code table. `CodeModel` carries `CodeType`, `CodeTypeHex`, `CodeTypeSource`, and `CodeTypeUpdatedAt`; initial values are inferred by `tdx_rule`, and later `RT_STOCKINFOLIST` can promote authoritative values with source `stock_info_list`.
 
 ## Pitfalls
 

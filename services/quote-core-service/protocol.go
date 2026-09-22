@@ -2,17 +2,23 @@ package main
 
 import (
 	"bytes"
+	"compress/zlib"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
+
+	"golang.org/x/text/encoding/simplifiedchinese"
+	"golang.org/x/text/transform"
 )
 
 const (
 	packetMagic = "2003"
 
-	rtLogin = uint16(0x0102)
+	rtLogin   = RT_LOGIN
+	rtZipData = RT_ZIPDATA
 )
 
 type loginRequestVariant struct {
@@ -31,10 +37,19 @@ type parsedDataHead struct {
 }
 
 type parsedLoginResponse struct {
-	DataHead  *parsedDataHead `json:"data_head,omitempty"`
-	ErrorCode int16           `json:"error_code,omitempty"`
-	Size      int32           `json:"size,omitempty"`
-	Text      string          `json:"text,omitempty"`
+	DataHead        *parsedDataHead `json:"data_head,omitempty"`
+	Zip             *parsedZipData  `json:"zip,omitempty"`
+	ErrorCode       int32           `json:"error_code,omitempty"`
+	Size            int32           `json:"size,omitempty"`
+	TextPreview     string          `json:"text_preview,omitempty"`
+	RawTextHexStart string          `json:"raw_text_hex_start,omitempty"`
+}
+
+type parsedZipData struct {
+	Type              string `json:"type"`
+	OriginalType      string `json:"original_type"`
+	CompressedBytes   int32  `json:"compressed_bytes"`
+	DecompressedBytes int32  `json:"decompressed_bytes"`
 }
 
 func defaultLoginVariants() []loginRequestVariant {
@@ -88,6 +103,19 @@ func buildLoginBody(username, password string, variant loginRequestVariant) []by
 	return body.Bytes()
 }
 
+func buildAskDataBody(requestType uint16, size int16, option int16, payload []byte) []byte {
+	body := bytes.NewBuffer(make([]byte, 0, 20+len(payload)))
+	_ = binary.Write(body, binary.LittleEndian, requestType)
+	body.WriteByte(0) // m_nIndex
+	body.WriteByte(0) // m_cSrv / operator flags
+	_ = binary.Write(body, binary.LittleEndian, int32(0))
+	body.Write(make([]byte, 8)) // HSPrivateKey
+	_ = binary.Write(body, binary.LittleEndian, size)
+	_ = binary.Write(body, binary.LittleEndian, option)
+	body.Write(payload)
+	return body.Bytes()
+}
+
 func copyCString(dst []byte, value string) {
 	copy(dst, []byte(value))
 }
@@ -118,17 +146,113 @@ func parseDataHead(body []byte) (*parsedDataHead, error) {
 }
 
 func parseLoginResponse(body []byte) (*parsedLoginResponse, error) {
+	unwrapped, _, err := unwrapResponseBody(body)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := parsePlainLoginResponse(unwrapped)
+	if err != nil {
+		return nil, err
+	}
+	if len(body) >= 12 && binary.LittleEndian.Uint16(body[0:2]) == rtZipData {
+		resp.Zip = &parsedZipData{
+			Type:              fmt.Sprintf("0x%04X", rtZipData),
+			OriginalType:      fmt.Sprintf("0x%04X", binary.LittleEndian.Uint16(body[2:4])),
+			CompressedBytes:   int32(binary.LittleEndian.Uint32(body[4:8])),
+			DecompressedBytes: int32(binary.LittleEndian.Uint32(body[8:12])),
+		}
+	}
+	return resp, nil
+}
+
+type parsedPacketMeta struct {
+	Compressed        bool   `json:"compressed"`
+	WireType          string `json:"wire_type"`
+	OriginalType      string `json:"original_type,omitempty"`
+	CompressedBytes   int32  `json:"compressed_bytes,omitempty"`
+	ExpandedBytes     int32  `json:"expanded_bytes,omitempty"`
+	ResponseBodyBytes int    `json:"response_body_bytes"`
+}
+
+func unwrapResponseBody(body []byte) ([]byte, parsedPacketMeta, error) {
+	meta := parsedPacketMeta{ResponseBodyBytes: len(body)}
+	if len(body) >= 2 {
+		meta.WireType = fmt.Sprintf("0x%04X", binary.LittleEndian.Uint16(body[0:2]))
+	}
+	if len(body) < 12 || binary.LittleEndian.Uint16(body[0:2]) != rtZipData {
+		return body, meta, nil
+	}
+	zipLen := int32(binary.LittleEndian.Uint32(body[4:8]))
+	origLen := int32(binary.LittleEndian.Uint32(body[8:12]))
+	if zipLen < 0 || int(zipLen) > len(body)-12 {
+		return nil, meta, fmt.Errorf("zip length mismatch: header=%d actual=%d", zipLen, len(body)-12)
+	}
+	decompressed, err := inflateZlib(body[12 : 12+zipLen])
+	if err != nil {
+		return nil, meta, err
+	}
+	meta.Compressed = true
+	meta.OriginalType = fmt.Sprintf("0x%04X", binary.LittleEndian.Uint16(body[2:4]))
+	meta.CompressedBytes = zipLen
+	meta.ExpandedBytes = origLen
+	return decompressed, meta, nil
+}
+
+func parsePlainLoginResponse(body []byte) (*parsedLoginResponse, error) {
 	head, err := parseDataHead(body)
 	if err != nil {
 		return nil, err
 	}
 	resp := &parsedLoginResponse{DataHead: head}
-	if len(body) >= 24 {
-		resp.ErrorCode = int16(binary.LittleEndian.Uint16(body[16:18]))
-		resp.Size = int32(binary.LittleEndian.Uint32(body[20:24]))
+	if len(body) >= 20 {
+		packed := binary.LittleEndian.Uint32(body[16:20])
+		resp.ErrorCode = int32(packed & 0x03)
+		resp.Size = int32(packed >> 2)
 	}
-	if len(body) > 24 {
-		resp.Text = string(bytes.TrimRight(body[24:], "\x00"))
+	if len(body) > 20 {
+		rawText := bytes.TrimRight(body[20:], "\x00")
+		if len(rawText) > 0 {
+			resp.TextPreview = trimPreview(decodeMarketText(rawText), 700)
+			prefix := rawText
+			if len(prefix) > 48 {
+				prefix = prefix[:48]
+			}
+			resp.RawTextHexStart = hex.EncodeToString(prefix)
+		}
 	}
 	return resp, nil
+}
+
+func inflateZlib(data []byte) ([]byte, error) {
+	reader, err := zlib.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+	return io.ReadAll(reader)
+}
+
+func decodeMarketText(data []byte) string {
+	decoded, _, err := transform.Bytes(simplifiedchinese.GB18030.NewDecoder(), data)
+	if err == nil {
+		return string(decoded)
+	}
+	return string(data)
+}
+
+func packetType(body []byte) (uint16, bool) {
+	unwrapped, _, err := unwrapResponseBody(body)
+	if err != nil || len(unwrapped) < 2 {
+		return 0, false
+	}
+	return binary.LittleEndian.Uint16(unwrapped[0:2]), true
+}
+
+func trimPreview(text string, maxRunes int) string {
+	text = strings.TrimSpace(text)
+	runes := []rune(text)
+	if len(runes) <= maxRunes {
+		return text
+	}
+	return string(runes[:maxRunes]) + "..."
 }

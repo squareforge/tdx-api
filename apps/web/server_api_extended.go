@@ -58,9 +58,15 @@ func handleGetCodes(w http.ResponseWriter, r *http.Request) {
 		}
 
 		resp.Codes = append(resp.Codes, map[string]string{
-			"code":     model.Code,
-			"name":     model.Name,
-			"exchange": exName,
+			"code":                 model.Code,
+			"name":                 model.Name,
+			"exchange":             exName,
+			"code_type":            strconv.Itoa(int(model.CodeType)),
+			"code_type_hex":        model.CodeTypeHex,
+			"code_type_source":     model.CodeTypeSource,
+			"code_type_updated_at": strconv.FormatInt(model.CodeTypeUpdatedAt, 10),
+			"prev_close":           strconv.FormatFloat(model.PrevClose, 'f', -1, 64),
+			"five_day_vol":         strconv.FormatInt(model.FiveDayVol, 10),
 		})
 	}
 
@@ -1027,7 +1033,9 @@ func getAllCodeModels() ([]*tdx.CodeModel, error) {
 				Multiple:  v.Multiple,
 				Decimal:   v.Decimal,
 				LastPrice: v.LastPrice,
+				PrevClose: v.LastPrice,
 			})
+			aggregate[len(aggregate)-1].FillCodeTypeByRule()
 		}
 	}
 

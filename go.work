@@ -3,6 +3,7 @@ go 1.25
 use (
 	./apps/web
 	./packages/tdx-core
+	./packages/quote-protocol
 	./packages/workbench-core
 	./services/ai-service
 	./services/market-service

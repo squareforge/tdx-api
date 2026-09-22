@@ -58,7 +58,9 @@ func loadHikyuuCodeModels(ctx context.Context) ([]*tdx.CodeModel, error) {
 		if err := rows.Scan(&code, &name, &exchange); err != nil {
 			return nil, err
 		}
-		models = append(models, &tdx.CodeModel{Code: code, Name: name, Exchange: exchange})
+		model := &tdx.CodeModel{Code: code, Name: name, Exchange: exchange}
+		model.FillCodeTypeByRule()
+		models = append(models, model)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
