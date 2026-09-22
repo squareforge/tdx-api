@@ -7,7 +7,7 @@
 
 ## Tech Stack
 
-- Go 1.25 (the Docker builders bootstrap it through `GOTOOLCHAIN=auto`)
+- Go 1.25 (the Docker builders use the 1.25 image directly with `GOTOOLCHAIN=local`)
 - React 19, TypeScript and Vite
 - Docker Compose for the multi-service local deployment
 
@@ -33,6 +33,7 @@
 - Hikyuu history is requested with forward adjustment. The rare TDX fallback returns raw daily bars and must not be merged into the same series; a later Hikyuu sync remains the authoritative repair.
 - Hikyuu owns full initialization and after-close incremental persistence. The fixed close task runs at 16:30 on weekdays, verifies the exchange calendar, waits for Hikyuu to finish, and only then triggers the system-strategy daily batch. Its timeout is two hours.
 - Compose disables Hikyuu's internal scheduler because `selection-worker` owns the close-sync workflow; this avoids duplicate HDF5 writers.
+- `market-service` owns one shared standard TDX client. `tdx.Manage` receives a one-slot pool backed by that client, so reconnect/failover is coordinated by one `DialDefault` connection instead of several independent scans.
 - Fixed D1/D5/D10 tracking runs at 17:15.
 - Quote core service starts as a sidecar probe for the external binary TCP quote protocol. Its first milestone is `RT_LOGIN` probing against `222.66.65.68:8888` and `115.28.252.213:8888`; it is not yet wired into `market-service` fallback. `39.98.157.150:8090` is the separate JSON push-subscription protocol.
 - External quote symbols reuse the existing `codes` table instead of introducing a separate code table. `CodeModel` carries `CodeType`, `CodeTypeHex`, `CodeTypeSource`, and `CodeTypeUpdatedAt`; initial values are inferred by `tdx_rule`, and later `RT_STOCKINFOLIST` can promote authoritative values with source `stock_info_list`.

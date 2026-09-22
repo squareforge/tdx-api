@@ -21,6 +21,7 @@ import (
 
 var (
 	client          *tdx.Client
+	tdxService      *tdxRuntime
 	manager         *tdx.Manage
 	marketStore     *MarketStore
 	hikyuuClient    *HikyuuDataServiceClient
@@ -55,9 +56,11 @@ func initMarketRuntime(startCron bool, syncData bool) error {
 	}
 
 	var err error
-	// 连接通达信服务器
-	client, err = tdx.DialDefault(tdx.WithDebug(false))
+	// 连接通达信服务器。tdxService 持有唯一标准行情连接；其内部
+	// 使用 tdx.DialDefault 的自动故障转移，并由 manager 共享同一客户端。
+	tdxService, err = newTDXRuntime()
 	if err != nil {
+		tdxService = nil
 		client = nil
 		if hikyuuClient.Enabled() {
 			message := fmt.Sprintf("连接通达信服务器失败，已切换本地Hikyuu降级模式: %v", err)
@@ -68,6 +71,7 @@ func initMarketRuntime(startCron bool, syncData bool) error {
 		}
 		return fmt.Errorf("连接服务器失败: %w", err)
 	}
+	client = tdxService.Client()
 	log.Println("成功连接到通达信服务器")
 	initMarketProviders()
 
@@ -92,7 +96,7 @@ func initMarketRuntime(startCron bool, syncData bool) error {
 		}
 	}
 
-	manager, err = tdx.NewManage(tdx.WithClients(4))
+	manager, err = tdx.NewManage(tdx.WithPool(tdxService.Pool()))
 	if err != nil {
 		log.Printf("初始化数据管理器失败，部分任务和交易日接口将不可用: %v", err)
 		startupWarnings = append(startupWarnings, fmt.Sprintf("初始化数据管理器失败: %v", err))

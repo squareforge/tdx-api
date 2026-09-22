@@ -1,6 +1,6 @@
 # 多阶段构建 - 第一阶段：构建
 # 使用官方镜像（如果国内拉取慢，可以配置docker daemon的registry-mirrors）
-FROM docker.1ms.run/library/golang:1.23-alpine AS builder
+FROM docker.1ms.run/library/golang:1.25-alpine AS builder
 
 # 替换Alpine镜像源为阿里云
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
@@ -11,7 +11,7 @@ WORKDIR /app
 # 设置Go代理（使用国内镜像加速）
 ENV GO111MODULE=on \
     GOPROXY=https://goproxy.cn,https://mirrors.aliyun.com/goproxy/,direct \
-    GOTOOLCHAIN=auto \
+    GOTOOLCHAIN=local \
     CGO_ENABLED=0 \
     PATH="/usr/local/go/bin:${PATH}"
 

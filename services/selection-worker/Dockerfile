@@ -1,11 +1,11 @@
-FROM docker.1ms.run/library/golang:1.23-alpine AS builder
+FROM docker.1ms.run/library/golang:1.25-alpine AS builder
 
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 WORKDIR /app
 
 ENV GO111MODULE=on \
     GOPROXY=https://goproxy.cn,https://mirrors.aliyun.com/goproxy/,direct \
-    GOTOOLCHAIN=auto \
+    GOTOOLCHAIN=local \
     CGO_ENABLED=0 \
     PATH="/usr/local/go/bin:${PATH}"
 
