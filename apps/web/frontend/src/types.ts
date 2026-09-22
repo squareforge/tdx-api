@@ -608,6 +608,50 @@ export interface DailyReviewResponse {
   notes: DecisionNote[];
 }
 
+export interface DailyStrategyAnalysisMetric {
+  strategy_id: string;
+  strategy_name: string;
+  run_days: number;
+  signal_count: number;
+  average_daily_signals: number;
+  unique_symbols: number;
+  average_score: number;
+  consensus_signals: number;
+  d3_completed: number;
+  d3_success_count: number;
+  d3_success_rate: number;
+  d3_positive_count: number;
+  d3_positive_rate: number;
+  d3_average_return: number;
+  d3_max_return: number;
+  d5_completed: number;
+  d5_success_count: number;
+  d5_success_rate: number;
+  d5_positive_count: number;
+  d5_positive_rate: number;
+  d5_average_return: number;
+  d5_max_return: number;
+  d10_completed: number;
+  d10_success_count: number;
+  d10_success_rate: number;
+  d10_positive_count: number;
+  d10_positive_rate: number;
+  d10_average_return: number;
+  d10_max_return: number;
+}
+
+export interface DailyStrategyAnalysisResponse {
+  start_date: string;
+  end_date: string;
+  trading_days: number;
+  strategy_count: number;
+  signal_count: number;
+  unique_symbols: number;
+  consensus_count: number;
+  average_score: number;
+  strategies: DailyStrategyAnalysisMetric[];
+}
+
 export interface HistoricalBacktestRun {
   id: string;
   status: 'running' | 'success' | 'failed' | 'cancelled' | string;

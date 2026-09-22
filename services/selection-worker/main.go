@@ -37,6 +37,7 @@ func main() {
 	http.HandleFunc("/api/decision-notes/", handleDecisionNoteOperations)
 	http.HandleFunc("/api/quote-alerts", handleQuoteAlerts)
 	http.HandleFunc("/api/daily-review", handleDailyReview)
+	http.HandleFunc("/api/daily-review/analysis", handleDailyReviewAnalysis)
 	http.HandleFunc("/api/historical-backtests", handleHistoricalBacktests)
 	http.HandleFunc("/api/historical-backtests/scan", handleHistoricalScan)
 	http.HandleFunc("/api/historical-backtests/scan/runs", handleHistoricalScanRuns)

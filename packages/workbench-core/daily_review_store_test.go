@@ -65,3 +65,61 @@ func TestBuildDailyReviewAggregatesSystemStrategyBatch(t *testing.T) {
 		t.Fatalf("completed tracking was not retained: %s", review.Consensus[0].TrackingJSON)
 	}
 }
+
+func TestBuildDailyStrategyAnalysisAggregatesDateRange(t *testing.T) {
+	store := newHistoricalBacktestTestStore(t)
+	tracking := `{"horizons":{"d5":{"status":"complete","close_return":4.2,"success":true}}}`
+	createBatch := func(date string, items map[string][]SelectionResult) AutomationRun {
+		parent, err := store.CreateAutomationRun(AutomationTask{ID: SystemStrategyDailyBatchTaskID, Name: "系统策略日报", Type: "system_strategy_batch"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.FinishAutomationRun(parent.ID, "success", "", `{"strategy_count":2}`, 0); err != nil {
+			t.Fatal(err)
+		}
+		finished := date + "T17:00:00+08:00"
+		if _, err := store.db.Exec(`UPDATE automation_runs SET started_at=?, finished_at=? WHERE id=?`, date+"T16:00:00+08:00", finished, parent.ID); err != nil {
+			t.Fatal(err)
+		}
+		matched := 0
+		for strategyID, signals := range items {
+			child, err := store.CreateAutomationRun(AutomationTask{ID: "system-strategy:" + strategyID, Name: strategyID, Type: "strategy_selection"}, parent.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for index := range signals {
+				signals[index].TrackingJSON = tracking
+				signals[index].CreatedAt = date + "T16:30:00+08:00"
+			}
+			if err := store.SaveSelectionResults(child, Formula{ID: "strategy:" + strategyID, Name: strategyID}, signals); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.FinishAutomationRun(child.ID, "success", "", `{}`, len(signals)); err != nil {
+				t.Fatal(err)
+			}
+			matched += len(signals)
+		}
+		if _, err := store.db.Exec(`UPDATE automation_runs SET matched_count=? WHERE id=?`, matched, parent.ID); err != nil {
+			t.Fatal(err)
+		}
+		return parent
+	}
+	createBatch("2026-09-18", map[string][]SelectionResult{
+		"trend":  {{Symbol: "000001", Latest: 10, DetailJSON: `{"score":80}`}, {Symbol: "000002", Latest: 20, DetailJSON: `{"score":60}`}},
+		"volume": {{Symbol: "000001", Latest: 10, DetailJSON: `{"score":70}`}},
+	})
+	createBatch("2026-09-19", map[string][]SelectionResult{
+		"trend": {{Symbol: "000001", Latest: 11, DetailJSON: `{"score":85}`}},
+	})
+
+	analysis, err := store.BuildDailyStrategyAnalysis("", "2026-09-19", 2, 20000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if analysis.TradingDays != 2 || analysis.SignalCount != 4 || analysis.UniqueSymbols != 2 || analysis.ConsensusCount != 1 {
+		t.Fatalf("unexpected summary: %+v", analysis)
+	}
+	if len(analysis.Strategies) != 2 || analysis.Strategies[0].D5Completed != 3 || analysis.Strategies[0].D5SuccessCount != 3 || analysis.Strategies[0].D5SuccessRate != 100 || analysis.Strategies[0].D5PositiveCount != 3 || analysis.Strategies[0].D5PositiveRate != 100 || analysis.Strategies[0].D5MaxReturn != 4.2 {
+		t.Fatalf("unexpected strategy metrics: %+v", analysis.Strategies)
+	}
+}

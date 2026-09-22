@@ -1,9 +1,9 @@
 import {
-  Alert, Button, Card, Empty, Input, Modal, Segmented, Space, Table, Tag, Tooltip, Typography, message
+  Alert, Button, Card, Empty, Input, Modal, Segmented, Select, Space, Table, Tag, Tooltip, Typography, message
 } from 'antd';
 import {
   CheckCircleOutlined, ClearOutlined, ClockCircleOutlined, EditOutlined, EyeOutlined, ReloadOutlined,
-  StopOutlined, TeamOutlined, UnorderedListOutlined
+  StopOutlined, TeamOutlined, UnorderedListOutlined, BarChartOutlined, CalendarOutlined
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -11,13 +11,14 @@ import { apiFetch } from '../lib/api';
 import { normalizeSymbol } from '../lib/format';
 import type {
   DailyReviewBatchSummary, DailyReviewResponse, DailyReviewStock, DailyReviewStrategySummary,
-  DecisionNote, SelectionTracking
+  DecisionNote, SelectionTracking, DailyStrategyAnalysisResponse, DailyStrategyAnalysisMetric
 } from '../types';
 import { StockQuoteModal, type StockQuoteTarget } from './StockQuoteModal';
 
 const { Text } = Typography;
 const { TextArea } = Input;
 type ReviewView = 'overview' | 'stocks' | 'consensus';
+type DailyReviewMode = 'single' | 'analysis';
 interface StockDirectoryItem { code?: string; name?: string; }
 interface StockDirectory { codes?: StockDirectoryItem[]; }
 
@@ -87,7 +88,75 @@ function decisionMeta(stock: DailyReviewStock) {
   return { label: '待处理', color: 'default' } as const;
 }
 
+function formatAnalysisPct(value?: number) {
+  return Number.isFinite(value) ? `${Number(value) >= 0 ? '+' : ''}${Number(value).toFixed(2)}%` : '--';
+}
+
+type AnalysisHorizonKey = 'd3' | 'd5' | 'd10';
+interface AnalysisHorizonSummary {
+  completed: number;
+  successCount: number;
+  successRate: number;
+  positiveCount: number;
+  positiveRate: number;
+  averageReturn: number;
+  maxReturn: number;
+}
+
+const analysisHorizonFields: Record<AnalysisHorizonKey, { completed: keyof DailyStrategyAnalysisMetric; successCount: keyof DailyStrategyAnalysisMetric; successRate: keyof DailyStrategyAnalysisMetric; positiveCount: keyof DailyStrategyAnalysisMetric; positiveRate: keyof DailyStrategyAnalysisMetric; averageReturn: keyof DailyStrategyAnalysisMetric; maxReturn: keyof DailyStrategyAnalysisMetric }> = {
+  d3: { completed: 'd3_completed', successCount: 'd3_success_count', successRate: 'd3_success_rate', positiveCount: 'd3_positive_count', positiveRate: 'd3_positive_rate', averageReturn: 'd3_average_return', maxReturn: 'd3_max_return' },
+  d5: { completed: 'd5_completed', successCount: 'd5_success_count', successRate: 'd5_success_rate', positiveCount: 'd5_positive_count', positiveRate: 'd5_positive_rate', averageReturn: 'd5_average_return', maxReturn: 'd5_max_return' },
+  d10: { completed: 'd10_completed', successCount: 'd10_success_count', successRate: 'd10_success_rate', positiveCount: 'd10_positive_count', positiveRate: 'd10_positive_rate', averageReturn: 'd10_average_return', maxReturn: 'd10_max_return' }
+};
+
+function metricHorizon(metric: DailyStrategyAnalysisMetric, horizon: AnalysisHorizonKey): AnalysisHorizonSummary {
+  const fields = analysisHorizonFields[horizon];
+  return {
+    completed: Number(metric[fields.completed] || 0),
+    successCount: Number(metric[fields.successCount] || 0),
+    successRate: Number(metric[fields.successRate] || 0),
+    positiveCount: Number(metric[fields.positiveCount] || 0),
+    positiveRate: Number(metric[fields.positiveRate] || 0),
+    averageReturn: Number(metric[fields.averageReturn] || 0),
+    maxReturn: Number(metric[fields.maxReturn] || 0)
+  };
+}
+
+function summarizeAnalysisHorizon(metrics: DailyStrategyAnalysisMetric[], horizon: AnalysisHorizonKey): AnalysisHorizonSummary {
+  const summary: AnalysisHorizonSummary = { completed: 0, successCount: 0, successRate: 0, positiveCount: 0, positiveRate: 0, averageReturn: 0, maxReturn: 0 };
+  let weightedReturn = 0;
+  let hasMaxReturn = false;
+  for (const metric of metrics) {
+    const item = metricHorizon(metric, horizon);
+    summary.completed += item.completed;
+    summary.successCount += item.successCount;
+    summary.positiveCount += item.positiveCount;
+    weightedReturn += item.averageReturn * item.completed;
+    if (item.completed > 0 && (!hasMaxReturn || item.maxReturn > summary.maxReturn)) {
+      summary.maxReturn = item.maxReturn;
+      hasMaxReturn = true;
+    }
+  }
+  if (summary.completed > 0) {
+    summary.successRate = summary.successCount / summary.completed * 100;
+    summary.positiveRate = summary.positiveCount / summary.completed * 100;
+    summary.averageReturn = weightedReturn / summary.completed;
+  }
+  return summary;
+}
+
+function analysisLeader(metrics: DailyStrategyAnalysisMetric[], horizon: AnalysisHorizonKey) {
+  return [...metrics]
+    .filter((metric) => metricHorizon(metric, horizon).completed > 0)
+    .sort((left, right) => {
+      const a = metricHorizon(left, horizon);
+      const b = metricHorizon(right, horizon);
+      return b.positiveCount - a.positiveCount || b.positiveRate - a.positiveRate || b.averageReturn - a.averageReturn;
+    })[0];
+}
+
 export function DailyReviewWorkspace() {
+  const [mode, setMode] = useState<DailyReviewMode>('single');
   const [review, setReview] = useState<DailyReviewResponse>(emptyReview);
   const [view, setView] = useState<ReviewView>('stocks');
   const [keyword, setKeyword] = useState('');
@@ -98,6 +167,12 @@ export function DailyReviewWorkspace() {
   const [noteTarget, setNoteTarget] = useState<DailyReviewStock | null>(null);
   const [noteText, setNoteText] = useState('');
   const [noteSaving, setNoteSaving] = useState(false);
+  const [analysis, setAnalysis] = useState<DailyStrategyAnalysisResponse>({ start_date: '', end_date: '', trading_days: 0, strategy_count: 0, signal_count: 0, unique_symbols: 0, consensus_count: 0, average_score: 0, strategies: [] });
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisPreset, setAnalysisPreset] = useState('20');
+  const [analysisStartDate, setAnalysisStartDate] = useState(dayjs().subtract(40, 'day').format('YYYY-MM-DD'));
+  const [analysisEndDate, setAnalysisEndDate] = useState(dayjs().format('YYYY-MM-DD'));
+  const [analysisStrategies, setAnalysisStrategies] = useState<string[]>([]);
 
   const load = useCallback(async (batchID?: string) => {
     setLoading(true);
@@ -111,6 +186,18 @@ export function DailyReviewWorkspace() {
       setLoading(false);
     }
   }, []);
+
+  const loadAnalysis = useCallback(async (preset = analysisPreset, endDate = analysisEndDate, startDate = analysisStartDate) => {
+    setAnalysisLoading(true);
+    try {
+      const params = new URLSearchParams({ limit: '20000' });
+      params.set('end_date', endDate);
+      if (preset === 'custom') params.set('start_date', startDate);
+      else params.set('days', preset);
+      await apiFetch<DailyStrategyAnalysisResponse>(`/api/daily-review/analysis?${params}`).then(setAnalysis);
+    } catch (error) { message.error(error instanceof Error ? error.message : '多日策略分析加载失败'); }
+    finally { setAnalysisLoading(false); }
+  }, [analysisEndDate, analysisPreset, analysisStartDate]);
 
   useEffect(() => {
     void Promise.all([
@@ -129,6 +216,8 @@ export function DailyReviewWorkspace() {
     const timer = window.setInterval(() => { void load(review.selected_batch?.id); }, 3000);
     return () => window.clearInterval(timer);
   }, [load, review.selected_batch?.id, review.selected_batch?.status]);
+
+  useEffect(() => { if (mode === 'analysis') void loadAnalysis(); }, [loadAnalysis, mode]);
 
   function stockName(symbol: string) { return stockNames[normalizeSymbol(symbol)] || ''; }
   function openQuote(symbol: string) { setQuoteTarget({ code: symbol, name: stockName(symbol) || undefined }); }
@@ -221,9 +310,53 @@ export function DailyReviewWorkspace() {
 
   const selected = review.selected_batch;
   const selectedStatus = statusMeta(selected?.status);
-
+  const visibleAnalysisStrategies = analysisStrategies.length === 0
+    ? analysis.strategies
+    : analysis.strategies.filter((item) => analysisStrategies.includes(item.strategy_id));
+  const selectedAnalysisSignalCount = visibleAnalysisStrategies.reduce((total, metric) => total + metric.signal_count, 0);
+  const selectedAnalysisHorizons = {
+    d3: summarizeAnalysisHorizon(visibleAnalysisStrategies, 'd3'),
+    d5: summarizeAnalysisHorizon(visibleAnalysisStrategies, 'd5'),
+    d10: summarizeAnalysisHorizon(visibleAnalysisStrategies, 'd10')
+  };
   return (
     <div className="daily-review-workspace">
+      <div className="daily-review-mode-bar">
+        <Segmented value={mode} onChange={(value) => setMode(value as DailyReviewMode)} options={[{ value: 'single', label: '单日复盘', icon: <CalendarOutlined /> }, { value: 'analysis', label: '多日策略分析', icon: <BarChartOutlined /> }]} />
+        <Text type="secondary">单日复盘看今天，策略分析看一段时间的稳定性</Text>
+      </div>
+      {mode === 'analysis' ? <div className="daily-analysis-workspace">
+        <Card className="work-card daily-analysis-controls" title={<div className="historical-backtest-title"><div><span>多日策略分析</span><Text type="secondary">系统策略日报 · 按日期范围聚合</Text></div><small>STRATEGY ANALYSIS</small></div>} extra={<Button icon={<ReloadOutlined />} loading={analysisLoading} onClick={() => void loadAnalysis()}>刷新</Button>}>
+          <div className="daily-analysis-filter-row">
+            <label className="daily-analysis-filter-field daily-analysis-preset-field">
+              <span>分析窗口</span>
+              <Segmented value={analysisPreset} onChange={(value) => setAnalysisPreset(String(value))} options={[{ value: '10', label: '近10个交易日' }, { value: '20', label: '近20个交易日' }, { value: '60', label: '近60个交易日' }, { value: 'custom', label: '自定义范围' }]} />
+            </label>
+            {analysisPreset === 'custom' ? <label className="daily-analysis-filter-field"><span>开始日期</span><Input type="date" value={analysisStartDate} onChange={(event) => setAnalysisStartDate(event.target.value)} /></label> : null}
+            <label className="daily-analysis-filter-field"><span>结束日期</span><Input type="date" value={analysisEndDate} onChange={(event) => setAnalysisEndDate(event.target.value)} /></label>
+            <label className="daily-analysis-filter-field daily-analysis-strategy-field"><span>选择策略（可多选）</span><Select mode="multiple" value={analysisStrategies} onChange={setAnalysisStrategies} allowClear showSearch optionFilterProp="label" maxTagCount={1} maxTagPlaceholder={(omittedValues) => `+${omittedValues.length} 个`} placeholder="全部系统策略" options={analysis.strategies.map((item) => ({ value: item.strategy_id, label: item.strategy_name }))} /></label>
+            {analysisPreset === 'custom' ? <Button className="daily-analysis-apply" type="primary" onClick={() => void loadAnalysis('custom', analysisEndDate, analysisStartDate)}>应用范围</Button> : null}
+          </div>
+          <div className="daily-analysis-range">分析区间 <strong>{analysis.start_date || '--'} 至 {analysis.end_date || '--'}</strong> · {analysis.trading_days} 个有日报的交易日 · 策略范围 {analysisStrategies.length ? `已选 ${analysisStrategies.length} 个` : '全部系统策略'}</div>
+        </Card>
+        <div className="daily-review-facts daily-analysis-facts"><div><span>分析天数</span><strong>{analysis.trading_days}</strong><small>有系统日报的交易日</small></div><div><span>纳入策略</span><strong>{visibleAnalysisStrategies.length}</strong><small>{analysisStrategies.length ? '当前选择' : '全部系统策略'}</small></div><div><span>区间信号</span><strong>{selectedAnalysisSignalCount}</strong><small>所选策略合计</small></div><div><span>D3 有效</span><strong>{selectedAnalysisHorizons.d3.completed}</strong><small>已完成跟踪</small></div><div><span>D5 有效</span><strong>{selectedAnalysisHorizons.d5.completed}</strong><small>已完成跟踪</small></div><div><span>D10 有效</span><strong>{selectedAnalysisHorizons.d10.completed}</strong><small>已完成跟踪</small></div></div>
+        <div className="daily-analysis-horizon-grid">
+          {(['d3', 'd5', 'd10'] as AnalysisHorizonKey[]).map((horizon) => {
+            const summary = selectedAnalysisHorizons[horizon];
+            const leader = analysisLeader(visibleAnalysisStrategies, horizon);
+            return <Card key={horizon} className="work-card daily-analysis-horizon-card" title={`${horizon.toUpperCase()} 区间汇总`}>
+              <div className="daily-analysis-horizon-metrics">
+                <div><span>成功率</span><strong>{summary.completed > 0 ? `${summary.successRate.toFixed(1)}%` : '--'}</strong><small>{summary.successCount} / {summary.completed} 成功</small></div>
+                <div><span>收红率</span><strong className={summary.completed > 0 && summary.positiveRate >= 50 ? 'analysis-positive' : ''}>{summary.completed > 0 ? `${summary.positiveRate.toFixed(1)}%` : '--'}</strong><small>{summary.positiveCount} / {summary.completed} 收红</small></div>
+                <div><span>平均收益率</span><strong className={summary.completed > 0 ? (summary.averageReturn >= 0 ? 'analysis-positive' : 'analysis-negative') : ''}>{summary.completed > 0 ? formatAnalysisPct(summary.averageReturn) : '--'}</strong><small>已完成信号</small></div>
+                <div><span>最高收益率</span><strong className={summary.completed > 0 ? (summary.maxReturn >= 0 ? 'analysis-positive' : 'analysis-negative') : ''}>{summary.completed > 0 ? formatAnalysisPct(summary.maxReturn) : '--'}</strong><small>单次收盘最高</small></div>
+              </div>
+              <div className="daily-analysis-leader">收红最多 <strong>{leader?.strategy_name || '--'}</strong>{leader ? <span>{metricHorizon(leader, horizon).positiveRate.toFixed(1)}% · {metricHorizon(leader, horizon).positiveCount} 次</span> : null}</div>
+            </Card>;
+          })}
+        </div>
+      </div> : null}
+      {mode === 'single' ? <>
       <div className="historical-backtest-main daily-review-main">
         <Card className="work-card historical-run-list daily-review-batch-list" title={<div className="historical-backtest-title"><div><span>复盘批次</span><Text type="secondary">最近 {review.batches.length} 次</Text></div><small>DAILY RUNS</small></div>}>
           {review.batches.length ? <div className="historical-run-stack">{review.batches.map((batch: DailyReviewBatchSummary) => { const meta = statusMeta(batch.status); return <button type="button" key={batch.id} className={batch.id === selected?.id ? 'is-active' : ''} onClick={() => void load(batch.id)}><span>{batch.date} · {dayjs(batch.started_at).format('HH:mm:ss')}</span><strong>{batch.strategy_count || '--'} 个策略 · {batch.matched_count} 条信号</strong><small><Tag color={meta.color}>{meta.label}</Tag>{formatDuration(batch.duration_ms)}</small></button>; })}</div> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无系统策略日报" />}
@@ -266,6 +399,7 @@ export function DailyReviewWorkspace() {
       <Modal open={Boolean(noteTarget)} title={`${noteTarget ? `${stockName(noteTarget.symbol) || noteTarget.symbol} ` : ''}复盘备注`} okText="保存" cancelText="取消" confirmLoading={noteSaving} onOk={() => void saveNote()} onCancel={() => setNoteTarget(null)}>
         <TextArea rows={6} maxLength={1000} showCount placeholder="记录关注理由、风险点或后续计划" value={noteText} onChange={(event) => setNoteText(event.target.value)} />
       </Modal>
+      </> : null}
       <StockQuoteModal target={quoteTarget} onClose={() => setQuoteTarget(null)} />
     </div>
   );

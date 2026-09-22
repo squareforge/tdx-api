@@ -94,6 +94,56 @@ type DailyReviewData struct {
 	Notes         []DecisionNote               `json:"notes"`
 }
 
+type DailyStrategyAnalysisMetric struct {
+	StrategyID          string  `json:"strategy_id"`
+	StrategyName        string  `json:"strategy_name"`
+	RunDays             int     `json:"run_days"`
+	SignalCount         int     `json:"signal_count"`
+	AverageDailySignals float64 `json:"average_daily_signals"`
+	UniqueSymbols       int     `json:"unique_symbols"`
+	AverageScore        float64 `json:"average_score"`
+	ConsensusSignals    int     `json:"consensus_signals"`
+	D3Completed         int     `json:"d3_completed"`
+	D3SuccessCount      int     `json:"d3_success_count"`
+	D3SuccessRate       float64 `json:"d3_success_rate"`
+	D3PositiveCount     int     `json:"d3_positive_count"`
+	D3PositiveRate      float64 `json:"d3_positive_rate"`
+	D3AverageReturn     float64 `json:"d3_average_return"`
+	D3MaxReturn         float64 `json:"d3_max_return"`
+	D5Completed         int     `json:"d5_completed"`
+	D5SuccessCount      int     `json:"d5_success_count"`
+	D5SuccessRate       float64 `json:"d5_success_rate"`
+	D5PositiveCount     int     `json:"d5_positive_count"`
+	D5PositiveRate      float64 `json:"d5_positive_rate"`
+	D5AverageReturn     float64 `json:"d5_average_return"`
+	D5MaxReturn         float64 `json:"d5_max_return"`
+	D10Completed        int     `json:"d10_completed"`
+	D10SuccessCount     int     `json:"d10_success_count"`
+	D10SuccessRate      float64 `json:"d10_success_rate"`
+	D10PositiveCount    int     `json:"d10_positive_count"`
+	D10PositiveRate     float64 `json:"d10_positive_rate"`
+	D10AverageReturn    float64 `json:"d10_average_return"`
+	D10MaxReturn        float64 `json:"d10_max_return"`
+}
+
+type DailyStrategyAnalysisData struct {
+	StartDate      string                        `json:"start_date"`
+	EndDate        string                        `json:"end_date"`
+	TradingDays    int                           `json:"trading_days"`
+	StrategyCount  int                           `json:"strategy_count"`
+	SignalCount    int                           `json:"signal_count"`
+	UniqueSymbols  int                           `json:"unique_symbols"`
+	ConsensusCount int                           `json:"consensus_count"`
+	AverageScore   float64                       `json:"average_score"`
+	Strategies     []DailyStrategyAnalysisMetric `json:"strategies"`
+}
+
+type dailyAnalysisSignal struct {
+	date, symbol string
+	score        float64
+	tracking     string
+}
+
 type dailyBatchResult struct {
 	Strategies       []dailyBatchStrategy `json:"strategies"`
 	StrategyCount    int                  `json:"strategy_count"`
@@ -113,8 +163,11 @@ type dailyBatchStrategy struct {
 }
 
 func (s *AppStore) ListDailyReviewBatches(limit int) ([]DailyReviewBatchSummary, error) {
-	if limit <= 0 || limit > 100 {
+	if limit <= 0 {
 		limit = 30
+	}
+	if limit > 200 {
+		limit = 200
 	}
 	runs, err := s.ListAutomationRuns(SystemStrategyDailyBatchTaskID, limit)
 	if err != nil {
@@ -300,6 +353,224 @@ func (s *AppStore) BuildDailyReview(date, batchID string, limit int) (DailyRevie
 		KlineLoaded: selected.KlineLoaded, KlineFailed: selected.KlineFailed, DurationMS: selected.DurationMS,
 	}
 	return data, nil
+}
+
+func (s *AppStore) BuildDailyStrategyAnalysis(startDate, endDate string, days, limit int) (DailyStrategyAnalysisData, error) {
+	if limit <= 0 || limit > 20000 {
+		limit = 20000
+	}
+	batches, err := s.ListDailyReviewBatches(200)
+	if err != nil {
+		return DailyStrategyAnalysisData{}, err
+	}
+	selected := make([]DailyReviewBatchSummary, 0, len(batches))
+	selectedDates := map[string]bool{}
+	for _, batch := range batches {
+		if batch.Status != "success" && batch.Status != "failed" {
+			continue
+		}
+		if startDate != "" && batch.Date < startDate {
+			continue
+		}
+		if endDate != "" && batch.Date > endDate {
+			continue
+		}
+		if selectedDates[batch.Date] {
+			continue
+		}
+		selectedDates[batch.Date] = true
+		selected = append(selected, batch)
+	}
+	if startDate == "" && days > 0 && len(selected) > days {
+		selected = selected[:days]
+	}
+	sort.Slice(selected, func(i, j int) bool { return selected[i].Date < selected[j].Date })
+	if len(selected) == 0 {
+		return DailyStrategyAnalysisData{StartDate: startDate, EndDate: endDate, Strategies: []DailyStrategyAnalysisMetric{}}, nil
+	}
+	if startDate == "" {
+		startDate = selected[0].Date
+	}
+	if endDate == "" {
+		endDate = selected[len(selected)-1].Date
+	}
+	strategyDays := map[string]map[string]bool{}
+	strategyNames := map[string]string{}
+	strategySignals := map[string][]dailyAnalysisSignal{}
+	daySignals := map[string][]dailyAnalysisSignal{}
+	for _, batch := range selected {
+		parent, getErr := s.GetAutomationRun(batch.ID)
+		if getErr != nil {
+			return DailyStrategyAnalysisData{}, getErr
+		}
+		children, childErr := s.ListAutomationChildRuns(parent)
+		if childErr != nil {
+			return DailyStrategyAnalysisData{}, childErr
+		}
+		runIDs := make([]string, 0, len(children))
+		strategyByRun := map[string]AutomationRun{}
+		for _, child := range children {
+			runIDs = append(runIDs, child.ID)
+			strategyByRun[child.ID] = child
+			strategyID := strings.TrimPrefix(child.TaskID, "system-strategy:")
+			strategyDays[strategyID] = ensureBoolSet(strategyDays[strategyID])
+			strategyDays[strategyID][batch.Date] = true
+			strategyNames[strategyID] = child.TaskName
+		}
+		results, resultErr := s.ListSelectionResultsByRunIDs(runIDs, limit)
+		if resultErr != nil {
+			return DailyStrategyAnalysisData{}, resultErr
+		}
+		for _, item := range results {
+			child := strategyByRun[item.RunID]
+			strategyID := strings.TrimPrefix(child.TaskID, "system-strategy:")
+			strategyName := item.FormulaName
+			if strategyName == "" {
+				strategyName = child.TaskName
+			}
+			strategyNames[strategyID] = strategyName
+			var detail struct {
+				Score float64 `json:"score"`
+			}
+			_ = json.Unmarshal([]byte(item.DetailJSON), &detail)
+			s := dailyAnalysisSignal{date: batch.Date, symbol: strings.ToUpper(item.Symbol), score: detail.Score, tracking: item.TrackingJSON}
+			strategySignals[strategyID] = append(strategySignals[strategyID], s)
+			daySignals[batch.Date] = append(daySignals[batch.Date], s)
+		}
+	}
+	metrics := make([]DailyStrategyAnalysisMetric, 0, len(strategyNames))
+	allSymbols := map[string]bool{}
+	consensus := 0
+	for _, signals := range daySignals {
+		seen := map[string]int{}
+		for _, item := range signals {
+			seen[item.symbol]++
+			allSymbols[item.symbol] = true
+		}
+		for _, count := range seen {
+			if count >= 2 {
+				consensus++
+			}
+		}
+	}
+	var totalScore float64
+	for strategyID, strategyName := range strategyNames {
+		signals := strategySignals[strategyID]
+		metric := DailyStrategyAnalysisMetric{StrategyID: strategyID, StrategyName: strategyName, RunDays: len(strategyDays[strategyID]), SignalCount: len(signals), UniqueSymbols: 0}
+		symbols := map[string]bool{}
+		for _, item := range signals {
+			symbols[item.symbol] = true
+			totalScore += item.score
+		}
+		metric.UniqueSymbols = len(symbols)
+		metric.AverageDailySignals = roundDailyFloat(float64(metric.SignalCount) / float64(maxInt(metric.RunDays, 1)))
+		metric.AverageScore = roundDailyFloat(averageSignalScore(signals))
+		metric.ConsensusSignals = strategyConsensusCount(signals, daySignals)
+		d3 := aggregateTrackingStats(signals, "d3")
+		metric.D3Completed, metric.D3SuccessCount, metric.D3SuccessRate = d3.completed, d3.successCount, d3.successRate
+		metric.D3PositiveCount, metric.D3PositiveRate, metric.D3AverageReturn, metric.D3MaxReturn = d3.positiveCount, d3.positiveRate, d3.averageReturn, d3.maxReturn
+		d5 := aggregateTrackingStats(signals, "d5")
+		metric.D5Completed, metric.D5SuccessCount, metric.D5SuccessRate = d5.completed, d5.successCount, d5.successRate
+		metric.D5PositiveCount, metric.D5PositiveRate, metric.D5AverageReturn, metric.D5MaxReturn = d5.positiveCount, d5.positiveRate, d5.averageReturn, d5.maxReturn
+		d10 := aggregateTrackingStats(signals, "d10")
+		metric.D10Completed, metric.D10SuccessCount, metric.D10SuccessRate = d10.completed, d10.successCount, d10.successRate
+		metric.D10PositiveCount, metric.D10PositiveRate, metric.D10AverageReturn, metric.D10MaxReturn = d10.positiveCount, d10.positiveRate, d10.averageReturn, d10.maxReturn
+		metrics = append(metrics, metric)
+	}
+	sort.Slice(metrics, func(i, j int) bool {
+		if metrics[i].D5SuccessRate == metrics[j].D5SuccessRate {
+			return metrics[i].SignalCount > metrics[j].SignalCount
+		}
+		return metrics[i].D5SuccessRate > metrics[j].D5SuccessRate
+	})
+	return DailyStrategyAnalysisData{StartDate: startDate, EndDate: endDate, TradingDays: len(selected), StrategyCount: len(metrics), SignalCount: sumAnalysisSignals(daySignals), UniqueSymbols: len(allSymbols), ConsensusCount: consensus, AverageScore: roundDailyFloat(totalScore / float64(maxInt(sumAnalysisSignals(daySignals), 1))), Strategies: metrics}, nil
+}
+
+func ensureBoolSet(value map[string]bool) map[string]bool {
+	if value == nil {
+		return map[string]bool{}
+	}
+	return value
+}
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+func sumAnalysisSignals(days map[string][]dailyAnalysisSignal) int {
+	total := 0
+	for _, signals := range days {
+		total += len(signals)
+	}
+	return total
+}
+func averageSignalScore(signals []dailyAnalysisSignal) float64 {
+	if len(signals) == 0 {
+		return 0
+	}
+	total := 0.0
+	for _, item := range signals {
+		total += item.score
+	}
+	return total / float64(len(signals))
+}
+func strategyConsensusCount(signals []dailyAnalysisSignal, days map[string][]dailyAnalysisSignal) int {
+	total := 0
+	for _, item := range signals {
+		count := 0
+		for _, other := range days[item.date] {
+			if other.symbol == item.symbol {
+				count++
+			}
+		}
+		if count >= 2 {
+			total++
+		}
+	}
+	return total
+}
+
+type dailyTrackingStats struct {
+	completed, successCount, positiveCount int
+	successRate, positiveRate              float64
+	averageReturn, maxReturn               float64
+}
+
+func aggregateTrackingStats(signals []dailyAnalysisSignal, key string) dailyTrackingStats {
+	stats := dailyTrackingStats{}
+	total := 0.0
+	hasCompleted := false
+	for _, item := range signals {
+		var tracking SelectionTracking
+		if json.Unmarshal([]byte(item.tracking), &tracking) != nil {
+			continue
+		}
+		horizon, ok := tracking.Horizons[key]
+		if !ok || horizon.Status != "complete" {
+			continue
+		}
+		stats.completed++
+		total += horizon.CloseReturn
+		if !hasCompleted || horizon.CloseReturn > stats.maxReturn {
+			stats.maxReturn = horizon.CloseReturn
+			hasCompleted = true
+		}
+		if horizon.Success {
+			stats.successCount++
+		}
+		if horizon.CloseReturn > 0 {
+			stats.positiveCount++
+		}
+	}
+	if stats.completed == 0 {
+		return stats
+	}
+	stats.successRate = roundDailyFloat(float64(stats.successCount) / float64(stats.completed) * 100)
+	stats.positiveRate = roundDailyFloat(float64(stats.positiveCount) / float64(stats.completed) * 100)
+	stats.averageReturn = roundDailyFloat(total / float64(stats.completed))
+	stats.maxReturn = roundDailyFloat(stats.maxReturn)
+	return stats
 }
 
 func (s *AppStore) ListAutomationChildRuns(parent AutomationRun) ([]AutomationRun, error) {

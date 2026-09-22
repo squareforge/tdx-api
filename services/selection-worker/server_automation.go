@@ -783,6 +783,26 @@ func handleDailyReview(w http.ResponseWriter, r *http.Request) {
 	successResponse(w, data)
 }
 
+func handleDailyReviewAnalysis(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, "只支持GET请求")
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	days, _ := strconv.Atoi(r.URL.Query().Get("days"))
+	data, err := appStore.BuildDailyStrategyAnalysis(
+		strings.TrimSpace(r.URL.Query().Get("start_date")),
+		strings.TrimSpace(r.URL.Query().Get("end_date")),
+		days,
+		limit,
+	)
+	if err != nil {
+		errorResponse(w, err.Error())
+		return
+	}
+	successResponse(w, data)
+}
+
 func symbolSet(symbols []string) map[string]bool {
 	out := map[string]bool{}
 	for _, symbol := range normalizeSymbols(symbols) {
