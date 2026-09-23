@@ -10796,7 +10796,7 @@ textarea::placeholder {
 
 .daily-analysis-horizon-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -11047,6 +11047,39 @@ textarea::placeholder {
   color: var(--text);
 }
 
+.daily-review-tracking-detail {
+  display: grid;
+  gap: 1px;
+  grid-column: 1 / -1;
+  border-bottom: 1px solid var(--line);
+  background: var(--line);
+}
+
+.daily-review-tracking-detail > div {
+  display: grid;
+  grid-template-columns: minmax(80px, 110px) minmax(0, 1fr);
+  gap: 10px;
+  padding: 7px 10px;
+  background: #f8fafc;
+  color: var(--text-soft);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.daily-review-tracking-detail .daily-review-tracking-base {
+  background: #eef4f8;
+}
+
+.selection-run-tracking-detail {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
 @media (min-width: 781px) and (max-width: 900px) {
   .daily-analysis-horizon-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -11073,6 +11106,9 @@ textarea::placeholder {
   }
   .daily-analysis-facts {
     grid-template-columns: repeat(3, minmax(105px, 1fr));
+  }
+  .daily-analysis-horizon-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

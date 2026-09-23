@@ -524,7 +524,7 @@ func buildAutomationTemplate(name string) (AutomationTask, error) {
 			Type:        "selection_tracking",
 			Cron:        "0 15 17 * * 1-5",
 			Enabled:     false,
-			PayloadJSON: `{"horizons":[3,5,10],"history_buffer":30,"target_return":3,"drawdown_limit":5,"continue_on_error":true}`,
+			PayloadJSON: `{"horizons":[1,3,5,10],"history_buffer":30,"target_return":3,"drawdown_limit":5,"continue_on_error":true}`,
 			WebhookIDs:  "[]",
 		}, nil
 	case "strategy_execution":

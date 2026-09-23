@@ -104,6 +104,13 @@ type DailyStrategyAnalysisMetric struct {
 	UniqueSymbols       int     `json:"unique_symbols"`
 	AverageScore        float64 `json:"average_score"`
 	ConsensusSignals    int     `json:"consensus_signals"`
+	D1Completed         int     `json:"d1_completed"`
+	D1SuccessCount      int     `json:"d1_success_count"`
+	D1SuccessRate       float64 `json:"d1_success_rate"`
+	D1PositiveCount     int     `json:"d1_positive_count"`
+	D1PositiveRate      float64 `json:"d1_positive_rate"`
+	D1AverageReturn     float64 `json:"d1_average_return"`
+	D1MaxReturn         float64 `json:"d1_max_return"`
 	D3Completed         int     `json:"d3_completed"`
 	D3SuccessCount      int     `json:"d3_success_count"`
 	D3SuccessRate       float64 `json:"d3_success_rate"`
@@ -481,6 +488,9 @@ func (s *AppStore) BuildDailyStrategyAnalysis(startDate, endDate string, days, l
 		metric.AverageDailySignals = roundDailyFloat(float64(metric.SignalCount) / float64(maxInt(metric.RunDays, 1)))
 		metric.AverageScore = roundDailyFloat(averageSignalScore(signals))
 		metric.ConsensusSignals = strategyConsensusCount(signals, daySignals)
+		d1 := aggregateTrackingStats(signals, "d1")
+		metric.D1Completed, metric.D1SuccessCount, metric.D1SuccessRate = d1.completed, d1.successCount, d1.successRate
+		metric.D1PositiveCount, metric.D1PositiveRate, metric.D1AverageReturn, metric.D1MaxReturn = d1.positiveCount, d1.positiveRate, d1.averageReturn, d1.maxReturn
 		d3 := aggregateTrackingStats(signals, "d3")
 		metric.D3Completed, metric.D3SuccessCount, metric.D3SuccessRate = d3.completed, d3.successCount, d3.successRate
 		metric.D3PositiveCount, metric.D3PositiveRate, metric.D3AverageReturn, metric.D3MaxReturn = d3.positiveCount, d3.positiveRate, d3.averageReturn, d3.maxReturn

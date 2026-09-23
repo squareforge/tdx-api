@@ -100,7 +100,7 @@ func DefaultTrackingPolicy(targetReturn, drawdownLimit float64) (float64, float6
 
 func SummarizeSelectionTracking(items []SelectionTrackingItem, horizons []int) SelectionTrackingSummary {
 	if len(horizons) == 0 {
-		horizons = []int{1, 5, 10}
+		horizons = []int{1, 3, 5, 10}
 	}
 	summary := SelectionTrackingSummary{Total: len(items), Horizons: map[string]SelectionHorizonSummary{}}
 	for _, horizon := range horizons {
@@ -149,7 +149,7 @@ func SummarizeSelectionTracking(items []SelectionTrackingItem, horizons []int) S
 func EvaluateSelectionTracking(item SelectionResult, bars []TrackingBar, horizons []int, targetReturn, drawdownLimit float64, now time.Time) SelectionTracking {
 	targetReturn, drawdownLimit = DefaultTrackingPolicy(targetReturn, drawdownLimit)
 	if len(horizons) == 0 {
-		horizons = []int{1, 5, 10}
+		horizons = []int{1, 3, 5, 10}
 	}
 	signalTime, hasSignalTime := selectionResultSignalTime(item)
 	tracking := SelectionTracking{

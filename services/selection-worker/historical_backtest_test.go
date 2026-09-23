@@ -46,8 +46,8 @@ func TestNormalizeHistoricalBacktestRequestDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(req.Horizons) != 3 || req.Horizons[0] != 3 || req.Horizons[1] != 5 || req.Horizons[2] != 10 {
-		t.Fatalf("horizons = %v, want [3 5 10]", req.Horizons)
+	if len(req.Horizons) != 4 || req.Horizons[0] != 1 || req.Horizons[1] != 3 || req.Horizons[2] != 5 || req.Horizons[3] != 10 {
+		t.Fatalf("horizons = %v, want [1 3 5 10]", req.Horizons)
 	}
 	if req.TargetReturn != 10 || req.DrawdownLimit != 5 {
 		t.Fatalf("达标标准 = %.1f/%.1f, want 10/5(复用止盈/回撤)", req.TargetReturn, req.DrawdownLimit)

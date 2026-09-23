@@ -66,7 +66,7 @@ func handleSelectionTracking(w http.ResponseWriter, r *http.Request) {
 
 func parseTrackingHorizons(raw string) []int {
 	if strings.TrimSpace(raw) == "" {
-		return []int{3, 5, 10}
+		return []int{1, 3, 5, 10}
 	}
 	seen := map[int]bool{}
 	result := []int{}
@@ -78,7 +78,7 @@ func parseTrackingHorizons(raw string) []int {
 		}
 	}
 	if len(result) == 0 {
-		return []int{3, 5, 10}
+		return []int{1, 3, 5, 10}
 	}
 	return result
 }

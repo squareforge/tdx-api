@@ -80,7 +80,7 @@ func (s *AppStore) CreateHistoricalBacktestRun(run HistoricalBacktestRun) (Histo
 		run.Status = "running"
 	}
 	if len(run.Horizons) == 0 {
-		run.Horizons = []int{3, 5, 10}
+		run.Horizons = []int{1, 3, 5, 10}
 	}
 	strategyIDsJSON, _ := json.Marshal(run.StrategyIDs)
 	horizonsJSON, _ := json.Marshal(run.Horizons)

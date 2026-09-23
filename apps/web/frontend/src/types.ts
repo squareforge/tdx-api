@@ -634,6 +634,13 @@ export interface DailyStrategyAnalysisMetric {
   unique_symbols: number;
   average_score: number;
   consensus_signals: number;
+  d1_completed: number;
+  d1_success_count: number;
+  d1_success_rate: number;
+  d1_positive_count: number;
+  d1_positive_rate: number;
+  d1_average_return: number;
+  d1_max_return: number;
   d3_completed: number;
   d3_success_count: number;
   d3_success_rate: number;

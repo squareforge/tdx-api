@@ -77,6 +77,28 @@ function horizonCell(tracking: SelectionTracking | undefined, horizon: number) {
   return <Tag color={change >= 0 ? 'error' : 'success'}>{pct(change)}</Tag>;
 }
 
+function formatTrackingDate(value?: number) {
+  if (!value) return '--';
+  const text = String(value);
+  return text.length === 8 ? `${text.slice(0, 4)}-${text.slice(4, 6)}-${text.slice(6)}` : text;
+}
+
+function trackingDetail(tracking?: SelectionTracking) {
+  if (!tracking) return <span>暂无结构化跟踪数据</span>;
+  return <div className="daily-review-tracking-detail">
+    <div className="daily-review-tracking-base"><strong>基准</strong><span>信号日 {formatTrackingDate(tracking.signal_date)} · 基准日 {formatTrackingDate(tracking.base_date)} · 基准价 {Number(tracking.base_price || 0).toFixed(3)} · {tracking.base_price_from || '--'}</span></div>
+    {[1, 3, 5, 10].map((days) => {
+      const value = tracking.horizons?.[`d${days}`];
+      if (!value) return <div key={days}><strong>D{days}</strong><span>暂无记录</span></div>;
+      const status = value.status === 'complete' ? (value.success ? '成功' : '未达标') : value.status === 'pending' ? '观察中' : '不可用';
+      return <div key={days}>
+        <strong>D{days} · {status}</strong>
+        <span>终盘 {Number(value.final_close || 0).toFixed(3)} · 收益 {pct(value.close_return)} · 最大涨幅 {pct(value.max_gain)} · 最大回撤 {pct(value.max_drawdown)} · 达标 {value.target_hit ? `${formatTrackingDate(value.target_hit_date)} / 第${value.days_to_target_hit || '--'}天` : '否'} · 止损 {value.stop_loss_hit ? `${formatTrackingDate(value.stop_loss_hit_date)} / 第${value.days_to_stop_loss || '--'}天` : '否'} · {value.reason || '--'}</span>
+      </div>;
+    })}
+  </div>;
+}
+
 function compareNullableNumber(left?: number, right?: number) {
   const leftValid = Number.isFinite(left);
   const rightValid = Number.isFinite(right);
@@ -96,7 +118,7 @@ function formatAnalysisPct(value?: number) {
   return Number.isFinite(value) ? `${Number(value) >= 0 ? '+' : ''}${Number(value).toFixed(2)}%` : '--';
 }
 
-type AnalysisHorizonKey = 'd3' | 'd5' | 'd10';
+type AnalysisHorizonKey = 'd1' | 'd3' | 'd5' | 'd10';
 interface AnalysisHorizonSummary {
   completed: number;
   successCount: number;
@@ -108,6 +130,7 @@ interface AnalysisHorizonSummary {
 }
 
 const analysisHorizonFields: Record<AnalysisHorizonKey, { completed: keyof DailyStrategyAnalysisMetric; successCount: keyof DailyStrategyAnalysisMetric; successRate: keyof DailyStrategyAnalysisMetric; positiveCount: keyof DailyStrategyAnalysisMetric; positiveRate: keyof DailyStrategyAnalysisMetric; averageReturn: keyof DailyStrategyAnalysisMetric; maxReturn: keyof DailyStrategyAnalysisMetric }> = {
+  d1: { completed: 'd1_completed', successCount: 'd1_success_count', successRate: 'd1_success_rate', positiveCount: 'd1_positive_count', positiveRate: 'd1_positive_rate', averageReturn: 'd1_average_return', maxReturn: 'd1_max_return' },
   d3: { completed: 'd3_completed', successCount: 'd3_success_count', successRate: 'd3_success_rate', positiveCount: 'd3_positive_count', positiveRate: 'd3_positive_rate', averageReturn: 'd3_average_return', maxReturn: 'd3_max_return' },
   d5: { completed: 'd5_completed', successCount: 'd5_success_count', successRate: 'd5_success_rate', positiveCount: 'd5_positive_count', positiveRate: 'd5_positive_rate', averageReturn: 'd5_average_return', maxReturn: 'd5_max_return' },
   d10: { completed: 'd10_completed', successCount: 'd10_success_count', successRate: 'd10_success_rate', positiveCount: 'd10_positive_count', positiveRate: 'd10_positive_rate', averageReturn: 'd10_average_return', maxReturn: 'd10_max_return' }
@@ -335,7 +358,7 @@ export function DailyReviewWorkspace() {
     { title: '最高分', dataIndex: 'max_score', width: 88, sorter: (left: DailyReviewStock, right: DailyReviewStock) => left.max_score - right.max_score, render: (value: number) => value?.toFixed(1) || '--' },
     { title: '均分', dataIndex: 'average_score', width: 78, sorter: (left: DailyReviewStock, right: DailyReviewStock) => left.average_score - right.average_score, render: (value: number) => value?.toFixed(1) || '--' },
     { title: '信号价', dataIndex: 'latest', width: 88, sorter: (left: DailyReviewStock, right: DailyReviewStock) => left.latest - right.latest, render: (value: number) => value > 0 ? value.toFixed(2) : '--' },
-    ...[3, 5, 10].map((days) => ({
+    ...[1, 3, 5, 10].map((days) => ({
       title: `D${days}`, key: `d${days}`, width: 92,
       sorter: (left: DailyReviewStock, right: DailyReviewStock) => compareNullableNumber(horizonReturn(left.tracking, days), horizonReturn(right.tracking, days)),
       render: (_: unknown, row: DailyReviewStock) => horizonCell(row.tracking, days)
@@ -357,7 +380,7 @@ export function DailyReviewWorkspace() {
     { title: '股票数', dataIndex: 'unique_symbols', width: 82, sorter: (left: DailyStrategyAnalysisMetric, right: DailyStrategyAnalysisMetric) => left.unique_symbols - right.unique_symbols },
     { title: '均分', dataIndex: 'average_score', width: 78, sorter: (left: DailyStrategyAnalysisMetric, right: DailyStrategyAnalysisMetric) => left.average_score - right.average_score, render: (value: number) => value.toFixed(1) },
     { title: '共振', dataIndex: 'consensus_signals', width: 76, sorter: (left: DailyStrategyAnalysisMetric, right: DailyStrategyAnalysisMetric) => left.consensus_signals - right.consensus_signals },
-    ...(['d3', 'd5', 'd10'] as AnalysisHorizonKey[]).map((horizon) => ({
+    ...(['d1', 'd3', 'd5', 'd10'] as AnalysisHorizonKey[]).map((horizon) => ({
       title: horizon.toUpperCase(), key: horizon, width: 174,
       sorter: (left: DailyStrategyAnalysisMetric, right: DailyStrategyAnalysisMetric) => metricHorizon(left, horizon).positiveRate - metricHorizon(right, horizon).positiveRate,
       render: (_: unknown, row: DailyStrategyAnalysisMetric) => {
@@ -380,6 +403,7 @@ export function DailyReviewWorkspace() {
     ? analysisStockRows.reduce((total, stock) => total + stock.signals.reduce((sum, signal) => sum + signal.score, 0), 0) / selectedAnalysisSignalCount
     : 0;
   const selectedAnalysisHorizons = {
+    d1: summarizeAnalysisHorizon(visibleAnalysisStrategies, 'd1'),
     d3: summarizeAnalysisHorizon(visibleAnalysisStrategies, 'd3'),
     d5: summarizeAnalysisHorizon(visibleAnalysisStrategies, 'd5'),
     d10: summarizeAnalysisHorizon(visibleAnalysisStrategies, 'd10')
@@ -415,7 +439,7 @@ export function DailyReviewWorkspace() {
             <div><span>平均评分</span><strong>{selectedAnalysisSignalCount ? selectedAnalysisAverageScore.toFixed(1) : '--'}</strong><small>所选策略信号均分</small></div>
           </div>
           <div className="daily-analysis-horizon-grid">
-            {(['d3', 'd5', 'd10'] as AnalysisHorizonKey[]).map((horizon) => {
+            {(['d1', 'd3', 'd5', 'd10'] as AnalysisHorizonKey[]).map((horizon) => {
               const summary = selectedAnalysisHorizons[horizon];
               const leader = analysisLeader(visibleAnalysisStrategies, horizon);
               return <section key={horizon} className="daily-analysis-horizon-card">
@@ -446,7 +470,7 @@ export function DailyReviewWorkspace() {
           {analysisView !== 'overview' ? <Table<DailyReviewStock>
             size="small" rowKey={(row) => `${row.signal_date}-${row.symbol}`} loading={analysisLoading} dataSource={visibleAnalysisStocks} columns={stockColumns}
             sortDirections={['ascend', 'descend']} pagination={{ pageSize: 50, showSizeChanger: false, showTotal: (total) => `共 ${total} 条` }} scroll={{ x: 1540 }}
-            expandable={{ expandedRowRender: (stock) => <div className="daily-review-signal-detail">{stock.signals.map((signal) => { const detail = parseJSON<{ rank?: number; strategy_score?: number; reasons?: string[]; rank_reason?: string }>(signal.detail_json, {}); return <div key={signal.id}><strong>{signal.strategy_name}</strong><span>第 {detail.rank || '--'} 名 · 统一分 {signal.score.toFixed(1)} · 策略分 {Number(detail.strategy_score || 0).toFixed(1)}</span><span>{detail.rank_reason || detail.reasons?.join('；') || '无附加说明'}</span></div>; })}</div> }}
+            expandable={{ expandedRowRender: (stock) => <div className="daily-review-signal-detail">{trackingDetail(stock.tracking)}{stock.signals.map((signal) => { const detail = parseJSON<{ rank?: number; strategy_score?: number; reasons?: string[]; rank_reason?: string }>(signal.detail_json, {}); return <div key={signal.id}><strong>{signal.strategy_name}</strong><span>第 {detail.rank || '--'} 名 · 统一分 {signal.score.toFixed(1)} · 策略分 {Number(detail.strategy_score || 0).toFixed(1)}</span><span>{detail.rank_reason || detail.reasons?.join('；') || '无附加说明'}</span></div>; })}</div> }}
             locale={{ emptyText: analysisView === 'consensus' ? '所选策略在当前区间没有多策略共振' : '所选策略在当前区间没有选股信号' }}
           /> : null}
         </Card>
@@ -485,7 +509,7 @@ export function DailyReviewWorkspace() {
             {view !== 'overview' ? <Table<DailyReviewStock>
               size="small" rowKey="symbol" loading={loading} dataSource={visibleStocks} columns={stockColumns}
               sortDirections={['ascend', 'descend']} pagination={{ pageSize: 50, showSizeChanger: false, showTotal: (total) => `共 ${total} 只` }} scroll={{ x: 1540 }}
-              expandable={{ expandedRowRender: (stock) => <div className="daily-review-signal-detail">{stock.signals.map((signal) => { const detail = parseJSON<{ rank?: number; strategy_score?: number; reasons?: string[]; rank_reason?: string }>(signal.detail_json, {}); return <div key={signal.id}><strong>{signal.strategy_name}</strong><span>第 {detail.rank || '--'} 名 · 统一分 {signal.score.toFixed(1)} · 策略分 {Number(detail.strategy_score || 0).toFixed(1)}</span><span>{detail.rank_reason || detail.reasons?.join('；') || '无附加说明'}</span></div>; })}</div> }}
+              expandable={{ expandedRowRender: (stock) => <div className="daily-review-signal-detail">{trackingDetail(stock.tracking)}{stock.signals.map((signal) => { const detail = parseJSON<{ rank?: number; strategy_score?: number; reasons?: string[]; rank_reason?: string }>(signal.detail_json, {}); return <div key={signal.id}><strong>{signal.strategy_name}</strong><span>第 {detail.rank || '--'} 名 · 统一分 {signal.score.toFixed(1)} · 策略分 {Number(detail.strategy_score || 0).toFixed(1)}</span><span>{detail.rank_reason || detail.reasons?.join('；') || '无附加说明'}</span></div>; })}</div> }}
               locale={{ emptyText: view === 'consensus' ? '当天没有多策略共振股票' : '当天没有选股信号' }}
             /> : null}
           </>}

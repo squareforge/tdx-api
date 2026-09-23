@@ -385,14 +385,14 @@ func (r *AutomationRunner) requireHikyuuFreshness(ctx context.Context) (*MarketH
 }
 
 func (r *AutomationRunner) runSelectionTracking(ctx context.Context, task AutomationTask) (interface{}, int, error) {
-	payload := SelectionTrackingPayload{HistoryBuffer: defaultSelectionTrackingHistoryBuffer, Horizons: []int{3, 5, 10}, ContinueOnError: true}
+	payload := SelectionTrackingPayload{HistoryBuffer: defaultSelectionTrackingHistoryBuffer, Horizons: []int{1, 3, 5, 10}, ContinueOnError: true}
 	if strings.TrimSpace(task.PayloadJSON) != "" {
 		if err := json.Unmarshal([]byte(task.PayloadJSON), &payload); err != nil {
 			return nil, 0, err
 		}
 	}
 	if len(payload.Horizons) == 0 {
-		payload.Horizons = []int{3, 5, 10}
+		payload.Horizons = []int{1, 3, 5, 10}
 	}
 	if payload.HistoryBuffer <= 0 || payload.HistoryBuffer > defaultSelectionTrackingHistoryBuffer {
 		payload.HistoryBuffer = defaultSelectionTrackingHistoryBuffer

@@ -206,7 +206,7 @@ func normalizeHistoricalBacktestRequest(req historicalBacktestRequest) (historic
 		}
 	}
 	if len(horizons) == 0 {
-		horizons = []int{3, 5, 10}
+		horizons = []int{1, 3, 5, 10}
 	}
 	sort.Ints(horizons)
 	req.Horizons = horizons
@@ -644,6 +644,6 @@ func historicalBacktestResult(req historicalBacktestRequest, dates []int, summar
 		"strategy_count": len(strategyRows), "trading_days": len(dates), "candidate_symbols": candidates,
 		"kline_loaded": loaded, "kline_failed": failed, "history_count": historyCount,
 		"policy":   map[string]interface{}{"horizons": req.Horizons, "target_return": req.TargetReturn, "drawdown_limit": req.DrawdownLimit, "entry": "signal_day_close"},
-		"warnings": []string{"候选范围使用当前股票列表，历史退市股票可能未被包含", "信号按当日收盘生成，D3/D5/D10均按后续交易日计算"},
+		"warnings": []string{"候选范围使用当前股票列表，历史退市股票可能未被包含", "信号按当日收盘生成，D1/D3/D5/D10均按后续交易日计算"},
 	}
 }

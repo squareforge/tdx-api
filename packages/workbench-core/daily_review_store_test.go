@@ -23,6 +23,7 @@ func TestBuildDailyReviewAggregatesSystemStrategyBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	tracking := &SelectionTracking{Horizons: map[string]SelectionHorizon{
+		"d1": {HorizonDays: 1, Status: "complete", CloseReturn: 1.5, Success: true},
 		"d3": {HorizonDays: 3, Status: "complete", CloseReturn: 4.2},
 	}}
 	if err := store.SaveSelectionResults(first, Formula{ID: "strategy:trend", Name: "趋势策略"}, []SelectionResult{
@@ -63,17 +64,21 @@ func TestBuildDailyReviewAggregatesSystemStrategyBatch(t *testing.T) {
 	if len(review.Consensus) != 1 || review.Consensus[0].Symbol != "000001" || review.Consensus[0].StrategyCount != 2 {
 		t.Fatalf("unexpected consensus: %#v", review.Consensus)
 	}
-	if trackingCompleteness(review.Consensus[0].Tracking) != 1 {
+	if trackingCompleteness(review.Consensus[0].Tracking) != 2 {
 		t.Fatalf("completed tracking was not retained: %+v", review.Consensus[0].Tracking)
 	}
 	if review.Consensus[0].SignalDate != review.Date {
 		t.Fatalf("stock signal date = %q, want %q", review.Consensus[0].SignalDate, review.Date)
+	}
+	if review.Consensus[0].Tracking.Horizons["d1"].CloseReturn != 1.5 {
+		t.Fatalf("d1 tracking was not retained: %+v", review.Consensus[0].Tracking)
 	}
 }
 
 func TestBuildDailyStrategyAnalysisAggregatesDateRange(t *testing.T) {
 	store := newHistoricalBacktestTestStore(t)
 	tracking := &SelectionTracking{Horizons: map[string]SelectionHorizon{
+		"d1": {HorizonDays: 1, Status: "complete", CloseReturn: 1.2, Success: true},
 		"d5": {HorizonDays: 5, Status: "complete", CloseReturn: 4.2, Success: true},
 	}}
 	createBatch := func(date string, items map[string][]SelectionResult) AutomationRun {
@@ -128,6 +133,9 @@ func TestBuildDailyStrategyAnalysisAggregatesDateRange(t *testing.T) {
 	}
 	if len(analysis.Strategies) != 2 || analysis.Strategies[0].D5Completed != 3 || analysis.Strategies[0].D5SuccessCount != 3 || analysis.Strategies[0].D5SuccessRate != 100 || analysis.Strategies[0].D5PositiveCount != 3 || analysis.Strategies[0].D5PositiveRate != 100 || analysis.Strategies[0].D5MaxReturn != 4.2 {
 		t.Fatalf("unexpected strategy metrics: %+v", analysis.Strategies)
+	}
+	if analysis.Strategies[0].D1Completed != 3 || analysis.Strategies[0].D1SuccessRate != 100 || analysis.Strategies[0].D1AverageReturn != 1.2 {
+		t.Fatalf("unexpected d1 strategy metrics: %+v", analysis.Strategies[0])
 	}
 	if len(analysis.Stocks) != 3 || len(analysis.Signals) != 4 || len(analysis.Consensus) != 1 {
 		t.Fatalf("unexpected analysis lists: stocks=%d signals=%d consensus=%d", len(analysis.Stocks), len(analysis.Signals), len(analysis.Consensus))
