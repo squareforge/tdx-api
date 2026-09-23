@@ -9,8 +9,10 @@ ENV GO111MODULE=on \
     CGO_ENABLED=0 \
     PATH="/usr/local/go/bin:${PATH}"
 
+COPY packages/quote-protocol/go.mod packages/quote-protocol/go.sum ./packages/quote-protocol/
 COPY services/quote-core-service/go.mod ./services/quote-core-service/
 RUN (cd services/quote-core-service && go mod download)
+COPY packages/quote-protocol ./packages/quote-protocol
 COPY services/quote-core-service ./services/quote-core-service
 RUN (cd services/quote-core-service && go build -ldflags="-s -w" -o /app/quote-core-service .)
 
