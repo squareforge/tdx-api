@@ -91,11 +91,12 @@ const scanDetailColumns = [
   { title: '笔数', dataIndex: 'closed_count', width: 70 }
 ];
 
-function horizonMetric(raw: string | undefined, horizon: number) {
-  return parseJSON<SelectionTracking>(raw, { horizons: {} }).horizons?.[`d${horizon}`];
+function horizonMetric(raw: SelectionTracking | string | undefined, horizon: number) {
+  const tracking = typeof raw === 'string' ? parseJSON<SelectionTracking>(raw, { horizons: {} }) : (raw || { horizons: {} });
+  return tracking.horizons?.[`d${horizon}`];
 }
 
-function horizonCell(raw: string | undefined, horizon: number) {
+function horizonCell(raw: SelectionTracking | string | undefined, horizon: number) {
   const value = horizonMetric(raw, horizon);
   if (!value || value.status !== 'complete') return <Tag>待观察</Tag>;
   return <Tag color={value.success ? 'success' : 'error'}>{pct(value.close_return)}</Tag>;
@@ -110,7 +111,7 @@ function compareNullableNumber(left?: number, right?: number) {
   return Number(left) - Number(right);
 }
 
-function horizonReturn(raw: string | undefined, horizon: number) {
+function horizonReturn(raw: SelectionTracking | string | undefined, horizon: number) {
   const value = horizonMetric(raw, horizon);
   return value?.status === 'complete' && Number.isFinite(value.close_return) ? value.close_return : undefined;
 }
@@ -386,7 +387,7 @@ export function HistoricalBacktestWorkspace() {
     { title: '信号价', dataIndex: 'latest', width: 88, render: (value: number) => value?.toFixed(2) || '--' },
     { title: '统一分', dataIndex: 'score', width: 78, render: (value: number) => Number(value || 0).toFixed(1) },
     { title: '策略分', key: 'strategy_score', width: 78, render: (_value: unknown, row: HistoricalBacktestSignal) => { const value = parseJSON<StrategySelectionDetail>(row.detail_json, {}).strategy_score; return Number.isFinite(value) ? Number(value).toFixed(1) : '--'; } },
-    ...[3, 5, 10].map((days) => ({ title: `D${days}`, key: `d${days}`, width: 92, render: (_: unknown, row: HistoricalBacktestSignal) => horizonCell(row.tracking_json, days) }))
+    ...[3, 5, 10].map((days) => ({ title: `D${days}`, key: `d${days}`, width: 92, render: (_: unknown, row: HistoricalBacktestSignal) => horizonCell(row.tracking, days) }))
   ];
 
   const consensusColumns = [
@@ -399,8 +400,8 @@ export function HistoricalBacktestWorkspace() {
       title: `D${days}`,
       key: `d${days}`,
       width: 92,
-      sorter: (left: HistoricalConsensusSummary, right: HistoricalConsensusSummary) => compareNullableNumber(horizonReturn(left.tracking_json, days), horizonReturn(right.tracking_json, days)),
-      render: (_: unknown, row: HistoricalConsensusSummary) => horizonCell(row.tracking_json, days)
+      sorter: (left: HistoricalConsensusSummary, right: HistoricalConsensusSummary) => compareNullableNumber(horizonReturn(left.tracking, days), horizonReturn(right.tracking, days)),
+      render: (_: unknown, row: HistoricalConsensusSummary) => horizonCell(row.tracking, days)
     }))
   ];
 

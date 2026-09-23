@@ -65,18 +65,18 @@ type historicalStrategySummary struct {
 }
 
 type historicalConsensusSummary struct {
-	SignalDate    string   `json:"signal_date"`
-	Symbol        string   `json:"symbol"`
-	StrategyCount int      `json:"strategy_count"`
-	Strategies    []string `json:"strategies"`
-	TrackingJSON  string   `json:"tracking_json"`
+	SignalDate    string                      `json:"signal_date"`
+	Symbol        string                      `json:"symbol"`
+	StrategyCount int                         `json:"strategy_count"`
+	Strategies    []string                    `json:"strategies"`
+	Tracking      workbench.SelectionTracking `json:"tracking"`
 }
 
 type historicalConsensusAccumulator struct {
 	date       string
 	symbol     string
 	strategies map[string]bool
-	tracking   string
+	tracking   workbench.SelectionTracking
 }
 
 func handleHistoricalBacktests(w http.ResponseWriter, r *http.Request) {
@@ -468,17 +468,16 @@ func (r *AutomationRunner) runHistoricalBacktest(ctx context.Context, run Histor
 					trackingBars[item.Symbol] = bars
 				}
 				tracking := workbench.EvaluateSelectionTracking(selection, bars, req.Horizons, req.TargetReturn, req.DrawdownLimit, time.Now())
-				trackingJSON := mustJSON(tracking)
 				daySignals = append(daySignals, HistoricalBacktestSignal{
 					RunID: run.ID, StrategyID: plan.strategy.ID, StrategyName: plan.strategy.Name, SignalDate: dateText,
-					Symbol: item.Symbol, Latest: item.Latest, Score: item.Score, DetailJSON: mustJSON(item), TrackingJSON: trackingJSON,
+					Symbol: item.Symbol, Latest: item.Latest, Score: item.Score, DetailJSON: mustJSON(item), Tracking: &tracking,
 				})
 				pendingBuys = mergePendingBuy(pendingBuys, item.Symbol, item.Score, signalDate, plan.strategy.Name, item.Latest, plan.config.Execution)
 				updateHistoricalSummary(summaries[plan.strategy.ID], tracking, req.Horizons)
 				key := dateText + ":" + item.Symbol
 				entry := consensus[key]
 				if entry == nil {
-					entry = &historicalConsensusAccumulator{date: dateText, symbol: item.Symbol, strategies: map[string]bool{}, tracking: trackingJSON}
+					entry = &historicalConsensusAccumulator{date: dateText, symbol: item.Symbol, strategies: map[string]bool{}, tracking: tracking}
 					consensus[key] = entry
 				}
 				entry.strategies[plan.strategy.Name] = true
@@ -621,7 +620,7 @@ func historicalBacktestResult(req historicalBacktestRequest, dates []int, summar
 			names = append(names, name)
 		}
 		sort.Strings(names)
-		consensusRows = append(consensusRows, historicalConsensusSummary{SignalDate: item.date, Symbol: item.symbol, StrategyCount: len(names), Strategies: names, TrackingJSON: item.tracking})
+		consensusRows = append(consensusRows, historicalConsensusSummary{SignalDate: item.date, Symbol: item.symbol, StrategyCount: len(names), Strategies: names, Tracking: item.tracking})
 	}
 	sort.Slice(consensusRows, func(i, j int) bool {
 		if consensusRows[i].StrategyCount != consensusRows[j].StrategyCount {

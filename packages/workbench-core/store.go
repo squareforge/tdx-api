@@ -63,6 +63,8 @@ const (
 	FixedCloseSyncTaskID             = "fixed-close-sync"
 	FixedSelectionTrackingTaskID     = "fixed-selection-tracking"
 	SystemStrategyDailyBatchTaskID   = "system-strategy-daily-batch"
+	HistoricalBacktestTaskID         = "historical-backtest"
+	HistoricalBacktestTaskName       = "历史选股回放"
 	LegacyMarketInfoSyncTaskID       = "market-info-sync"
 	LegacyMarketInfoSyncPayload      = `{"scope":"market_info","kinds":["long-tiger","hot_money","research","notice"],"max_codes":120,"continue_on_error":true}`
 	MarketLongTigerSyncTaskID        = "market-long-tiger-sync"
@@ -492,7 +494,6 @@ func (s *AppStore) migrate() error {
 			latest REAL NOT NULL DEFAULT 0,
 			score REAL NOT NULL DEFAULT 0,
 			detail_json TEXT NOT NULL DEFAULT '{}',
-			tracking_json TEXT NOT NULL DEFAULT '{}',
 			created_at TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_historical_backtest_signals_run_date ON historical_backtest_signals(run_id, signal_date DESC)`,
@@ -657,6 +658,9 @@ func (s *AppStore) migrate() error {
 		return err
 	}
 	if err := s.migrateLegacySelectionTracking(); err != nil {
+		return err
+	}
+	if err := s.migrateHistoricalBacktestTracking(); err != nil {
 		return err
 	}
 	return nil
@@ -2319,6 +2323,10 @@ func (s *AppStore) ListSelectionResults(taskID, formulaID, symbol string, onlyLa
 	query := `SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,created_at FROM selection_results`
 	args := []interface{}{}
 	conds := []string{}
+	if taskID != HistoricalBacktestTaskID {
+		conds = append(conds, "task_id<>?")
+		args = append(args, HistoricalBacktestTaskID)
+	}
 	if taskID != "" {
 		conds = append(conds, "task_id=?")
 		args = append(args, taskID)
@@ -2332,7 +2340,8 @@ func (s *AppStore) ListSelectionResults(taskID, formulaID, symbol string, onlyLa
 		args = append(args, strings.ToUpper(symbol))
 	}
 	if onlyLatest {
-		conds = append(conds, `run_id=(SELECT run_id FROM selection_results ORDER BY created_at DESC LIMIT 1)`)
+		conds = append(conds, `run_id=(SELECT run_id FROM selection_results WHERE task_id<>? ORDER BY created_at DESC LIMIT 1)`)
+		args = append(args, HistoricalBacktestTaskID)
 	}
 	if len(conds) > 0 {
 		query += " WHERE " + strings.Join(conds, " AND ")
@@ -2389,13 +2398,14 @@ func (s *AppStore) ListIncompleteSelectionTrackingResults(horizons []int) ([]Sel
 			WHERE tr.selection_result_id=sr.id AND tr.horizon_days=? AND tr.status IN ('complete','unavailable')
 		)`)
 	}
-	args := make([]interface{}, 0, len(normalized))
+	args := make([]interface{}, 0, len(normalized)+1)
+	args = append(args, HistoricalBacktestTaskID)
 	for _, horizon := range normalized {
 		args = append(args, horizon)
 	}
 	query := `SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,created_at
 		FROM selection_results AS sr
-		WHERE ` + strings.Join(structuredChecks, " OR ") + `
+		WHERE sr.task_id<>? AND (` + strings.Join(structuredChecks, " OR ") + `)
 		ORDER BY created_at ASC,id ASC`
 
 	rows, err := s.db.Query(query, args...)

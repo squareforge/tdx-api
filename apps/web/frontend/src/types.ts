@@ -762,7 +762,7 @@ export interface HistoricalConsensusSummary {
   symbol: string;
   strategy_count: number;
   strategies: string[];
-  tracking_json: string;
+  tracking?: SelectionTracking;
 }
 
 export interface HistoricalBacktestResult {
@@ -790,7 +790,7 @@ export interface HistoricalBacktestSignal {
   latest: number;
   score: number;
   detail_json: string;
-  tracking_json: string;
+  tracking?: SelectionTracking;
   created_at: string;
 }
 

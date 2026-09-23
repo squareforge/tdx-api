@@ -2,6 +2,8 @@ package workbench
 
 import (
 	"database/sql"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	_ "github.com/glebarez/go-sqlite"
@@ -63,5 +65,91 @@ func TestHistoricalBacktestSignalsOrderByStrategyRankScore(t *testing.T) {
 	}
 	if len(page.Items) != 2 || page.Items[0].Symbol != "000002" || page.Items[1].Symbol != "000001" {
 		t.Fatalf("signals = %+v, want descending shared rank score", page.Items)
+	}
+}
+
+func TestHistoricalBacktestSignalsPersistStructuredTracking(t *testing.T) {
+	store := newHistoricalBacktestTestStore(t)
+	run, err := store.CreateHistoricalBacktestRun(HistoricalBacktestRun{
+		StartDate: "2026-06-01", EndDate: "2026-06-02", StrategyIDs: []string{"strategy-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracking := SelectionTracking{
+		Version: "2", SignalDate: 20260601, BaseDate: 20260601, BasePrice: 10, BasePriceFrom: "signal_day_close",
+		TargetReturn: 3, DrawdownLimit: 5, UpdatedAt: "2026-06-06T16:00:00+08:00",
+		Horizons: map[string]SelectionHorizon{
+			"d3": {HorizonDays: 3, Status: "complete", AsOfDate: 20260604, FinalDate: 20260604, FinalClose: 11, CloseReturn: 10, Success: true},
+		},
+	}
+	if err := store.InsertHistoricalBacktestSignals([]HistoricalBacktestSignal{{
+		ID: "historical-selection-1", RunID: run.ID, StrategyID: "strategy-1", StrategyName: "策略A",
+		SignalDate: "2026-06-01", Symbol: "000001", Latest: 10, Score: 80, DetailJSON: `{}`, Tracking: &tracking,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	var selectionCount, trackingCount int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM selection_results WHERE id=? AND task_id=?`, "historical-selection-1", HistoricalBacktestTaskID).Scan(&selectionCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM selection_result_tracking WHERE selection_result_id=? AND horizon_days=3`, "historical-selection-1").Scan(&trackingCount); err != nil {
+		t.Fatal(err)
+	}
+	if selectionCount != 1 || trackingCount != 1 {
+		t.Fatalf("structured rows = selection %d, tracking %d; want 1/1", selectionCount, trackingCount)
+	}
+	page, err := store.ListHistoricalBacktestSignals(run.ID, HistoricalBacktestSignalQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0].Tracking == nil || page.Items[0].Tracking.Horizons["d3"].CloseReturn != 10 {
+		t.Fatalf("structured tracking was not hydrated: %+v", page.Items)
+	}
+}
+
+func TestMigrateHistoricalBacktestTrackingJSON(t *testing.T) {
+	store := newHistoricalBacktestTestStore(t)
+	legacyResult := `{"consensus":[{"signal_date":"2026-06-01","symbol":"000001","strategy_count":2,"strategies":["策略A","策略B"],"tracking_json":"{\"version\":\"2\",\"horizons\":{\"d3\":{\"horizon_days\":3,\"status\":\"complete\",\"close_return\":4}}}"}]}`
+	if _, err := store.CreateHistoricalBacktestRun(HistoricalBacktestRun{ID: "run-legacy", StartDate: "2026-06-01", EndDate: "2026-06-02", ResultJSON: legacyResult}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`ALTER TABLE historical_backtest_signals ADD COLUMN tracking_json TEXT NOT NULL DEFAULT '{}'`); err != nil {
+		t.Fatal(err)
+	}
+	tracking := SelectionTracking{
+		Version: "2", SignalDate: 20260601, BaseDate: 20260601, BasePrice: 10, BasePriceFrom: "signal_day_close",
+		TargetReturn: 3, DrawdownLimit: 5, UpdatedAt: "2026-06-06T16:00:00+08:00",
+		Horizons: map[string]SelectionHorizon{"d3": {HorizonDays: 3, Status: "complete", CloseReturn: 4, Success: true}},
+	}
+	raw, _ := json.Marshal(tracking)
+	if _, err := store.db.Exec(`INSERT INTO historical_backtest_signals
+		(id,run_id,strategy_id,strategy_name,signal_date,symbol,latest,score,detail_json,tracking_json,created_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)`, "legacy-signal", "run-legacy", "strategy-1", "策略A", "2026-06-01", "000001", 10, 80, `{}`, string(raw), "2026-06-01T16:00:00+08:00"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.migrateHistoricalBacktestTracking(); err != nil {
+		t.Fatal(err)
+	}
+	hasLegacyColumn, err := store.tableHasColumn("historical_backtest_signals", "tracking_json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasLegacyColumn {
+		t.Fatal("historical_backtest_signals.tracking_json column still exists")
+	}
+	var closeReturn float64
+	if err := store.db.QueryRow(`SELECT close_return FROM selection_result_tracking WHERE selection_result_id=? AND horizon_days=3`, "legacy-signal").Scan(&closeReturn); err != nil {
+		t.Fatal(err)
+	}
+	if closeReturn != 4 {
+		t.Fatalf("migrated close return = %v, want 4", closeReturn)
+	}
+	var migratedResult string
+	if err := store.db.QueryRow(`SELECT result_json FROM historical_backtest_runs WHERE id=?`, "run-legacy").Scan(&migratedResult); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(migratedResult, "tracking_json") || !strings.Contains(migratedResult, `"tracking"`) {
+		t.Fatalf("legacy result snapshot was not migrated: %s", migratedResult)
 	}
 }

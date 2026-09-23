@@ -1,6 +1,7 @@
 package workbench
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -40,17 +41,17 @@ type HistoricalBacktestRun struct {
 }
 
 type HistoricalBacktestSignal struct {
-	ID           string  `json:"id"`
-	RunID        string  `json:"run_id"`
-	StrategyID   string  `json:"strategy_id"`
-	StrategyName string  `json:"strategy_name"`
-	SignalDate   string  `json:"signal_date"`
-	Symbol       string  `json:"symbol"`
-	Latest       float64 `json:"latest"`
-	Score        float64 `json:"score"`
-	DetailJSON   string  `json:"detail_json"`
-	TrackingJSON string  `json:"tracking_json"`
-	CreatedAt    string  `json:"created_at"`
+	ID           string             `json:"id"`
+	RunID        string             `json:"run_id"`
+	StrategyID   string             `json:"strategy_id"`
+	StrategyName string             `json:"strategy_name"`
+	SignalDate   string             `json:"signal_date"`
+	Symbol       string             `json:"symbol"`
+	Latest       float64            `json:"latest"`
+	Score        float64            `json:"score"`
+	DetailJSON   string             `json:"detail_json"`
+	Tracking     *SelectionTracking `json:"tracking,omitempty"`
+	CreatedAt    string             `json:"created_at"`
 }
 
 type HistoricalBacktestSignalQuery struct {
@@ -198,8 +199,8 @@ func (s *AppStore) InsertHistoricalBacktestSignals(items []HistoricalBacktestSig
 	}
 	defer tx.Rollback()
 	stmt, err := tx.Prepare(`INSERT INTO historical_backtest_signals
-		(id,run_id,strategy_id,strategy_name,signal_date,symbol,latest,score,detail_json,tracking_json,created_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+		(id,run_id,strategy_id,strategy_name,signal_date,symbol,latest,score,detail_json,created_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		return err
 	}
@@ -214,12 +215,30 @@ func (s *AppStore) InsertHistoricalBacktestSignals(items []HistoricalBacktestSig
 		if item.DetailJSON == "" {
 			item.DetailJSON = "{}"
 		}
-		if item.TrackingJSON == "" {
-			item.TrackingJSON = "{}"
-		}
 		if _, err := stmt.Exec(item.ID, item.RunID, item.StrategyID, item.StrategyName, item.SignalDate, item.Symbol,
-			item.Latest, item.Score, item.DetailJSON, item.TrackingJSON, item.CreatedAt); err != nil {
+			item.Latest, item.Score, item.DetailJSON, item.CreatedAt); err != nil {
 			return err
+		}
+		selection := SelectionResult{
+			ID: item.ID, RunID: item.RunID, TaskID: HistoricalBacktestTaskID, TaskName: HistoricalBacktestTaskName,
+			FormulaID: "strategy:" + item.StrategyID, FormulaName: item.StrategyName, Symbol: item.Symbol,
+			Latest: item.Latest, DetailJSON: item.DetailJSON, CreatedAt: item.CreatedAt,
+		}
+		if _, err := tx.Exec(`INSERT INTO selection_results
+			(id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,created_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?)
+			ON CONFLICT(id) DO UPDATE SET
+				run_id=excluded.run_id,task_id=excluded.task_id,task_name=excluded.task_name,
+				formula_id=excluded.formula_id,formula_name=excluded.formula_name,symbol=excluded.symbol,
+				latest=excluded.latest,detail_json=excluded.detail_json,created_at=excluded.created_at`,
+			selection.ID, selection.RunID, selection.TaskID, selection.TaskName, selection.FormulaID, selection.FormulaName,
+			selection.Symbol, selection.Latest, selection.DetailJSON, selection.CreatedAt); err != nil {
+			return err
+		}
+		if item.Tracking != nil {
+			if err := syncSelectionResultTrackingTx(tx, selection, *item.Tracking); err != nil {
+				return err
+			}
 		}
 	}
 	return tx.Commit()
@@ -252,21 +271,210 @@ func (s *AppStore) ListHistoricalBacktestSignals(runID string, query HistoricalB
 		return page, err
 	}
 	listArgs := append(append([]interface{}{}, args...), query.Limit, query.Offset)
-	rows, err := s.db.Query(`SELECT id,run_id,strategy_id,strategy_name,signal_date,symbol,latest,score,detail_json,tracking_json,created_at
+	rows, err := s.db.Query(`SELECT id,run_id,strategy_id,strategy_name,signal_date,symbol,latest,score,detail_json,created_at
 		FROM historical_backtest_signals WHERE `+where+` ORDER BY signal_date DESC,strategy_name,score DESC,symbol LIMIT ? OFFSET ?`, listArgs...)
 	if err != nil {
 		return page, err
 	}
-	defer rows.Close()
 	for rows.Next() {
 		var item HistoricalBacktestSignal
 		if err := rows.Scan(&item.ID, &item.RunID, &item.StrategyID, &item.StrategyName, &item.SignalDate, &item.Symbol,
-			&item.Latest, &item.Score, &item.DetailJSON, &item.TrackingJSON, &item.CreatedAt); err != nil {
+			&item.Latest, &item.Score, &item.DetailJSON, &item.CreatedAt); err != nil {
 			return page, err
 		}
 		page.Items = append(page.Items, item)
 	}
-	return page, rows.Err()
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return page, err
+	}
+	if err := rows.Close(); err != nil {
+		return page, err
+	}
+	selectionItems := make([]SelectionResult, len(page.Items))
+	for index, item := range page.Items {
+		selectionItems[index] = SelectionResult{
+			ID: item.ID, RunID: item.RunID, TaskID: HistoricalBacktestTaskID, TaskName: HistoricalBacktestTaskName,
+			FormulaID: "strategy:" + item.StrategyID, FormulaName: item.StrategyName, Symbol: item.Symbol,
+			Latest: item.Latest, DetailJSON: item.DetailJSON, CreatedAt: item.CreatedAt,
+		}
+	}
+	if err := s.hydrateSelectionResultsTracking(selectionItems); err != nil {
+		return page, err
+	}
+	for index := range page.Items {
+		page.Items[index].Tracking = selectionItems[index].Tracking
+	}
+	return page, nil
+}
+
+// migrateHistoricalBacktestTracking moves the legacy JSON snapshot into the
+// shared selection_results/selection_result_tracking tables before removing
+// the historical signal table's tracking_json column.
+func (s *AppStore) migrateHistoricalBacktestTracking() error {
+	hasLegacyColumn, err := s.tableHasColumn("historical_backtest_signals", "tracking_json")
+	if err != nil || !hasLegacyColumn {
+		return err
+	}
+	rows, err := s.db.Query(`SELECT id,run_id,strategy_id,strategy_name,signal_date,symbol,latest,score,detail_json,tracking_json,created_at
+		FROM historical_backtest_signals`)
+	if err != nil {
+		return err
+	}
+	type legacySignal struct {
+		item         HistoricalBacktestSignal
+		trackingJSON string
+	}
+	items := make([]legacySignal, 0)
+	for rows.Next() {
+		var item HistoricalBacktestSignal
+		var trackingJSON string
+		if err := rows.Scan(&item.ID, &item.RunID, &item.StrategyID, &item.StrategyName, &item.SignalDate, &item.Symbol,
+			&item.Latest, &item.Score, &item.DetailJSON, &trackingJSON, &item.CreatedAt); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		items = append(items, legacySignal{item: item, trackingJSON: trackingJSON})
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, legacy := range items {
+		item := legacy.item
+		selection := SelectionResult{
+			ID: item.ID, RunID: item.RunID, TaskID: HistoricalBacktestTaskID, TaskName: HistoricalBacktestTaskName,
+			FormulaID: "strategy:" + item.StrategyID, FormulaName: item.StrategyName, Symbol: item.Symbol,
+			Latest: item.Latest, DetailJSON: item.DetailJSON, CreatedAt: item.CreatedAt,
+		}
+		if _, err := tx.Exec(`INSERT INTO selection_results
+			(id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,created_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?)
+			ON CONFLICT(id) DO UPDATE SET
+				run_id=excluded.run_id,task_id=excluded.task_id,task_name=excluded.task_name,
+				formula_id=excluded.formula_id,formula_name=excluded.formula_name,symbol=excluded.symbol,
+				latest=excluded.latest,detail_json=excluded.detail_json,created_at=excluded.created_at`,
+			selection.ID, selection.RunID, selection.TaskID, selection.TaskName, selection.FormulaID, selection.FormulaName,
+			selection.Symbol, selection.Latest, selection.DetailJSON, selection.CreatedAt); err != nil {
+			return err
+		}
+		raw := strings.TrimSpace(legacy.trackingJSON)
+		if raw == "" || raw == "{}" || !json.Valid([]byte(raw)) {
+			continue
+		}
+		var tracking SelectionTracking
+		if err := json.Unmarshal([]byte(raw), &tracking); err != nil {
+			continue
+		}
+		if err := syncSelectionResultTrackingTx(tx, selection, tracking); err != nil {
+			return err
+		}
+	}
+	if err := migrateHistoricalBacktestResultSnapshotsTx(tx); err != nil {
+		return err
+	}
+	for _, stmt := range []string{
+		`CREATE TABLE historical_backtest_signals_new (
+			id TEXT PRIMARY KEY,
+			run_id TEXT NOT NULL,
+			strategy_id TEXT NOT NULL,
+			strategy_name TEXT NOT NULL,
+			signal_date TEXT NOT NULL,
+			symbol TEXT NOT NULL,
+			latest REAL NOT NULL DEFAULT 0,
+			score REAL NOT NULL DEFAULT 0,
+			detail_json TEXT NOT NULL DEFAULT '{}',
+			created_at TEXT NOT NULL
+		)`,
+		`INSERT INTO historical_backtest_signals_new
+			(id,run_id,strategy_id,strategy_name,signal_date,symbol,latest,score,detail_json,created_at)
+			SELECT id,run_id,strategy_id,strategy_name,signal_date,symbol,latest,score,detail_json,created_at
+			FROM historical_backtest_signals`,
+		`DROP TABLE historical_backtest_signals`,
+		`ALTER TABLE historical_backtest_signals_new RENAME TO historical_backtest_signals`,
+		`CREATE INDEX IF NOT EXISTS idx_historical_backtest_signals_run_date ON historical_backtest_signals(run_id, signal_date DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_historical_backtest_signals_run_strategy ON historical_backtest_signals(run_id, strategy_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_historical_backtest_signals_run_symbol ON historical_backtest_signals(run_id, symbol)`,
+	} {
+		if _, err := tx.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func migrateHistoricalBacktestResultSnapshotsTx(tx *sql.Tx) error {
+	rows, err := tx.Query(`SELECT id,result_json FROM historical_backtest_runs WHERE TRIM(COALESCE(result_json,''))<>'' AND json_valid(result_json)=1`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type resultSnapshot struct {
+		id   string
+		data string
+	}
+	updates := make([]resultSnapshot, 0)
+	for rows.Next() {
+		var id, raw string
+		if err := rows.Scan(&id, &raw); err != nil {
+			return err
+		}
+		var result map[string]interface{}
+		if err := json.Unmarshal([]byte(raw), &result); err != nil {
+			continue
+		}
+		consensus, ok := result["consensus"].([]interface{})
+		if !ok {
+			continue
+		}
+		changed := false
+		for _, value := range consensus {
+			row, ok := value.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			rawTracking, ok := row["tracking_json"].(string)
+			if !ok || strings.TrimSpace(rawTracking) == "" || !json.Valid([]byte(rawTracking)) {
+				continue
+			}
+			var tracking SelectionTracking
+			if err := json.Unmarshal([]byte(rawTracking), &tracking); err != nil {
+				continue
+			}
+			row["tracking"] = tracking
+			delete(row, "tracking_json")
+			changed = true
+		}
+		if !changed {
+			continue
+		}
+		data, err := json.Marshal(result)
+		if err != nil {
+			return err
+		}
+		updates = append(updates, resultSnapshot{id: id, data: string(data)})
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, update := range updates {
+		if _, err := tx.Exec(`UPDATE historical_backtest_runs SET result_json=?,updated_at=? WHERE id=?`, update.data, NowText(), update.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // HistoricalBacktestTrade 是组合模拟的一条交易行：已平仓记录带完整买卖字段，
