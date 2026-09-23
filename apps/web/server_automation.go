@@ -1179,6 +1179,32 @@ func handleWebhookOperations(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func handlePlatformConfig(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		config, err := appStore.GetPlatformConfig()
+		if err != nil {
+			errorResponse(w, err.Error())
+			return
+		}
+		successResponse(w, config)
+	case http.MethodPut:
+		var config PlatformConfig
+		if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
+			errorResponse(w, "请求参数错误: "+err.Error())
+			return
+		}
+		updated, err := appStore.UpsertPlatformConfig(config)
+		if err != nil {
+			errorResponse(w, err.Error())
+			return
+		}
+		successResponse(w, updated)
+	default:
+		errorResponse(w, "不支持的请求方法")
+	}
+}
+
 func handleHQChartKline(w http.ResponseWriter, r *http.Request) {
 	code := normalizeStockCode(r.URL.Query().Get("symbol"))
 	if code == "" {

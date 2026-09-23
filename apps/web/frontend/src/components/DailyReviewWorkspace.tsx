@@ -74,7 +74,7 @@ function horizonCell(tracking: SelectionTracking | undefined, horizon: number) {
   const value = horizonMetric(tracking, horizon);
   if (!value || value.status !== 'complete') return <Tag>待观察</Tag>;
   const change = Number(value.close_return);
-  return <Tag color={change >= 0 ? 'error' : 'success'}>{pct(change)}</Tag>;
+  return <Tag className={change >= 0 ? 'market-up market-tone-tag' : 'market-down market-tone-tag'}>{pct(change)}</Tag>;
 }
 
 function formatTrackingDate(value?: number) {

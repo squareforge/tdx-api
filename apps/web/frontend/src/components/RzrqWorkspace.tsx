@@ -209,11 +209,11 @@ export function RzrqWorkspace() {
         </Space>
 
         <div className="metric-strip rzrq-summary">
-          <Statistic className="rzrq-metric-net" title="净买入合计" value={amount(summary.net)} />
+          <Statistic className="rzrq-metric-net" title="净买入合计" value={amount(summary.net)} valueStyle={{ color: summary.net >= 0 ? 'var(--market-up)' : 'var(--market-down)' }} />
           <Statistic className="rzrq-metric-margin" title="融资余额合计" value={amount(summary.margin)} />
           <Statistic className="rzrq-metric-short" title="融券余额合计" value={amount(summary.short)} />
-          <Statistic className="rzrq-metric-up" title="上涨" value={summary.up} valueStyle={{ color: 'var(--danger)' }} />
-          <Statistic className="rzrq-metric-down" title="下跌" value={summary.down} valueStyle={{ color: 'var(--success)' }} />
+          <Statistic className="rzrq-metric-up" title="上涨" value={summary.up} valueStyle={{ color: 'var(--market-up)' }} />
+          <Statistic className="rzrq-metric-down" title="下跌" value={summary.down} valueStyle={{ color: 'var(--market-down)' }} />
         </div>
 
         <RankTable items={rank?.list || []} loading={rankLoading} />

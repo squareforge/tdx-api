@@ -219,8 +219,8 @@ function intradayMinuteSlot(value: string) {
 }
 
 const directionMeta: Record<string, { label: string; color: string }> = {
-  SELL_FIRST: { label: '高抛', color: '#f5222d' },
-  BUY_BACK: { label: '买回', color: '#52c41a' },
+  SELL_FIRST: { label: '高抛', color: 'var(--market-up)' },
+  BUY_BACK: { label: '买回', color: 'var(--market-down)' },
   REDUCE: { label: '减仓', color: '#fa8c16' },
   STAND_ASIDE: { label: '观望', color: '#8c8c8c' }
 };
@@ -234,8 +234,8 @@ const statusMeta: Record<string, { label: string; color: string }> = {
 
 const trendMeta: Record<string, { label: string; color: string }> = {
   range: { label: '震荡', color: 'green' },
-  strong_up: { label: '强势单边', color: 'red' },
-  strong_down: { label: '弱势单边', color: 'blue' },
+  strong_up: { label: '强势单边', color: 'default' },
+  strong_down: { label: '弱势单边', color: 'default' },
   limit: { label: '涨跌停附近', color: 'default' }
 };
 
@@ -413,8 +413,8 @@ function IntradayHQChart({
             const endX = active && Number.isFinite(geometry.slots[endSlot]) ? geometry.slots[endSlot] : x;
             return (
               <g key={`zone-${signal.id}`} opacity={selectedId && selectedId !== signal.id ? 0.35 : 1}>
-                {active && endX > x ? <line x1={x} x2={endX} y1={targetY} y2={targetY} stroke="#16825d" strokeWidth={1} strokeDasharray="4 3" /> : null}
-                {active && endX > x ? <line x1={x} x2={endX} y1={stopY} y2={stopY} stroke="#c73f3f" strokeWidth={1} strokeDasharray="4 3" /> : null}
+                {active && endX > x ? <line x1={x} x2={endX} y1={targetY} y2={targetY} stroke="var(--market-up)" strokeWidth={1} strokeDasharray="4 3" /> : null}
+                {active && endX > x ? <line x1={x} x2={endX} y1={stopY} y2={stopY} stroke="var(--market-down)" strokeWidth={1} strokeDasharray="4 3" /> : null}
               </g>
             );
           })}
@@ -470,10 +470,10 @@ function SignalCard({
         </div>
         <Descriptions column={1} size="small">
           <Descriptions.Item label="目标价">
-            <Text style={{ color: '#52c41a' }}>{fmtPrice(signal.target)}</Text>
+            <Text className="market-up">{fmtPrice(signal.target)}</Text>
           </Descriptions.Item>
           <Descriptions.Item label="止损价">
-            <Text style={{ color: '#f5222d' }}>{fmtPrice(signal.stop)}</Text>
+            <Text className="market-down">{fmtPrice(signal.stop)}</Text>
           </Descriptions.Item>
           <Descriptions.Item label="有效期">{fmtTime(signal.expire_at)} 前有效</Descriptions.Item>
           <Descriptions.Item label="仓位">{signal.position_hint || '--'}</Descriptions.Item>
@@ -954,7 +954,7 @@ export function IntradayTradingWorkspace() {
     { title: '买回', dataIndex: 'buy_price', render: (_: unknown, entry: TSignalLedgerEntry) => (entry.closed ? `${fmtPrice(entry.buy_price)} (${fmtTime(entry.buy_time)})` : '未回补') },
     { title: '股数', dataIndex: 'shares' },
     { title: '净盈亏', dataIndex: 'net_pnl', render: (_: unknown, entry: TSignalLedgerEntry) => (
-        <Text style={{ color: entry.closed ? ((entry.net_pnl || 0) >= 0 ? '#52c41a' : '#f5222d') : '#8c8c8c' }}>
+        <Text className={entry.closed ? ((entry.net_pnl || 0) >= 0 ? 'market-up' : 'market-down') : undefined} style={!entry.closed ? { color: '#8c8c8c' } : undefined}>
           {entry.closed ? fmtPnl(entry.net_pnl) : '--'}
         </Text>
       ) }
@@ -989,7 +989,7 @@ export function IntradayTradingWorkspace() {
           <Space wrap className="intraday-topbar-status">
             {config?.symbol ? <Tag color="blue">订阅中: {subscribedLabel}</Tag> : <Tag>未订阅(订阅即绑定做T标的)</Tag>}
             <Tag>底仓 {config?.position_shares ? `${config.position_shares} 股` : '未录入'}</Tag>
-            {trendMetaValue ? <Tag color={trendMetaValue.color}>模式: {trendMetaValue.label}</Tag> : null}
+            {trendMetaValue ? <Tag color={trendMetaValue.color} className={trend?.status === 'strong_up' ? 'market-up market-tone-tag' : trend?.status === 'strong_down' ? 'market-down market-tone-tag' : undefined}>模式: {trendMetaValue.label}</Tag> : null}
             <Badge status={health?.streaming ? 'processing' : 'default'} text={health?.streaming ? '行情流正常' : '行情流离线'} />
             <Button
               size="small"
@@ -1026,7 +1026,7 @@ export function IntradayTradingWorkspace() {
             </Button>
             {replay ? <Tag color="gold">{replay.date} {replayCursor}/{replay.bars.length}</Tag> : null}
             {replayComplete && replay?.summary ? (
-              <Tag color={replay.summary.net_pnl >= 0 ? 'green' : 'red'}>
+              <Tag className={replay.summary.net_pnl >= 0 ? 'market-up market-tone-tag' : 'market-down market-tone-tag'}>
                 {replay.summary.closed_trades} 笔 / 胜率 {replay.summary.win_rate.toFixed(1)}% / 净收益 {fmtPnl(replay.summary.net_pnl)}
               </Tag>
             ) : null}

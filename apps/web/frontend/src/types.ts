@@ -859,6 +859,13 @@ export interface Webhook {
   updated_at?: string;
 }
 
+export interface PlatformConfig {
+  id: string;
+  rise_color: string;
+  fall_color: string;
+  updated_at?: string;
+}
+
 export interface TradingTrade {
   id: string;
   stockName: string;

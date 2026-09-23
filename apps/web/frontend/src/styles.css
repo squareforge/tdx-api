@@ -20,6 +20,8 @@
   --success-soft: #e7f4ee;
   --danger: #c93d35;
   --danger-soft: #fbedeb;
+  --market-up: #c93d35;
+  --market-down: #16805b;
   --warning: #a66a00;
   --warning-soft: #fff5dc;
   --shadow: 0 1px 2px rgba(23, 34, 48, 0.04);
@@ -890,16 +892,21 @@ textarea {
 .quote-summary-change.watchlist-up,
 .quote-summary-change-pct.watchlist-up,
 .trading-positive,
-.decision-hit-foot strong {
-  color: var(--danger) !important;
+.analysis-positive {
+  color: var(--market-up) !important;
 }
 
 .market-down,
 .price.down,
 .quote-summary-change.watchlist-down,
 .quote-summary-change-pct.watchlist-down,
-.trading-negative {
-  color: var(--success) !important;
+.trading-negative,
+.analysis-negative {
+  color: var(--market-down) !important;
+}
+
+.decision-hit-foot strong {
+  color: var(--danger);
 }
 
 .market-muted {
@@ -1855,11 +1862,11 @@ textarea {
 
 .price,
 .price.up {
-  color: var(--danger);
+  color: var(--market-up);
 }
 
 .price.down {
-  color: var(--success);
+  color: var(--market-down);
 }
 
 .quote-summary-change,
@@ -8075,7 +8082,7 @@ textarea::placeholder {
 }
 
 .rzrq-summary .rzrq-metric-net .ant-statistic-content {
-  color: var(--danger);
+  color: inherit;
 }
 
 .rzrq-summary .rzrq-metric-up,
@@ -8084,11 +8091,11 @@ textarea::placeholder {
 }
 
 .rzrq-summary .rzrq-metric-up {
-  background: var(--danger-soft);
+  background: color-mix(in srgb, var(--market-up) 10%, white);
 }
 
 .rzrq-summary .rzrq-metric-down {
-  background: var(--success-soft);
+  background: color-mix(in srgb, var(--market-down) 10%, white);
 }
 
 .rzrq-summary .rzrq-metric-up .ant-statistic-content,
@@ -8440,13 +8447,13 @@ textarea::placeholder {
 }
 
 .kline-signal--bullish {
-  background: var(--danger-soft);
-  color: var(--danger);
+  background: color-mix(in srgb, var(--market-up) 10%, white);
+  color: var(--market-up);
 }
 
 .kline-signal--bearish {
-  background: var(--success-soft);
-  color: var(--success);
+  background: color-mix(in srgb, var(--market-down) 10%, white);
+  color: var(--market-down);
 }
 
 .kline-signal--oscillating {
@@ -8721,12 +8728,12 @@ textarea::placeholder {
 
 .kline-chart-last.market-up b,
 .kline-chart-last.market-up span {
-  color: var(--danger);
+  color: var(--market-up);
 }
 
 .kline-chart-last.market-down b,
 .kline-chart-last.market-down span {
-  color: var(--success);
+  color: var(--market-down);
 }
 
 .kline-chart-last.market-muted b,
@@ -9649,13 +9656,13 @@ textarea::placeholder {
 }
 
 .kline-signal--bullish {
-  background: var(--danger-soft);
-  color: var(--danger);
+  background: color-mix(in srgb, var(--market-up) 10%, white);
+  color: var(--market-up);
 }
 
 .kline-signal--bearish {
-  background: var(--success-soft);
-  color: var(--success);
+  background: color-mix(in srgb, var(--market-down) 10%, white);
+  color: var(--market-down);
 }
 
 .kline-signal--oscillating {
@@ -10890,7 +10897,7 @@ textarea::placeholder {
 .daily-analysis-leader em {
   flex: 0 0 auto;
   margin-left: auto;
-  color: var(--success);
+  color: var(--market-up);
   font: normal 800 10px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
@@ -10912,14 +10919,6 @@ textarea::placeholder {
 .daily-analysis-strategy-horizon small {
   color: var(--text-muted);
   font-size: 10px;
-}
-
-.analysis-positive {
-  color: var(--success);
-}
-
-.analysis-negative {
-  color: var(--danger);
 }
 
 .daily-review-main {
@@ -11078,6 +11077,171 @@ textarea::placeholder {
   border-top: 1px solid var(--line);
   color: var(--text-soft);
   font-size: 11px;
+}
+
+/* Platform-wide market color policy. */
+.platform-config-workspace {
+  max-width: 980px;
+}
+
+.platform-config-title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.platform-config-title > div {
+  display: grid;
+  gap: 2px;
+}
+
+.platform-config-title > div > span {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 850;
+}
+
+.platform-config-title > small {
+  color: var(--text-muted);
+  font: 800 10px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.platform-config-card .ant-card-body {
+  display: grid;
+  gap: 12px;
+}
+
+.platform-config-summary {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(320px, 1.2fr);
+  border: 1px solid var(--line);
+  background: var(--line);
+  gap: 1px;
+}
+
+.platform-config-summary > div {
+  min-height: 82px;
+  padding: 12px 14px;
+  background: #fff;
+}
+
+.platform-config-summary > div:first-child {
+  display: grid;
+  align-content: center;
+  gap: 2px;
+}
+
+.platform-config-summary span,
+.platform-config-summary small,
+.platform-color-field > span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.platform-config-summary strong {
+  color: var(--text);
+  font-size: 18px;
+}
+
+.platform-config-preview {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  padding: 0 !important;
+  background: var(--line) !important;
+}
+
+.platform-config-preview > span {
+  display: grid;
+  place-content: center;
+  gap: 3px;
+  background: #fff;
+  text-align: center;
+}
+
+.platform-config-preview strong {
+  font: 850 20px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.platform-config-section {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+.platform-config-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--primary);
+}
+
+.platform-config-section-head > div {
+  display: grid;
+  gap: 2px;
+}
+
+.platform-config-section-head strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.platform-config-section-head span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.platform-color-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.platform-color-field {
+  display: grid;
+  gap: 6px;
+}
+
+.platform-color-field > div {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.platform-color-field input[type="color"] {
+  width: 40px;
+  height: 34px;
+  padding: 2px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: #fff;
+  cursor: pointer;
+}
+
+.platform-config-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+@media (max-width: 780px) {
+  .platform-config-summary,
+  .platform-color-grid {
+    grid-template-columns: 1fr;
+  }
+  .platform-config-preview {
+    grid-template-columns: 1fr 1fr;
+  }
+  .platform-config-note {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }
 
 @media (min-width: 781px) and (max-width: 900px) {

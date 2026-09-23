@@ -21,6 +21,7 @@ type SelectionTrackingSummary = workbench.SelectionTrackingSummary
 type SelectionHorizonSummary = workbench.SelectionHorizonSummary
 type DecisionNote = workbench.DecisionNote
 type Webhook = workbench.Webhook
+type PlatformConfig = workbench.PlatformConfig
 type TradingAccount = workbench.TradingAccount
 type TradingDiscipline = workbench.TradingDiscipline
 type TradingFeeConfig = workbench.TradingFeeConfig

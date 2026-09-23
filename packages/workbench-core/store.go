@@ -191,6 +191,13 @@ type Webhook struct {
 	UpdatedAt   string `json:"updated_at"`
 }
 
+type PlatformConfig struct {
+	ID        string `json:"id"`
+	RiseColor string `json:"rise_color"`
+	FallColor string `json:"fall_color"`
+	UpdatedAt string `json:"updated_at"`
+}
+
 type TradingAccount struct {
 	Principal         float64 `json:"principal"`
 	TotalAssets       float64 `json:"totalAssets"`
@@ -543,6 +550,12 @@ func (s *AppStore) migrate() error {
 				events TEXT NOT NULL DEFAULT '["automation.failed","stock_selection.finished","t-signal.triggered"]',
 			enabled INTEGER NOT NULL DEFAULT 1,
 			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS platform_config (
+			id TEXT PRIMARY KEY,
+			rise_color TEXT NOT NULL DEFAULT '#c93d35',
+			fall_color TEXT NOT NULL DEFAULT '#16805b',
 			updated_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS trading_system_state (

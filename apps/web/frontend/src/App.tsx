@@ -12,6 +12,7 @@ import { TradingSystemWorkspace } from './components/TradingSystemWorkspace';
 import { IntradayTradingWorkspace } from './components/IntradayTradingWorkspace';
 import { UniverseWorkspace } from './components/UniverseWorkspace';
 import { WebhooksWorkspace } from './components/WebhooksWorkspace';
+import { PlatformConfigWorkspace, defaultPlatformConfig } from './components/PlatformConfigWorkspace';
 import { MarketWorkspace } from './components/MarketWorkspace';
 import { KlineAnalysisWorkspace } from './components/KlineAnalysisWorkspace';
 import { AISelectionWorkspace } from './components/AISelectionWorkspace';
@@ -19,7 +20,7 @@ import { FloatingResearchAssistant } from './components/FloatingResearchAssistan
 import { AlertsWorkspace } from './components/AlertsWorkspace';
 import { WatchlistTable } from './components/WatchlistTable';
 import { apiFetch } from './lib/api';
-import type { ServiceStatusResult } from './types';
+import type { PlatformConfig, ServiceStatusResult } from './types';
 
 const primaryWorkspaces = [
   { key: 'market', label: '自选' },
@@ -31,7 +32,8 @@ const primaryWorkspaces = [
   { key: 'automations', label: '自动化' },
   { key: 'aiConfigs', label: 'AI 模型' },
   { key: 'alerts', label: '预警中心' },
-  { key: 'webhooks', label: 'Webhook' }
+  { key: 'webhooks', label: 'Webhook' },
+  { key: 'platformConfig', label: '平台配置' }
 ];
 
 const selectionWorkspaces = [
@@ -70,7 +72,8 @@ const workspaceCodes: Record<string, string> = {
   aiConfigs: 'MODEL_ROUTER',
   aiSelection: 'AI_SELECTION',
   alerts: 'RISK_CALENDAR',
-  webhooks: 'WEBHOOKS'
+  webhooks: 'WEBHOOKS',
+  platformConfig: 'PLATFORM_CONFIG'
 };
 
 const selectionWorkspaceKeys = new Set(selectionWorkspaces.map((workspace) => workspace.key));
@@ -85,7 +88,7 @@ function Placeholder({ name }: { name: string }) {
   );
 }
 
-function WorkspaceContent({ workspace }: { workspace: string }) {
+function WorkspaceContent({ workspace, platformConfig, onPlatformConfigChange }: { workspace: string; platformConfig?: PlatformConfig; onPlatformConfigChange?: (config: PlatformConfig) => void }) {
   switch (workspace) {
     case 'market':
       return <WatchlistTable />;
@@ -120,6 +123,8 @@ function WorkspaceContent({ workspace }: { workspace: string }) {
       return <AlertsWorkspace />;
     case 'webhooks':
       return <WebhooksWorkspace />;
+    case 'platformConfig':
+      return <PlatformConfigWorkspace config={platformConfig || defaultPlatformConfig} onChange={onPlatformConfigChange || (() => undefined)} />;
     default:
       return <Placeholder name={workspaceLabels[workspace] || '工作区'} />;
   }
@@ -141,6 +146,7 @@ export default function App() {
   const [serviceStatus, setServiceStatus] = useState<ServiceStatusResult>();
   const [serviceLoading, setServiceLoading] = useState(false);
   const [serviceError, setServiceError] = useState('');
+  const [platformConfig, setPlatformConfig] = useState<PlatformConfig>(defaultPlatformConfig);
 
   useEffect(() => {
     let disposed = false;
@@ -167,6 +173,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let disposed = false;
+    apiFetch<PlatformConfig>('/api/platform-config').then((config) => {
+      if (!disposed) setPlatformConfig(config);
+    }).catch(() => undefined);
+    return () => { disposed = true; };
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.style.setProperty('--market-up', platformConfig.rise_color || defaultPlatformConfig.rise_color);
+    document.documentElement.style.setProperty('--market-down', platformConfig.fall_color || defaultPlatformConfig.fall_color);
+  }, [platformConfig]);
+
+  useEffect(() => {
     window.localStorage.setItem('tdx.activeSelectionWorkspace', activeSelectionWorkspace);
   }, [activeSelectionWorkspace]);
 
@@ -181,7 +200,7 @@ export default function App() {
   const selectionTabItems = selectionWorkspaces.map((workspace) => ({
     key: workspace.key,
     label: workspace.label,
-    children: <WorkspaceContent workspace={workspace.key} />
+    children: <WorkspaceContent workspace={workspace.key} platformConfig={platformConfig} onPlatformConfigChange={setPlatformConfig} />
   }));
 
   const tradingTabItems = tradingWorkspaces.map((workspace) => ({
@@ -214,7 +233,7 @@ export default function App() {
         />
       </div>
     ) : (
-      <WorkspaceContent workspace={workspace.key} />
+        <WorkspaceContent workspace={workspace.key} platformConfig={platformConfig} onPlatformConfigChange={setPlatformConfig} />
     )
   }));
 

@@ -1033,6 +1033,7 @@ func registerWebRoutes() {
 	http.HandleFunc("/api/automations/", handleAutomationOperations)
 	http.HandleFunc("/api/webhooks", handleWebhooks)
 	http.HandleFunc("/api/webhooks/", handleWebhookOperations)
+	http.HandleFunc("/api/platform-config", handlePlatformConfig)
 	http.HandleFunc("/api/hqchart/kline", handleHQChartKline)
 	http.HandleFunc("/api/hqchart/history", handleHQChartHistory)
 	http.HandleFunc("/API/KLine3", handleHQChartMinuteCompat)
