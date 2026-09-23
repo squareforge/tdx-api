@@ -568,6 +568,7 @@ export interface DailyReviewSignal {
 }
 
 export interface DailyReviewStock {
+  signal_date: string;
   symbol: string;
   latest: number;
   strategy_count: number;
@@ -650,6 +651,9 @@ export interface DailyStrategyAnalysisResponse {
   consensus_count: number;
   average_score: number;
   strategies: DailyStrategyAnalysisMetric[];
+  stocks: DailyReviewStock[];
+  signals: DailyReviewSignal[];
+  consensus: DailyReviewStock[];
 }
 
 export interface HistoricalBacktestRun {

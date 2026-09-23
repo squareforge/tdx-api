@@ -64,6 +64,9 @@ func TestBuildDailyReviewAggregatesSystemStrategyBatch(t *testing.T) {
 	if trackingCompleteness(review.Consensus[0].TrackingJSON) != 1 {
 		t.Fatalf("completed tracking was not retained: %s", review.Consensus[0].TrackingJSON)
 	}
+	if review.Consensus[0].SignalDate != review.Date {
+		t.Fatalf("stock signal date = %q, want %q", review.Consensus[0].SignalDate, review.Date)
+	}
 }
 
 func TestBuildDailyStrategyAnalysisAggregatesDateRange(t *testing.T) {
@@ -121,5 +124,11 @@ func TestBuildDailyStrategyAnalysisAggregatesDateRange(t *testing.T) {
 	}
 	if len(analysis.Strategies) != 2 || analysis.Strategies[0].D5Completed != 3 || analysis.Strategies[0].D5SuccessCount != 3 || analysis.Strategies[0].D5SuccessRate != 100 || analysis.Strategies[0].D5PositiveCount != 3 || analysis.Strategies[0].D5PositiveRate != 100 || analysis.Strategies[0].D5MaxReturn != 4.2 {
 		t.Fatalf("unexpected strategy metrics: %+v", analysis.Strategies)
+	}
+	if len(analysis.Stocks) != 3 || len(analysis.Signals) != 4 || len(analysis.Consensus) != 1 {
+		t.Fatalf("unexpected analysis lists: stocks=%d signals=%d consensus=%d", len(analysis.Stocks), len(analysis.Signals), len(analysis.Consensus))
+	}
+	if analysis.Consensus[0].SignalDate != "2026-09-18" || analysis.Consensus[0].Symbol != "000001" || analysis.Consensus[0].StrategyCount != 2 {
+		t.Fatalf("unexpected consensus stock: %+v", analysis.Consensus[0])
 	}
 }

@@ -52,6 +52,7 @@ type DailyReviewSignal struct {
 }
 
 type DailyReviewStock struct {
+	SignalDate    string              `json:"signal_date"`
 	Symbol        string              `json:"symbol"`
 	Latest        float64             `json:"latest"`
 	StrategyCount int                 `json:"strategy_count"`
@@ -136,12 +137,15 @@ type DailyStrategyAnalysisData struct {
 	ConsensusCount int                           `json:"consensus_count"`
 	AverageScore   float64                       `json:"average_score"`
 	Strategies     []DailyStrategyAnalysisMetric `json:"strategies"`
+	Stocks         []DailyReviewStock            `json:"stocks"`
+	Signals        []DailyReviewSignal           `json:"signals"`
+	Consensus      []DailyReviewStock            `json:"consensus"`
 }
 
 type dailyAnalysisSignal struct {
-	date, symbol string
-	score        float64
-	tracking     string
+	date, symbol, strategyID string
+	score                    float64
+	tracking                 string
 }
 
 type dailyBatchResult struct {
@@ -281,7 +285,7 @@ func (s *AppStore) BuildDailyReview(date, batchID string, limit int) (DailyRevie
 				status = "watch"
 			}
 			stock = &DailyReviewStock{
-				Symbol: symbol, Latest: item.Latest, MaxScore: signal.Score, TrackingJSON: item.TrackingJSON,
+				SignalDate: selected.Date, Symbol: symbol, Latest: item.Latest, MaxScore: signal.Score, TrackingJSON: item.TrackingJSON,
 				Status: status, Watch: watchSet[symbol], Excluded: excludeSet[symbol], Note: noteMap[symbol],
 				StrategyIDs: []string{}, Strategies: []string{}, Signals: []DailyReviewSignal{},
 			}
@@ -386,7 +390,10 @@ func (s *AppStore) BuildDailyStrategyAnalysis(startDate, endDate string, days, l
 	}
 	sort.Slice(selected, func(i, j int) bool { return selected[i].Date < selected[j].Date })
 	if len(selected) == 0 {
-		return DailyStrategyAnalysisData{StartDate: startDate, EndDate: endDate, Strategies: []DailyStrategyAnalysisMetric{}}, nil
+		return DailyStrategyAnalysisData{
+			StartDate: startDate, EndDate: endDate, Strategies: []DailyStrategyAnalysisMetric{},
+			Stocks: []DailyReviewStock{}, Signals: []DailyReviewSignal{}, Consensus: []DailyReviewStock{},
+		}, nil
 	}
 	if startDate == "" {
 		startDate = selected[0].Date
@@ -398,6 +405,7 @@ func (s *AppStore) BuildDailyStrategyAnalysis(startDate, endDate string, days, l
 	strategyNames := map[string]string{}
 	strategySignals := map[string][]dailyAnalysisSignal{}
 	daySignals := map[string][]dailyAnalysisSignal{}
+	reviewSignals := []DailyReviewSignal{}
 	for _, batch := range selected {
 		parent, getErr := s.GetAutomationRun(batch.ID)
 		if getErr != nil {
@@ -429,11 +437,15 @@ func (s *AppStore) BuildDailyStrategyAnalysis(startDate, endDate string, days, l
 				strategyName = child.TaskName
 			}
 			strategyNames[strategyID] = strategyName
-			var detail struct {
-				Score float64 `json:"score"`
+			symbol := strings.ToUpper(item.Symbol)
+			score := selectionResultScore(item.DetailJSON)
+			reviewSignal := DailyReviewSignal{
+				ID: item.ID, RunID: item.RunID, StrategyID: strategyID, StrategyName: strategyName,
+				SignalDate: batch.Date, Symbol: symbol, Latest: item.Latest, Score: score,
+				DetailJSON: item.DetailJSON, TrackingJSON: item.TrackingJSON, CreatedAt: item.CreatedAt,
 			}
-			_ = json.Unmarshal([]byte(item.DetailJSON), &detail)
-			s := dailyAnalysisSignal{date: batch.Date, symbol: strings.ToUpper(item.Symbol), score: detail.Score, tracking: item.TrackingJSON}
+			reviewSignals = append(reviewSignals, reviewSignal)
+			s := dailyAnalysisSignal{date: batch.Date, symbol: symbol, strategyID: strategyID, score: score, tracking: item.TrackingJSON}
 			strategySignals[strategyID] = append(strategySignals[strategyID], s)
 			daySignals[batch.Date] = append(daySignals[batch.Date], s)
 		}
@@ -442,13 +454,16 @@ func (s *AppStore) BuildDailyStrategyAnalysis(startDate, endDate string, days, l
 	allSymbols := map[string]bool{}
 	consensus := 0
 	for _, signals := range daySignals {
-		seen := map[string]int{}
+		seen := map[string]map[string]bool{}
 		for _, item := range signals {
-			seen[item.symbol]++
+			if seen[item.symbol] == nil {
+				seen[item.symbol] = map[string]bool{}
+			}
+			seen[item.symbol][item.strategyID] = true
 			allSymbols[item.symbol] = true
 		}
-		for _, count := range seen {
-			if count >= 2 {
+		for _, strategyIDs := range seen {
+			if len(strategyIDs) >= 2 {
 				consensus++
 			}
 		}
@@ -483,7 +498,93 @@ func (s *AppStore) BuildDailyStrategyAnalysis(startDate, endDate string, days, l
 		}
 		return metrics[i].D5SuccessRate > metrics[j].D5SuccessRate
 	})
-	return DailyStrategyAnalysisData{StartDate: startDate, EndDate: endDate, TradingDays: len(selected), StrategyCount: len(metrics), SignalCount: sumAnalysisSignals(daySignals), UniqueSymbols: len(allSymbols), ConsensusCount: consensus, AverageScore: roundDailyFloat(totalScore / float64(maxInt(sumAnalysisSignals(daySignals), 1))), Strategies: metrics}, nil
+	notes, err := s.ListDecisionNotes("", 5000)
+	if err != nil {
+		return DailyStrategyAnalysisData{}, err
+	}
+	noteMap := make(map[string]DecisionNote, len(notes))
+	for _, note := range notes {
+		noteMap[strings.ToUpper(note.Symbol)] = note
+	}
+	watchPool, _ := s.GetStockPool(DecisionWatchPoolID)
+	excludePool, _ := s.GetStockPool(DecisionExcludePoolID)
+	stocks, consensusStocks := buildDailyAnalysisStocks(reviewSignals, noteMap, stringSet(watchPool.Symbols), stringSet(excludePool.Symbols))
+	sort.Slice(reviewSignals, func(i, j int) bool {
+		if reviewSignals[i].SignalDate == reviewSignals[j].SignalDate {
+			if reviewSignals[i].Score == reviewSignals[j].Score {
+				return reviewSignals[i].Symbol < reviewSignals[j].Symbol
+			}
+			return reviewSignals[i].Score > reviewSignals[j].Score
+		}
+		return reviewSignals[i].SignalDate > reviewSignals[j].SignalDate
+	})
+	return DailyStrategyAnalysisData{
+		StartDate: startDate, EndDate: endDate, TradingDays: len(selected), StrategyCount: len(metrics),
+		SignalCount: sumAnalysisSignals(daySignals), UniqueSymbols: len(allSymbols), ConsensusCount: consensus,
+		AverageScore: roundDailyFloat(totalScore / float64(maxInt(sumAnalysisSignals(daySignals), 1))), Strategies: metrics,
+		Stocks: stocks, Signals: reviewSignals, Consensus: consensusStocks,
+	}, nil
+}
+
+func buildDailyAnalysisStocks(signals []DailyReviewSignal, notes map[string]DecisionNote, watch, exclude map[string]bool) ([]DailyReviewStock, []DailyReviewStock) {
+	stockMap := map[string]*DailyReviewStock{}
+	for _, signal := range signals {
+		key := signal.SignalDate + "\x00" + signal.Symbol
+		stock := stockMap[key]
+		if stock == nil {
+			status := notes[signal.Symbol].Status
+			if exclude[signal.Symbol] {
+				status = "exclude"
+			} else if watch[signal.Symbol] {
+				status = "watch"
+			}
+			stock = &DailyReviewStock{
+				SignalDate: signal.SignalDate, Symbol: signal.Symbol, Latest: signal.Latest, MaxScore: signal.Score,
+				TrackingJSON: signal.TrackingJSON, Status: status, Watch: watch[signal.Symbol], Excluded: exclude[signal.Symbol],
+				Note: notes[signal.Symbol], StrategyIDs: []string{}, Strategies: []string{}, Signals: []DailyReviewSignal{},
+			}
+			stockMap[key] = stock
+		}
+		stock.Signals = append(stock.Signals, signal)
+		stock.StrategyIDs = appendUnique(stock.StrategyIDs, signal.StrategyID)
+		stock.Strategies = appendUnique(stock.Strategies, signal.StrategyName)
+		if signal.Score > stock.MaxScore {
+			stock.MaxScore = signal.Score
+		}
+		if trackingCompleteness(signal.TrackingJSON) > trackingCompleteness(stock.TrackingJSON) {
+			stock.TrackingJSON = signal.TrackingJSON
+		}
+	}
+	stocks := make([]DailyReviewStock, 0, len(stockMap))
+	for _, stock := range stockMap {
+		stock.StrategyCount = len(stock.StrategyIDs)
+		totalScore := 0.0
+		for _, signal := range stock.Signals {
+			totalScore += signal.Score
+		}
+		stock.AverageScore = roundDailyFloat(totalScore / float64(maxInt(len(stock.Signals), 1)))
+		stock.MaxScore = roundDailyFloat(stock.MaxScore)
+		stocks = append(stocks, *stock)
+	}
+	sort.Slice(stocks, func(i, j int) bool {
+		if stocks[i].SignalDate != stocks[j].SignalDate {
+			return stocks[i].SignalDate > stocks[j].SignalDate
+		}
+		if stocks[i].StrategyCount != stocks[j].StrategyCount {
+			return stocks[i].StrategyCount > stocks[j].StrategyCount
+		}
+		if stocks[i].MaxScore != stocks[j].MaxScore {
+			return stocks[i].MaxScore > stocks[j].MaxScore
+		}
+		return stocks[i].Symbol < stocks[j].Symbol
+	})
+	consensus := []DailyReviewStock{}
+	for _, stock := range stocks {
+		if stock.StrategyCount >= 2 {
+			consensus = append(consensus, stock)
+		}
+	}
+	return stocks, consensus
 }
 
 func ensureBoolSet(value map[string]bool) map[string]bool {
@@ -518,13 +619,13 @@ func averageSignalScore(signals []dailyAnalysisSignal) float64 {
 func strategyConsensusCount(signals []dailyAnalysisSignal, days map[string][]dailyAnalysisSignal) int {
 	total := 0
 	for _, item := range signals {
-		count := 0
+		strategyIDs := map[string]bool{}
 		for _, other := range days[item.date] {
 			if other.symbol == item.symbol {
-				count++
+				strategyIDs[other.strategyID] = true
 			}
 		}
-		if count >= 2 {
+		if len(strategyIDs) >= 2 {
 			total++
 		}
 	}
