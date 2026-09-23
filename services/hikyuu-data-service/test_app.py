@@ -16,6 +16,21 @@ class AppTaskTest(unittest.TestCase):
         self.assertIsNotNone(message)
         self.assertIn("连续失败20个股票", message)
 
+    def test_retryable_tdx_hosts_returns_host_for_failed_market(self):
+        log_text = "\n".join([
+            "导入 SH DAY 数据 from 117.34.114.15",
+            "导入 SZ DAY 数据 from 117.34.114.27",
+            "SH DAY 连续失败20个股票，已停止导入, 建议重新导入",
+        ])
+
+        self.assertEqual(app.retryable_tdx_hosts(log_text), ["117.34.114.15"])
+
+    def test_retryable_tdx_hosts_uses_freshness_failures(self):
+        log_text = "导入 SH DAY 数据 from 117.34.114.15\n导入 SZ DAY 数据 from 117.34.114.27"
+        freshness = {"markets": {"SH": {"ok": True}, "SZ": {"ok": False}}}
+
+        self.assertEqual(app.retryable_tdx_hosts(log_text, freshness), ["117.34.114.27"])
+
     def test_failed_task_snapshot_overrides_finished_log_progress(self):
         with tempfile.TemporaryDirectory() as directory:
             log_file = Path(directory) / "task.log"

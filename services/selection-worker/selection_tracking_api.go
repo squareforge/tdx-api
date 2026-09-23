@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -36,9 +35,10 @@ func handleSelectionTracking(w http.ResponseWriter, r *http.Request) {
 	for _, item := range items {
 		if cachedOnly {
 			tracking := SelectionTracking{}
-			if raw := strings.TrimSpace(item.TrackingJSON); raw != "" {
-				_ = json.Unmarshal([]byte(raw), &tracking)
+			if item.Tracking != nil {
+				tracking = *item.Tracking
 			}
+			item.Tracking = nil
 			trackingItems = append(trackingItems, SelectionTrackingItem{Result: item, Tracking: tracking})
 			continue
 		}
@@ -46,15 +46,13 @@ func handleSelectionTracking(w http.ResponseWriter, r *http.Request) {
 		tracking := SelectionTracking{}
 		if loadErr != nil {
 			tracking = workbench.EvaluateSelectionTracking(item, nil, horizons, targetReturn, drawdownLimit, time.Now())
+			item.Tracking = nil
 			trackingItems = append(trackingItems, SelectionTrackingItem{Result: item, Tracking: tracking, Error: loadErr.Error()})
 			continue
 		}
 		tracking = workbench.EvaluateSelectionTracking(item, toTrackingBars(bars), horizons, targetReturn, drawdownLimit, time.Now())
-		raw, marshalErr := json.Marshal(tracking)
-		if marshalErr == nil {
-			_ = appStore.UpdateSelectionTracking(item.ID, string(raw))
-			item.TrackingJSON = string(raw)
-		}
+		_ = appStore.UpdateSelectionTracking(item.ID, tracking)
+		item.Tracking = nil
 		trackingItems = append(trackingItems, SelectionTrackingItem{Result: item, Tracking: tracking})
 	}
 	summary := workbench.SummarizeSelectionTracking(trackingItems, horizons)

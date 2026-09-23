@@ -17,10 +17,20 @@ class ImportDataRunnerTest(unittest.TestCase):
             )
 
     def test_configured_hosts_uses_defaults_for_empty_value(self):
-        with patch.dict(os.environ, {"HIKYUU_TDX_HOSTS": ""}):
+        with patch.dict(os.environ, {"HIKYUU_TDX_HOSTS": "", "HIKYUU_TDX_EXCLUDED_HOSTS": ""}):
             self.assertEqual(
                 importdata_runner.configured_hosts(),
                 list(importdata_runner.DEFAULT_TDX_HOSTS),
+            )
+
+    def test_configured_hosts_excludes_failed_nodes(self):
+        with patch.dict(os.environ, {
+            "HIKYUU_TDX_HOSTS": "117.34.114.15:7709,117.34.114.27:7709",
+            "HIKYUU_TDX_EXCLUDED_HOSTS": "117.34.114.15",
+        }):
+            self.assertEqual(
+                importdata_runner.configured_hosts(),
+                [("117.34.114.27", 7709)],
             )
 
     def test_install_hdf5_write_lock_wraps_import_task_once(self):

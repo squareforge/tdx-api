@@ -3,6 +3,7 @@ import ast
 import io
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -35,10 +36,12 @@ RESEARCH_SCRIPT = os.getenv("HIKYUU_RESEARCH_SCRIPT", "/app/research_runner.py")
 QUERY_TIMEOUT_SECONDS = int(os.getenv("HIKYUU_QUERY_TIMEOUT_SECONDS", "120"))
 FRESHNESS_MIN_COVERAGE = float(os.getenv("HIKYUU_FRESHNESS_MIN_COVERAGE", "0.95"))
 SCHEDULER_ENABLED = os.getenv("HIKYUU_SCHEDULER_ENABLED", "true").lower() in ("1", "true", "yes", "on")
-AFTER_CLOSE_CRON = os.getenv("HIKYUU_AFTER_CLOSE_CRON", "30 16 * * 1-5")
+AFTER_CLOSE_CRON = os.getenv("HIKYUU_AFTER_CLOSE_CRON", "0 17 * * 1-5")
 MAX_TASKS = int(os.getenv("HIKYUU_MAX_TASKS", "200"))
 MAX_CONCURRENT_TASKS = int(os.getenv("HIKYUU_MAX_CONCURRENT_TASKS", "2"))
 MAX_CONCURRENT_QUERIES = max(1, int(os.getenv("HIKYUU_MAX_CONCURRENT_QUERIES", "4")))
+IMPORT_MAX_ATTEMPTS = max(1, int(os.getenv("HIKYUU_IMPORT_MAX_ATTEMPTS", "3")))
+IMPORT_RETRY_DELAY_SECONDS = max(0, int(os.getenv("HIKYUU_IMPORT_RETRY_DELAY_SECONDS", "5")))
 DATA_REVISION_FILE = STOCKS_DIR / ".data-revision"
 SYNC_SCOPE_KEYS = ("day", "min", "min5", "trans", "time", "finance", "block", "weight")
 SYNC_SCOPE_LABELS = {
@@ -307,7 +310,7 @@ def build_import_config(request: SyncRequest, task_id: str) -> None:
     parser["hdf5"] = {"enable": "True", "dir": str(STOCKS_DIR)}
     parser["mysql"] = {"enable": "False"}
     parser["clickhouse"] = {"enable": "False"}
-    parser["sched"] = {"time": "16:30:00"}
+    parser["sched"] = {"time": "17:00:00"}
     parser["collect"] = {
         "quotation_server": "ipc:///tmp/hikyuu_real.ipc",
         "interval": "305",
@@ -609,6 +612,32 @@ def detect_import_failure(log_text: str) -> Optional[str]:
     return None
 
 
+def retryable_tdx_hosts(log_text: str, freshness: Optional[Dict[str, Any]] = None) -> List[str]:
+    market_hosts: Dict[str, str] = {}
+    for market, host in re.findall(r"导入\s+(SH|SZ|BJ)\s+\S+\s+数据 from\s+([^\s]+)", log_text):
+        market_hosts[market] = host
+
+    failed_markets = set(re.findall(r"\b(SH|SZ|BJ)\s+\S+\s+连续失败20个股票", log_text))
+    if freshness:
+        for market, item in freshness.get("markets", {}).items():
+            if not item.get("ok"):
+                failed_markets.add(str(market).upper())
+
+    return sorted({market_hosts[market] for market in failed_markets if market in market_hosts})
+
+
+def write_freshness_log(log: Any, freshness: Dict[str, Any]) -> None:
+    for market, item in freshness.get("markets", {}).items():
+        log.write(
+            "K线完整性校验 "
+            f"{market}: latest={item.get('latest_date')} "
+            f"fresh={item.get('fresh_count')}/{item.get('total')} "
+            f"coverage={float(item.get('coverage') or 0) * 100:.1f}% "
+            f"ok={item.get('ok')}\n"
+        )
+    log.flush()
+
+
 def parse_json_output(output: str) -> Any:
     for line in reversed([line.strip() for line in output.splitlines() if line.strip()]):
         try:
@@ -678,39 +707,65 @@ def run_task(task_id: str) -> None:
         with log_path.open("a", encoding="utf-8") as log:
             log.write(f"[{now_text()}] task {task_id} started: {task['type']} · {scope_label(request_scope(task['request']))}\n")
             log.flush()
-            proc = subprocess.Popen(
-                [PYTHON_BIN, IMPORT_SCRIPT],
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                env=env,
-                text=True,
-            )
-            exit_code = proc.wait()
-            log.flush()
-            try:
-                log_text = log_path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                log_text = ""
-            failure_error = detect_import_failure(log_text)
+            max_attempts = IMPORT_MAX_ATTEMPTS if request.day and request.expected_date else 1
+            excluded_hosts = set()
+            exit_code = -1
             freshness = None
-            task_error = failure_error
-            if exit_code == 0 and task_error is None and request.expected_date:
+            task_error = None
+            attempts = 0
+            for attempt in range(1, max_attempts + 1):
+                attempts = attempt
+                attempt_env = env.copy()
+                if excluded_hosts:
+                    attempt_env["HIKYUU_TDX_EXCLUDED_HOSTS"] = ",".join(sorted(excluded_hosts))
+                marker = f"--- import attempt {attempt}/{max_attempts} ---"
+                log.write(f"{marker} excluded_tdx_hosts={','.join(sorted(excluded_hosts)) or 'none'}\n")
+                log.flush()
+                proc = subprocess.Popen(
+                    [PYTHON_BIN, IMPORT_SCRIPT],
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    env=attempt_env,
+                    text=True,
+                )
+                exit_code = proc.wait()
+                log.flush()
                 try:
-                    freshness = run_freshness_check(request.expected_date, env)
-                    for market, item in freshness.get("markets", {}).items():
-                        log.write(
-                            "K线完整性校验 "
-                            f"{market}: latest={item.get('latest_date')} "
-                            f"fresh={item.get('fresh_count')}/{item.get('total')} "
-                            f"coverage={float(item.get('coverage') or 0) * 100:.1f}% "
-                            f"ok={item.get('ok')}\n"
-                        )
-                    log.flush()
-                    if not freshness.get("ok"):
-                        task_error = freshness_failure_message(freshness)
-                except Exception as exc:
-                    task_error = str(exc)
+                    log_text = log_path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    log_text = ""
+                attempt_text = log_text.rsplit(marker, 1)[-1]
+                task_error = detect_import_failure(attempt_text)
+                freshness = None
+                if exit_code != 0 and task_error is None:
+                    task_error = f"import process exited with code {exit_code}"
+                if exit_code == 0 and task_error is None and request.expected_date:
+                    try:
+                        freshness = run_freshness_check(request.expected_date, attempt_env)
+                        write_freshness_log(log, freshness)
+                        if not freshness.get("ok"):
+                            task_error = freshness_failure_message(freshness)
+                    except Exception as exc:
+                        task_error = str(exc)
+
+                if exit_code == 0 and task_error is None:
+                    break
+
+                failed_hosts = retryable_tdx_hosts(attempt_text, freshness)
+                if attempt >= max_attempts or not failed_hosts:
+                    break
+                excluded_hosts.update(failed_hosts)
+                log.write(
+                    f"[{now_text()}] import attempt {attempt} failed: {task_error}; "
+                    f"excluding TDX hosts {','.join(failed_hosts)} before retry\n"
+                )
+                log.flush()
+                if IMPORT_RETRY_DELAY_SECONDS:
+                    time.sleep(IMPORT_RETRY_DELAY_SECONDS)
+
             with task_lock:
+                task["attempts"] = attempts
+                task["excluded_tdx_hosts"] = sorted(excluded_hosts)
                 task["exit_code"] = exit_code
                 task["ended_at"] = now_text()
                 task["freshness"] = freshness
@@ -724,7 +779,10 @@ def run_task(task_id: str) -> None:
                     task["status"] = "failed"
                     task["error"] = task_error or f"import process exited with code {exit_code}"
                 final_status = task["status"]
-            log.write(f"[{now_text()}] task {task_id} ended: status={final_status} exit_code={exit_code}\n")
+            log.write(
+                f"[{now_text()}] task {task_id} ended: status={final_status} "
+                f"exit_code={exit_code} attempts={attempts}\n"
+            )
     except Exception as exc:
         with task_lock:
             task["status"] = "failed"

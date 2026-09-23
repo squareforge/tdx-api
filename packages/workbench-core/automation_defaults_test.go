@@ -4,7 +4,7 @@ import "testing"
 
 func TestFixedCloseSyncUsesHikyuuAfterClose(t *testing.T) {
 	task := fixedCloseSyncAutomationTask()
-	if task.Cron != "0 30 16 * * 1-5" {
+	if task.Cron != "0 0 17 * * 1-5" {
 		t.Fatalf("unexpected close sync cron: %s", task.Cron)
 	}
 	if task.PayloadJSON != `{"scope":"hikyuu_after_close"}` {

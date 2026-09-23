@@ -1163,7 +1163,7 @@ func fixedCloseSyncAutomationTask() AutomationTask {
 		ID:           FixedCloseSyncTaskID,
 		Name:         "收盘作业：Hikyuu盘后同步",
 		Type:         "system_sync",
-		Cron:         "0 30 16 * * 1-5",
+		Cron:         "0 0 17 * * 1-5",
 		Enabled:      true,
 		OnlyTradeDay: true,
 		PayloadJSON:  `{"scope":"hikyuu_after_close"}`,

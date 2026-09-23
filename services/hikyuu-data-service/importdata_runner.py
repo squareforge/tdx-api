@@ -9,6 +9,11 @@ from pathlib import Path
 
 
 DEFAULT_TDX_HOSTS = (
+    ("117.34.114.27", 7709),
+    ("117.34.114.14", 7709),
+    ("117.34.114.16", 7709),
+    ("117.34.114.20", 7709),
+    ("117.34.114.17", 7709),
     ("124.71.187.122", 7709),
     ("218.106.92.182", 7709),
     ("220.178.55.71", 7709),
@@ -16,16 +21,20 @@ DEFAULT_TDX_HOSTS = (
 )
 
 
-def configured_hosts():
-    raw = os.getenv("HIKYUU_TDX_HOSTS", "").strip()
-    if not raw:
-        return list(DEFAULT_TDX_HOSTS)
+def parse_host_list(raw):
     result = []
     for item in raw.split(","):
         host, _, port = item.strip().partition(":")
         if host:
             result.append((host, int(port or "7709")))
-    return result or list(DEFAULT_TDX_HOSTS)
+    return result
+
+
+def configured_hosts():
+    raw = os.getenv("HIKYUU_TDX_HOSTS", "").strip()
+    hosts = parse_host_list(raw) if raw else list(DEFAULT_TDX_HOSTS)
+    excluded = {host for host, _ in parse_host_list(os.getenv("HIKYUU_TDX_EXCLUDED_HOSTS", ""))}
+    return [endpoint for endpoint in hosts if endpoint[0] not in excluded]
 
 
 def search_reliable_tdx_hosts():
@@ -50,6 +59,8 @@ def search_reliable_tdx_hosts():
         return False, time.monotonic() - started, host, port
 
     endpoints = configured_hosts()
+    if not endpoints:
+        return []
     with futures.ThreadPoolExecutor(max_workers=len(endpoints)) as executor:
         results = list(executor.map(probe, endpoints))
     return sorted((item for item in results if item[0]), key=lambda item: item[1])

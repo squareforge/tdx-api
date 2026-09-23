@@ -76,6 +76,10 @@ func (r *AutomationRunner) startSystemStrategyBatch() (AutomationRun, error) {
 }
 
 func (r *AutomationRunner) runSystemStrategyBatch(ctx context.Context, parentRunID string) (map[string]interface{}, int, error) {
+	freshness, expectedDate, freshnessErr := r.requireHikyuuFreshness(ctx)
+	if freshnessErr != nil {
+		return map[string]interface{}{"expected_date": expectedDate, "freshness": freshness}, 0, freshnessErr
+	}
 	strategies, err := r.store.ListStrategies()
 	if err != nil {
 		return nil, 0, err
@@ -174,6 +178,8 @@ func (r *AutomationRunner) runSystemStrategyBatch(ctx context.Context, parentRun
 		})
 	}
 	result := map[string]interface{}{
+		"expected_date":     expectedDate,
+		"freshness":         freshness,
 		"strategies":        summaries,
 		"strategy_count":    len(plans),
 		"failed_strategies": failedStrategies,

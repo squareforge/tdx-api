@@ -364,8 +364,9 @@ Hikyuu 服务需要先安装 `services/hikyuu-data-service/requirements.txt` 和
 Hikyuu 在本项目中的职责边界是：负责历史数据的全量初始化和盘后增量落库；TDX
 负责实时行情，并在本地历史缺失时兜底；Go 负责统一行情入口和业务编排。策略与
 回测只调用 market-service，由它执行“Hikyuu 本地优先、TDX 回退”。数据同步成功
-后会生成 `data_revision`。Compose 中的盘后同步由 selection-worker 在交易日 16:30
-发起，等待同步成功后再执行系统策略日报。
+后会生成 `data_revision`。Compose 中的盘后同步由 selection-worker 在交易日 17:00
+发起；若 TDX 节点返回错配数据，会排除故障节点并自动重试。三市场完整性校验通过后，
+才会执行验证选股表现和系统策略日报。
 
 源码模式下，如需让 Web 走独立行情、公式和 AI 服务，请显式设置服务地址：
 
