@@ -167,21 +167,39 @@ func (r *AutomationRunner) runTaskWithRun(ctx context.Context, task AutomationTa
 	var matchedSymbols []string
 	var err error
 
-	switch task.Type {
-	case "stock_selection":
-		result, matchedSymbols, err = r.runStockSelection(ctx, task, run)
-		matchedCount = len(matchedSymbols)
-	case "strategy_selection":
-		result, matchedSymbols, err = r.runStrategySelection(ctx, task, run)
-		matchedCount = len(matchedSymbols)
-	case "selection_tracking":
-		result, matchedCount, err = r.runSelectionTracking(ctx, task)
-	case "system_sync":
-		result, matchedCount, err = r.runSystemSync(ctx, task)
-	case "custom":
-		result, matchedCount, err = r.runCustomTask(ctx, task)
-	default:
-		err = fmt.Errorf("暂不支持的任务类型: %s", task.Type)
+	if task.OnlyTradeDay {
+		today := time.Now()
+		tradeDay, tradeDayErr := isCalendarWorkday(today)
+		if tradeDayErr != nil {
+			err = fmt.Errorf("交易日判断失败: %w", tradeDayErr)
+		} else if !tradeDay {
+			status = "skipped"
+			logText = "非交易日，已跳过"
+			result = map[string]interface{}{
+				"skipped": true,
+				"reason":  "non_trade_day",
+				"date":    today.Format("20060102"),
+			}
+		}
+	}
+
+	if err == nil && status != "skipped" {
+		switch task.Type {
+		case "stock_selection":
+			result, matchedSymbols, err = r.runStockSelection(ctx, task, run)
+			matchedCount = len(matchedSymbols)
+		case "strategy_selection":
+			result, matchedSymbols, err = r.runStrategySelection(ctx, task, run)
+			matchedCount = len(matchedSymbols)
+		case "selection_tracking":
+			result, matchedCount, err = r.runSelectionTracking(ctx, task)
+		case "system_sync":
+			result, matchedCount, err = r.runSystemSync(ctx, task)
+		case "custom":
+			result, matchedCount, err = r.runCustomTask(ctx, task)
+		default:
+			err = fmt.Errorf("暂不支持的任务类型: %s", task.Type)
+		}
 	}
 
 	if err != nil {
@@ -210,6 +228,9 @@ func (r *AutomationRunner) runTaskWithRun(ctx context.Context, task AutomationTa
 	}
 	if status == "failed" {
 		eventName = "automation.failed"
+	}
+	if status == "skipped" {
+		eventName = "automation.skipped"
 	}
 	hookLogs := sendWebhooks(ctx, hooks, WebhookEvent{
 		Event:          eventName,
@@ -260,14 +281,10 @@ func (r *AutomationRunner) runSelectionTracking(ctx context.Context, task Automa
 			continue
 		}
 		tracking := workbench.EvaluateSelectionTracking(item, toTrackingBars(bars), payload.Horizons, targetReturn, drawdownLimit, time.Now())
-		raw, marshalErr := json.Marshal(tracking)
-		if marshalErr != nil {
-			return nil, len(tracked), marshalErr
-		}
-		if updateErr := r.store.UpdateSelectionTracking(item.ID, string(raw)); updateErr != nil {
+		if updateErr := r.store.UpdateSelectionTracking(item.ID, tracking); updateErr != nil {
 			return nil, len(tracked), updateErr
 		}
-		item.TrackingJSON = string(raw)
+		item.Tracking = &tracking
 		tracked = append(tracked, SelectionTrackingItem{Result: item, Tracking: tracking})
 	}
 	return map[string]interface{}{

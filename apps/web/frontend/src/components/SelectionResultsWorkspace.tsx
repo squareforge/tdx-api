@@ -52,10 +52,7 @@ function runStatus(status?: string) {
   return { label: status || '未知', color: 'default' } as const;
 }
 function runTypeLabel(type?: string) { return type === 'strategy_selection' ? '策略选股' : '公式选股'; }
-function parseTracking(result: SelectionResult): SelectionTracking {
-  if (!result.tracking_json) return {};
-  try { const parsed = JSON.parse(result.tracking_json) as SelectionTracking; return parsed && typeof parsed === 'object' ? parsed : {}; } catch { return {}; }
-}
+function resultTracking(result: SelectionResult): SelectionTracking { return result.tracking || {}; }
 function formatPct(value?: number) { return Number.isFinite(value) ? `${Number(value) >= 0 ? '+' : ''}${Number(value).toFixed(2)}%` : '--'; }
 function trackingLabel(value?: SelectionHorizon) {
   if (!value) return '待观察';
@@ -148,7 +145,7 @@ export function SelectionResultsWorkspace() {
   const summary = useMemo(() => ({ total: filteredRecords.length, success: filteredRecords.filter(({ run }) => run.status === 'success').length, matched: filteredRecords.reduce((sum, { run, results }) => sum + (run.matched_count ?? results.length), 0), days: groups.length }), [filteredRecords, groups.length]);
 
   function openRun(record: SelectionRunRecord) { setSelectedRun(record); setSelectedResult(record.results[0] || null); setResultModalOpen(true); }
-  function getTracking(result: SelectionResult) { return trackingMap.get(result.id) || parseTracking(result); }
+  function getTracking(result: SelectionResult) { return trackingMap.get(result.id) || resultTracking(result); }
   function stockName(symbol: string) { return stockNames[normalizeSymbol(symbol)] || ''; }
   function openQuote(result: SelectionResult) {
     setSelectedResult(result);

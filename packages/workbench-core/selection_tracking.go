@@ -25,17 +25,32 @@ type TrackingBar struct {
 }
 
 type SelectionHorizon struct {
-	HorizonDays   int     `json:"horizon_days"`
-	Status        string  `json:"status"` // pending / complete / unavailable
-	AsOfDate      int     `json:"as_of_date,omitempty"`
-	OpenReturn    float64 `json:"open_return,omitempty"`
-	CloseReturn   float64 `json:"close_return,omitempty"`
-	MaxGain       float64 `json:"max_gain,omitempty"`
-	MaxDrawdown   float64 `json:"max_drawdown,omitempty"`
-	TargetReturn  float64 `json:"target_return"`
-	DrawdownLimit float64 `json:"drawdown_limit"`
-	Success       bool    `json:"success"`
-	Reason        string  `json:"reason,omitempty"`
+	HorizonDays       int     `json:"horizon_days"`
+	Status            string  `json:"status"` // pending / complete / unavailable
+	AsOfDate          int     `json:"as_of_date,omitempty"`
+	FinalDate         int     `json:"final_date,omitempty"`
+	FinalOpen         float64 `json:"final_open,omitempty"`
+	FinalClose        float64 `json:"final_close,omitempty"`
+	OpenReturn        float64 `json:"open_return,omitempty"`
+	CloseReturn       float64 `json:"close_return,omitempty"`
+	MaxGain           float64 `json:"max_gain,omitempty"`
+	MaxGainDate       int     `json:"max_gain_date,omitempty"`
+	MaxGainPrice      float64 `json:"max_gain_price,omitempty"`
+	DaysToMaxGain     int     `json:"days_to_max_gain,omitempty"`
+	MaxDrawdown       float64 `json:"max_drawdown,omitempty"`
+	MaxDrawdownDate   int     `json:"max_drawdown_date,omitempty"`
+	MaxDrawdownPrice  float64 `json:"max_drawdown_price,omitempty"`
+	DaysToMaxDrawdown int     `json:"days_to_max_drawdown,omitempty"`
+	TargetReturn      float64 `json:"target_return"`
+	TargetHit         bool    `json:"target_hit"`
+	TargetHitDate     int     `json:"target_hit_date,omitempty"`
+	DaysToTargetHit   int     `json:"days_to_target_hit,omitempty"`
+	DrawdownLimit     float64 `json:"drawdown_limit"`
+	StopLossHit       bool    `json:"stop_loss_hit"`
+	StopLossHitDate   int     `json:"stop_loss_hit_date,omitempty"`
+	DaysToStopLoss    int     `json:"days_to_stop_loss,omitempty"`
+	Success           bool    `json:"success"`
+	Reason            string  `json:"reason,omitempty"`
 }
 
 type SelectionTracking struct {
@@ -230,22 +245,44 @@ func EvaluateSelectionTracking(item SelectionResult, bars []TrackingBar, horizon
 			continue
 		}
 		window := forward[:horizon]
+		finalBar := window[len(window)-1]
 		result.Status = "complete"
-		result.AsOfDate = window[len(window)-1].Date
-		result.OpenReturn = roundTrackingPercent(pctTracking(window[0].Open, tracking.BasePrice))
-		result.CloseReturn = roundTrackingPercent(pctTracking(window[len(window)-1].Close, tracking.BasePrice))
+		result.AsOfDate = finalBar.Date
+		result.FinalDate = finalBar.Date
+		result.FinalOpen = finalBar.Open
+		result.FinalClose = finalBar.Close
+		result.OpenReturn = roundTrackingPercent(pctTracking(finalBar.Open, tracking.BasePrice))
+		result.CloseReturn = roundTrackingPercent(pctTracking(finalBar.Close, tracking.BasePrice))
 		maxGain := math.Inf(-1)
 		maxDrawdown := math.Inf(1)
-		for _, bar := range window {
+		for index, bar := range window {
 			if gain := pctTracking(bar.High, tracking.BasePrice); gain > maxGain {
 				maxGain = gain
+				result.MaxGainDate = bar.Date
+				result.MaxGainPrice = bar.High
+				result.DaysToMaxGain = index + 1
 			}
 			if drawdown := pctTracking(bar.Low, tracking.BasePrice); drawdown < maxDrawdown {
 				maxDrawdown = drawdown
+				result.MaxDrawdownDate = bar.Date
+				result.MaxDrawdownPrice = bar.Low
+				result.DaysToMaxDrawdown = index + 1
+			}
+			if !result.TargetHit && pctTracking(bar.High, tracking.BasePrice) >= targetReturn {
+				result.TargetHit = true
+				result.TargetHitDate = bar.Date
+				result.DaysToTargetHit = index + 1
+			}
+			if !result.StopLossHit && pctTracking(bar.Low, tracking.BasePrice) <= -drawdownLimit {
+				result.StopLossHit = true
+				result.StopLossHitDate = bar.Date
+				result.DaysToStopLoss = index + 1
 			}
 		}
 		result.MaxGain = roundTrackingPercent(maxGain)
 		result.MaxDrawdown = roundTrackingPercent(maxDrawdown)
+		result.MaxGainPrice = roundTrackingPrice(result.MaxGainPrice)
+		result.MaxDrawdownPrice = roundTrackingPrice(result.MaxDrawdownPrice)
 		result.Success = result.CloseReturn >= targetReturn && result.MaxDrawdown >= -drawdownLimit
 		if result.Success {
 			result.Reason = "达到收益与回撤标准"
@@ -311,4 +348,11 @@ func roundTrackingPercent(value float64) float64 {
 		return 0
 	}
 	return math.Round(value*100) / 100
+}
+
+func roundTrackingPrice(value float64) float64 {
+	if math.IsInf(value, 0) || math.IsNaN(value) {
+		return 0
+	}
+	return math.Round(value*1000) / 1000
 }

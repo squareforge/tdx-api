@@ -422,6 +422,7 @@ export interface AutomationTask {
   type: string;
   cron: string;
   enabled: boolean;
+  only_trade_day: boolean;
   payload_json: string;
   webhook_ids: string;
   last_run_at?: string;
@@ -455,7 +456,7 @@ export interface SelectionResult {
   symbol: string;
   latest: number;
   detail_json: string;
-  tracking_json?: string;
+  tracking?: SelectionTracking;
   created_at: string;
 }
 
@@ -463,12 +464,27 @@ export interface SelectionHorizon {
   horizon_days: number;
   status: 'pending' | 'complete' | 'unavailable' | string;
   as_of_date?: number;
+  final_date?: number;
+  final_open?: number;
+  final_close?: number;
   open_return?: number;
   close_return?: number;
   max_gain?: number;
+  max_gain_date?: number;
+  max_gain_price?: number;
+  days_to_max_gain?: number;
   max_drawdown?: number;
+  max_drawdown_date?: number;
+  max_drawdown_price?: number;
+  days_to_max_drawdown?: number;
   target_return?: number;
+  target_hit?: boolean;
+  target_hit_date?: number;
+  days_to_target_hit?: number;
   drawdown_limit?: number;
+  stop_loss_hit?: boolean;
+  stop_loss_hit_date?: number;
+  days_to_stop_loss?: number;
   success?: boolean;
   reason?: string;
 }
@@ -563,7 +579,7 @@ export interface DailyReviewSignal {
   latest: number;
   score: number;
   detail_json: string;
-  tracking_json: string;
+  tracking?: SelectionTracking;
   created_at: string;
 }
 
@@ -576,7 +592,7 @@ export interface DailyReviewStock {
   strategies: string[];
   max_score: number;
   average_score: number;
-  tracking_json: string;
+  tracking?: SelectionTracking;
   status?: string;
   watch?: boolean;
   excluded?: boolean;

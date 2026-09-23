@@ -38,6 +38,7 @@ function statusText(status?: string) {
   if (status === 'success') return '成功';
   if (status === 'failed') return '失败';
   if (status === 'running') return '运行中';
+  if (status === 'skipped') return '已跳过';
   return status;
 }
 
@@ -99,12 +100,13 @@ export function AutomationsWorkspace() {
   const successCount = useMemo(() => runs.filter((run) => run.status === 'success').length, [runs]);
 
   function openDialog(task?: AutomationTask) {
-    const next = task || {
+    const next = task ? { ...task, only_trade_day: task.only_trade_day ?? true } : {
       id: '',
       name: '',
       type: 'stock_selection',
       cron: '0 0 9 * * 1-5',
       enabled: false,
+      only_trade_day: true,
       payload_json: '{}',
       webhook_ids: '[]'
     };
@@ -192,6 +194,7 @@ export function AutomationsWorkspace() {
           type: 'strategy_selection',
           cron: '0 0 15 * * 1-5',
           enabled: false,
+          only_trade_day: true,
           payload_json: JSON.stringify({ strategy_id: strategy.id }),
           webhook_ids: '[]'
         })
@@ -272,6 +275,11 @@ export function AutomationsWorkspace() {
                 width: 82,
                 render: (_value, record) => <Tag className={`automation-status-tag ${record.enabled ? 'is-enabled' : ''}`}>{record.enabled ? '已开启' : '已关闭'}</Tag>
               },
+              {
+                title: '执行日',
+                width: 96,
+                render: (_value, record) => <Tag>{record.only_trade_day ? '交易日' : '每日'}</Tag>
+              },
               { title: '最近结果', dataIndex: 'last_status', width: 90, render: (value: string) => <span className={`automation-run-state ${value || 'empty'}`}>{statusText(value)}</span> },
               {
                 title: '下次运行',
@@ -302,7 +310,7 @@ export function AutomationsWorkspace() {
                 )
               }
             ]}
-            scroll={{ x: 994 }}
+            scroll={{ x: 1090 }}
           />
         </Card>
 
@@ -327,6 +335,7 @@ export function AutomationsWorkspace() {
               <div className="automation-inspector-meta">
                 <div><span>类型</span><strong>{taskTypeLabels[selected.type] || selected.type}</strong></div>
                 <div><span>Cron</span><strong>{selected.cron || '--'}</strong></div>
+                <div><span>执行日</span><strong>{selected.only_trade_day ? '仅交易日' : '每日'}</strong></div>
                 <div><span>Webhook</span><strong>{parseWebhookCount(selected.webhook_ids)} 个</strong></div>
                 <div><span>最近结果</span><strong>{statusText(selected.last_status)}</strong></div>
               </div>
@@ -431,6 +440,7 @@ export function AutomationsWorkspace() {
               <Form.Item name="type" label="任务类型"><Select options={taskTypeOptions} /></Form.Item>
               <Form.Item name="cron" label="Cron" rules={[{ required: true, message: '请输入 Cron 表达式' }]}><Input placeholder="0 0 9 * * 1-5" /></Form.Item>
               <Form.Item name="enabled" label="启用调度" valuePropName="checked"><Switch /></Form.Item>
+              <Form.Item name="only_trade_day" label="仅交易日执行" valuePropName="checked"><Switch /></Form.Item>
             </div>
           </section>
           <section className="automation-form-section">

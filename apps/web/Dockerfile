@@ -19,7 +19,8 @@ RUN (cd apps/web && go build -ldflags="-s -w" -o /app/stock-web .)
 FROM docker.1ms.run/library/alpine:latest
 
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories && \
-    apk --no-cache add ca-certificates tzdata wget
+    apk --no-cache add ca-certificates tzdata wget python3 py3-pip && \
+    PIP_BREAK_SYSTEM_PACKAGES=1 python3 -m pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple --trusted-host pypi.tuna.tsinghua.edu.cn pandas_market_calendars
 
 ENV TZ=Asia/Shanghai \
     TDX_APP_ROLE=web \

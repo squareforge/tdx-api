@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -72,22 +73,23 @@ const (
 )
 
 type AutomationTask struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Type        string `json:"type"`
-	Cron        string `json:"cron"`
-	Enabled     bool   `json:"enabled"`
-	PayloadJSON string `json:"payload_json"`
-	WebhookIDs  string `json:"webhook_ids"`
-	LastRunAt   string `json:"last_run_at"`
-	NextRunAt   string `json:"next_run_at"`
-	LastStatus  string `json:"last_status"`
-	LastMessage string `json:"last_message"`
-	CronEntryID int    `json:"-"`
-	Readonly    bool   `json:"readonly"`
-	System      bool   `json:"system"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	Cron         string `json:"cron"`
+	Enabled      bool   `json:"enabled"`
+	OnlyTradeDay bool   `json:"only_trade_day"`
+	PayloadJSON  string `json:"payload_json"`
+	WebhookIDs   string `json:"webhook_ids"`
+	LastRunAt    string `json:"last_run_at"`
+	NextRunAt    string `json:"next_run_at"`
+	LastStatus   string `json:"last_status"`
+	LastMessage  string `json:"last_message"`
+	CronEntryID  int    `json:"-"`
+	Readonly     bool   `json:"readonly"`
+	System       bool   `json:"system"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
 }
 
 type AutomationRun struct {
@@ -105,17 +107,60 @@ type AutomationRun struct {
 }
 
 type SelectionResult struct {
-	ID           string  `json:"id"`
-	RunID        string  `json:"run_id"`
-	TaskID       string  `json:"task_id"`
-	TaskName     string  `json:"task_name"`
-	FormulaID    string  `json:"formula_id"`
-	FormulaName  string  `json:"formula_name"`
-	Symbol       string  `json:"symbol"`
-	Latest       float64 `json:"latest"`
-	DetailJSON   string  `json:"detail_json"`
-	TrackingJSON string  `json:"tracking_json"`
-	CreatedAt    string  `json:"created_at"`
+	ID          string             `json:"id"`
+	RunID       string             `json:"run_id"`
+	TaskID      string             `json:"task_id"`
+	TaskName    string             `json:"task_name"`
+	FormulaID   string             `json:"formula_id"`
+	FormulaName string             `json:"formula_name"`
+	Symbol      string             `json:"symbol"`
+	Latest      float64            `json:"latest"`
+	DetailJSON  string             `json:"detail_json"`
+	Tracking    *SelectionTracking `json:"tracking,omitempty"`
+	CreatedAt   string             `json:"created_at"`
+}
+
+type SelectionResultTracking struct {
+	ID                string  `json:"id"`
+	SelectionResultID string  `json:"selection_result_id"`
+	RunID             string  `json:"run_id"`
+	TaskID            string  `json:"task_id"`
+	TaskName          string  `json:"task_name"`
+	FormulaID         string  `json:"formula_id"`
+	FormulaName       string  `json:"formula_name"`
+	Symbol            string  `json:"symbol"`
+	SignalDate        int     `json:"signal_date"`
+	BaseDate          int     `json:"base_date"`
+	BasePrice         float64 `json:"base_price"`
+	BasePriceFrom     string  `json:"base_price_from"`
+	HorizonDays       int     `json:"horizon_days"`
+	Status            string  `json:"status"`
+	AsOfDate          int     `json:"as_of_date"`
+	FinalDate         int     `json:"final_date"`
+	FinalOpen         float64 `json:"final_open"`
+	FinalClose        float64 `json:"final_close"`
+	OpenReturn        float64 `json:"open_return"`
+	CloseReturn       float64 `json:"close_return"`
+	MaxGain           float64 `json:"max_gain"`
+	MaxGainDate       int     `json:"max_gain_date"`
+	MaxGainPrice      float64 `json:"max_gain_price"`
+	DaysToMaxGain     int     `json:"days_to_max_gain"`
+	MaxDrawdown       float64 `json:"max_drawdown"`
+	MaxDrawdownDate   int     `json:"max_drawdown_date"`
+	MaxDrawdownPrice  float64 `json:"max_drawdown_price"`
+	DaysToMaxDrawdown int     `json:"days_to_max_drawdown"`
+	TargetReturn      float64 `json:"target_return"`
+	TargetHit         bool    `json:"target_hit"`
+	TargetHitDate     int     `json:"target_hit_date"`
+	DaysToTargetHit   int     `json:"days_to_target_hit"`
+	DrawdownLimit     float64 `json:"drawdown_limit"`
+	StopLossHit       bool    `json:"stop_loss_hit"`
+	StopLossHitDate   int     `json:"stop_loss_hit_date"`
+	DaysToStopLoss    int     `json:"days_to_stop_loss"`
+	Success           bool    `json:"success"`
+	Reason            string  `json:"reason"`
+	CreatedAt         string  `json:"created_at"`
+	UpdatedAt         string  `json:"updated_at"`
 }
 
 type DecisionNote struct {
@@ -268,6 +313,7 @@ func (s *AppStore) migrate() error {
 			type TEXT NOT NULL,
 			cron TEXT NOT NULL,
 			enabled INTEGER NOT NULL DEFAULT 0,
+			only_trade_day INTEGER NOT NULL DEFAULT 1,
 			payload_json TEXT NOT NULL DEFAULT '{}',
 			webhook_ids TEXT NOT NULL DEFAULT '[]',
 			last_run_at TEXT NOT NULL DEFAULT '',
@@ -312,7 +358,6 @@ func (s *AppStore) migrate() error {
 			symbol TEXT NOT NULL,
 			latest REAL NOT NULL DEFAULT 0,
 			detail_json TEXT NOT NULL DEFAULT '{}',
-			tracking_json TEXT NOT NULL DEFAULT '{}',
 			created_at TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_selection_results_created_at ON selection_results(created_at)`,
@@ -322,6 +367,53 @@ func (s *AppStore) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_selection_results_symbol_created_at ON selection_results(symbol, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_selection_results_symbol ON selection_results(symbol)`,
 		`CREATE INDEX IF NOT EXISTS idx_selection_results_formula ON selection_results(formula_id)`,
+		`CREATE TABLE IF NOT EXISTS selection_result_tracking (
+			id TEXT PRIMARY KEY,                         -- 主键，单条跟踪记录 ID
+			selection_result_id TEXT NOT NULL,           -- 对应 selection_results.id，一条选股结果
+			run_id TEXT NOT NULL,                        -- 对应 automation_runs.id，本次策略执行批次
+			task_id TEXT NOT NULL,                       -- 自动化任务 ID
+			task_name TEXT NOT NULL,                     -- 自动化任务名称
+			formula_id TEXT NOT NULL,                    -- 策略 ID，策略选股时通常是 strategy:<strategy_id>
+			formula_name TEXT NOT NULL,                  -- 策略名称
+			symbol TEXT NOT NULL,                        -- 股票代码
+			signal_date INTEGER NOT NULL DEFAULT 0,      -- 信号日期，格式 YYYYMMDD
+			base_date INTEGER NOT NULL DEFAULT 0,        -- 实际用于计算收益的基准日期
+			base_price REAL NOT NULL DEFAULT 0,          -- 收益计算基准价
+			base_price_from TEXT NOT NULL DEFAULT '',    -- 基准价来源，例如 signal_day_close / signal_day_open
+			horizon_days INTEGER NOT NULL,               -- 跟踪周期，比如 1、3、5、10
+			status TEXT NOT NULL DEFAULT 'pending',      -- 跟踪状态：pending / complete / unavailable
+			as_of_date INTEGER NOT NULL DEFAULT 0,       -- 当前已经跟踪到的日期
+			final_date INTEGER NOT NULL DEFAULT 0,       -- 周期结束日期
+			final_open REAL NOT NULL DEFAULT 0,          -- 周期结束日开盘价
+			final_close REAL NOT NULL DEFAULT 0,         -- 周期结束日收盘价
+			open_return REAL NOT NULL DEFAULT 0,         -- 周期结束日开盘收益率，百分比
+			close_return REAL NOT NULL DEFAULT 0,        -- 周期结束日收盘收益率，百分比
+			max_gain REAL NOT NULL DEFAULT 0,            -- 跟踪周期内最大涨幅，百分比
+			max_gain_date INTEGER NOT NULL DEFAULT 0,    -- 最大涨幅发生日期
+			max_gain_price REAL NOT NULL DEFAULT 0,      -- 最大涨幅对应价格
+			days_to_max_gain INTEGER NOT NULL DEFAULT 0, -- 信号后第几天达到最大涨幅
+			max_drawdown REAL NOT NULL DEFAULT 0,        -- 跟踪周期内最大回撤，百分比，通常为负数
+			max_drawdown_date INTEGER NOT NULL DEFAULT 0,-- 最大回撤发生日期
+			max_drawdown_price REAL NOT NULL DEFAULT 0,  -- 最大回撤对应价格
+			days_to_max_drawdown INTEGER NOT NULL DEFAULT 0, -- 信号后第几天出现最大回撤
+			target_return REAL NOT NULL DEFAULT 0,       -- 目标收益率，例如 3 表示 3%
+			target_hit INTEGER NOT NULL DEFAULT 0,       -- 是否触达目标收益，0 否，1 是
+			target_hit_date INTEGER NOT NULL DEFAULT 0,  -- 首次触达目标收益的日期
+			days_to_target_hit INTEGER NOT NULL DEFAULT 0,-- 信号后第几天触达目标收益
+			drawdown_limit REAL NOT NULL DEFAULT 0,      -- 最大允许回撤阈值，例如 5 表示 -5%
+			stop_loss_hit INTEGER NOT NULL DEFAULT 0,    -- 是否触发止损/回撤限制，0 否，1 是
+			stop_loss_hit_date INTEGER NOT NULL DEFAULT 0,-- 首次触发止损的日期
+			days_to_stop_loss INTEGER NOT NULL DEFAULT 0,-- 信号后第几天触发止损
+			success INTEGER NOT NULL DEFAULT 0,          -- 该周期是否成功，0 否，1 是
+			reason TEXT NOT NULL DEFAULT '',             -- 结果说明，例如 达到收益与回撤标准 / 未达到收益与回撤标准
+			created_at TEXT NOT NULL,                   -- 创建时间
+			updated_at TEXT NOT NULL                    -- 更新时间
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_selection_result_tracking_unique ON selection_result_tracking(selection_result_id, horizon_days)`,
+		`CREATE INDEX IF NOT EXISTS idx_selection_result_tracking_symbol ON selection_result_tracking(symbol, signal_date DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_selection_result_tracking_strategy ON selection_result_tracking(formula_id, signal_date DESC, horizon_days)`,
+		`CREATE INDEX IF NOT EXISTS idx_selection_result_tracking_status ON selection_result_tracking(status, horizon_days, updated_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_selection_result_tracking_run ON selection_result_tracking(run_id, horizon_days)`,
 		`CREATE TABLE IF NOT EXISTS historical_backtest_runs (
 			id TEXT PRIMARY KEY,
 			status TEXT NOT NULL DEFAULT 'pending',
@@ -533,8 +625,8 @@ func (s *AppStore) migrate() error {
 			"actual_value": "TEXT NOT NULL DEFAULT ''", "revision": "TEXT NOT NULL DEFAULT ''",
 		},
 		"macro_alert_settings": {"notify_webhooks": "INTEGER NOT NULL DEFAULT 0", "webhook_ids": "TEXT NOT NULL DEFAULT '[]'"},
-		"selection_results":    {"tracking_json": "TEXT NOT NULL DEFAULT '{}'"},
 		"automation_runs":      {"parent_run_id": "TEXT NOT NULL DEFAULT ''"},
+		"automation_tasks":     {"only_trade_day": "INTEGER NOT NULL DEFAULT 1"},
 		"historical_backtest_runs": {
 			"buy_base": "TEXT NOT NULL DEFAULT 'open'", "buy_offset": "REAL NOT NULL DEFAULT 0",
 			"sell_base": "TEXT NOT NULL DEFAULT 'next_open'", "take_profit": "REAL NOT NULL DEFAULT 10",
@@ -564,13 +656,28 @@ func (s *AppStore) migrate() error {
 		WHERE child.task_id LIKE 'system-strategy:%' AND child.parent_run_id=''`, SystemStrategyDailyBatchTaskID); err != nil {
 		return err
 	}
+	if err := s.migrateLegacySelectionTracking(); err != nil {
+		return err
+	}
 	return nil
 }
 
 func (s *AppStore) ensureColumn(table, column, definition string) error {
-	rows, err := s.db.Query("PRAGMA table_info(" + table + ")")
+	exists, err := s.tableHasColumn(table, column)
 	if err != nil {
 		return err
+	}
+	if exists {
+		return nil
+	}
+	_, err = s.db.Exec("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition)
+	return err
+}
+
+func (s *AppStore) tableHasColumn(table, column string) (bool, error) {
+	rows, err := s.db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return false, err
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -579,17 +686,16 @@ func (s *AppStore) ensureColumn(table, column, definition string) error {
 		var notnull, pk int
 		var defaultValue interface{}
 		if err := rows.Scan(&cid, &name, &typ, &notnull, &defaultValue, &pk); err != nil {
-			return err
+			return false, err
 		}
 		if name == column {
-			return nil
+			return true, nil
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return err
+		return false, err
 	}
-	_, err = s.db.Exec("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition)
-	return err
+	return false, nil
 }
 
 func (s *AppStore) seedDefaults() error {
@@ -1054,29 +1160,31 @@ func withCustomizedStrategyUniverse(templateConfigJSON, customizedConfigJSON str
 
 func fixedCloseSyncAutomationTask() AutomationTask {
 	return AutomationTask{
-		ID:          FixedCloseSyncTaskID,
-		Name:        "收盘作业：Hikyuu盘后同步",
-		Type:        "system_sync",
-		Cron:        "0 30 16 * * 1-5",
-		Enabled:     true,
-		PayloadJSON: `{"scope":"hikyuu_after_close"}`,
-		WebhookIDs:  "[]",
-		Readonly:    true,
-		System:      true,
+		ID:           FixedCloseSyncTaskID,
+		Name:         "收盘作业：Hikyuu盘后同步",
+		Type:         "system_sync",
+		Cron:         "0 30 16 * * 1-5",
+		Enabled:      true,
+		OnlyTradeDay: true,
+		PayloadJSON:  `{"scope":"hikyuu_after_close"}`,
+		WebhookIDs:   "[]",
+		Readonly:     true,
+		System:       true,
 	}
 }
 
 func fixedSelectionTrackingAutomationTask() AutomationTask {
 	return AutomationTask{
-		ID:          FixedSelectionTrackingTaskID,
-		Name:        "收盘作业：验证选股表现",
-		Type:        "selection_tracking",
-		Cron:        "0 15 17 * * 1-5",
-		Enabled:     true,
-		PayloadJSON: `{"horizons":[3,5,10],"history_buffer":30,"target_return":3,"drawdown_limit":5,"continue_on_error":true}`,
-		WebhookIDs:  "[]",
-		Readonly:    true,
-		System:      true,
+		ID:           FixedSelectionTrackingTaskID,
+		Name:         "收盘作业：验证选股表现",
+		Type:         "selection_tracking",
+		Cron:         "0 15 17 * * 1-5",
+		Enabled:      true,
+		OnlyTradeDay: true,
+		PayloadJSON:  `{"horizons":[3,5,10],"history_buffer":30,"target_return":3,"drawdown_limit":5,"continue_on_error":true}`,
+		WebhookIDs:   "[]",
+		Readonly:     true,
+		System:       true,
 	}
 }
 
@@ -1086,12 +1194,13 @@ func systemStrategyDailyBatchAutomationTask() AutomationTask {
 		Name: "收盘作业：系统策略日报",
 		Type: "system_strategy_batch",
 		// This task is dependency-triggered after close sync rather than cron-triggered.
-		Cron:        "",
-		Enabled:     true,
-		PayloadJSON: `{"source":"fixed-close-sync","shared_kline_cache":true}`,
-		WebhookIDs:  "[]",
-		Readonly:    true,
-		System:      true,
+		Cron:         "",
+		Enabled:      true,
+		OnlyTradeDay: true,
+		PayloadJSON:  `{"source":"fixed-close-sync","shared_kline_cache":true}`,
+		WebhookIDs:   "[]",
+		Readonly:     true,
+		System:       true,
 	}
 }
 
@@ -1111,17 +1220,17 @@ func (s *AppStore) ensureFixedAutomationTasks() error {
 	now := NowText()
 	for _, task := range []AutomationTask{fixedCloseSyncAutomationTask(), systemStrategyDailyBatchAutomationTask(), fixedSelectionTrackingAutomationTask()} {
 		if _, err := s.db.Exec(`INSERT OR IGNORE INTO automation_tasks
-			(id,name,type,cron,enabled,payload_json,webhook_ids,last_run_at,next_run_at,last_status,last_message,created_at,updated_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			task.ID, task.Name, task.Type, task.Cron, boolInt(task.Enabled), task.PayloadJSON, task.WebhookIDs,
+			(id,name,type,cron,enabled,only_trade_day,payload_json,webhook_ids,last_run_at,next_run_at,last_status,last_message,created_at,updated_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			task.ID, task.Name, task.Type, task.Cron, boolInt(task.Enabled), boolInt(task.OnlyTradeDay), task.PayloadJSON, task.WebhookIDs,
 			"", "", "", "", now, now); err != nil {
 			return err
 		}
 		// Fixed task behavior belongs to the application. Keep the user's enabled
 		// choice while migrating immutable definitions such as cron and payload.
 		if _, err := s.db.Exec(`UPDATE automation_tasks
-			SET name=?,type=?,cron=?,payload_json=?,webhook_ids=?,updated_at=?
-			WHERE id=?`, task.Name, task.Type, task.Cron, task.PayloadJSON, task.WebhookIDs, now, task.ID); err != nil {
+			SET name=?,type=?,cron=?,only_trade_day=?,payload_json=?,webhook_ids=?,updated_at=?
+			WHERE id=?`, task.Name, task.Type, task.Cron, boolInt(task.OnlyTradeDay), task.PayloadJSON, task.WebhookIDs, now, task.ID); err != nil {
 			return err
 		}
 	}
@@ -1131,54 +1240,59 @@ func (s *AppStore) ensureFixedAutomationTasks() error {
 func marketInfoAutomationTasks() []AutomationTask {
 	return []AutomationTask{
 		{
-			ID:          MarketLongTigerSyncTaskID,
-			Name:        "龙虎榜同步",
-			Type:        "system_sync",
-			Cron:        "0 0 18 * * 1-5",
-			Enabled:     true,
-			PayloadJSON: `{"scope":"market_info","kinds":["long-tiger"],"continue_on_error":true}`,
-			WebhookIDs:  "[]",
-			System:      true,
+			ID:           MarketLongTigerSyncTaskID,
+			Name:         "龙虎榜同步",
+			Type:         "system_sync",
+			Cron:         "0 0 18 * * 1-5",
+			Enabled:      true,
+			OnlyTradeDay: true,
+			PayloadJSON:  `{"scope":"market_info","kinds":["long-tiger"],"continue_on_error":true}`,
+			WebhookIDs:   "[]",
+			System:       true,
 		},
 		{
-			ID:          MarketHotMoneySyncTaskID,
-			Name:        "游资动向同步",
-			Type:        "system_sync",
-			Cron:        "0 5 18 * * 1-5",
-			Enabled:     true,
-			PayloadJSON: `{"scope":"market_info","kinds":["hot_money"],"max_codes":120,"continue_on_error":true}`,
-			WebhookIDs:  "[]",
-			System:      true,
+			ID:           MarketHotMoneySyncTaskID,
+			Name:         "游资动向同步",
+			Type:         "system_sync",
+			Cron:         "0 5 18 * * 1-5",
+			Enabled:      true,
+			OnlyTradeDay: true,
+			PayloadJSON:  `{"scope":"market_info","kinds":["hot_money"],"max_codes":120,"continue_on_error":true}`,
+			WebhookIDs:   "[]",
+			System:       true,
 		},
 		{
-			ID:          MarketResearchSyncTaskID,
-			Name:        "个股研报同步",
-			Type:        "system_sync",
-			Cron:        "0 10 18 * * 1-5",
-			Enabled:     true,
-			PayloadJSON: `{"scope":"market_info","kinds":["research"],"max_codes":120,"continue_on_error":true}`,
-			WebhookIDs:  "[]",
-			System:      true,
+			ID:           MarketResearchSyncTaskID,
+			Name:         "个股研报同步",
+			Type:         "system_sync",
+			Cron:         "0 10 18 * * 1-5",
+			Enabled:      true,
+			OnlyTradeDay: true,
+			PayloadJSON:  `{"scope":"market_info","kinds":["research"],"max_codes":120,"continue_on_error":true}`,
+			WebhookIDs:   "[]",
+			System:       true,
 		},
 		{
-			ID:          MarketNoticeSyncTaskID,
-			Name:        "公司公告同步",
-			Type:        "system_sync",
-			Cron:        "0 15 18 * * 1-5",
-			Enabled:     true,
-			PayloadJSON: `{"scope":"market_info","kinds":["notice"],"max_codes":120,"continue_on_error":true}`,
-			WebhookIDs:  "[]",
-			System:      true,
+			ID:           MarketNoticeSyncTaskID,
+			Name:         "公司公告同步",
+			Type:         "system_sync",
+			Cron:         "0 15 18 * * 1-5",
+			Enabled:      true,
+			OnlyTradeDay: true,
+			PayloadJSON:  `{"scope":"market_info","kinds":["notice"],"max_codes":120,"continue_on_error":true}`,
+			WebhookIDs:   "[]",
+			System:       true,
 		},
 		{
-			ID:          MarketIndustryResearchSyncTaskID,
-			Name:        "行业研究同步",
-			Type:        "system_sync",
-			Cron:        "0 20 18 * * 1-5",
-			Enabled:     true,
-			PayloadJSON: `{"scope":"market_industry_research","days":7,"limit":500,"continue_on_error":true}`,
-			WebhookIDs:  "[]",
-			System:      true,
+			ID:           MarketIndustryResearchSyncTaskID,
+			Name:         "行业研究同步",
+			Type:         "system_sync",
+			Cron:         "0 20 18 * * 1-5",
+			Enabled:      true,
+			OnlyTradeDay: true,
+			PayloadJSON:  `{"scope":"market_industry_research","days":7,"limit":500,"continue_on_error":true}`,
+			WebhookIDs:   "[]",
+			System:       true,
 		},
 	}
 }
@@ -1190,9 +1304,9 @@ func (s *AppStore) ensureMarketInfoAutomationTasks() error {
 	}
 	for _, task := range marketInfoAutomationTasks() {
 		if _, err := s.db.Exec(`INSERT OR IGNORE INTO automation_tasks
-			(id,name,type,cron,enabled,payload_json,webhook_ids,last_run_at,next_run_at,last_status,last_message,created_at,updated_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			task.ID, task.Name, task.Type, task.Cron, boolInt(task.Enabled), task.PayloadJSON, task.WebhookIDs,
+			(id,name,type,cron,enabled,only_trade_day,payload_json,webhook_ids,last_run_at,next_run_at,last_status,last_message,created_at,updated_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			task.ID, task.Name, task.Type, task.Cron, boolInt(task.Enabled), boolInt(task.OnlyTradeDay), task.PayloadJSON, task.WebhookIDs,
 			"", "", "", "", now, now); err != nil {
 			return err
 		}
@@ -1971,7 +2085,7 @@ func normalizeTask(t AutomationTask) AutomationTask {
 }
 
 func (s *AppStore) ListAutomationTasks() ([]AutomationTask, error) {
-	rows, err := s.db.Query(`SELECT id,name,type,cron,enabled,payload_json,webhook_ids,last_run_at,next_run_at,last_status,last_message,created_at,updated_at FROM automation_tasks ORDER BY updated_at DESC`)
+	rows, err := s.db.Query(`SELECT id,name,type,cron,enabled,only_trade_day,payload_json,webhook_ids,last_run_at,next_run_at,last_status,last_message,created_at,updated_at FROM automation_tasks ORDER BY updated_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -1981,10 +2095,12 @@ func (s *AppStore) ListAutomationTasks() ([]AutomationTask, error) {
 	for rows.Next() {
 		var t AutomationTask
 		var enabled int
-		if err := rows.Scan(&t.ID, &t.Name, &t.Type, &t.Cron, &enabled, &t.PayloadJSON, &t.WebhookIDs, &t.LastRunAt, &t.NextRunAt, &t.LastStatus, &t.LastMessage, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		var onlyTradeDay int
+		if err := rows.Scan(&t.ID, &t.Name, &t.Type, &t.Cron, &enabled, &onlyTradeDay, &t.PayloadJSON, &t.WebhookIDs, &t.LastRunAt, &t.NextRunAt, &t.LastStatus, &t.LastMessage, &t.CreatedAt, &t.UpdatedAt); err != nil {
 			return nil, err
 		}
 		t.Enabled = intBool(enabled)
+		t.OnlyTradeDay = intBool(onlyTradeDay)
 		t = decorateAutomationTask(t)
 		list = append(list, t)
 	}
@@ -1997,9 +2113,11 @@ func (s *AppStore) ListAutomationTasks() ([]AutomationTask, error) {
 func (s *AppStore) GetAutomationTask(id string) (AutomationTask, error) {
 	var t AutomationTask
 	var enabled int
-	err := s.db.QueryRow(`SELECT id,name,type,cron,enabled,payload_json,webhook_ids,last_run_at,next_run_at,last_status,last_message,created_at,updated_at FROM automation_tasks WHERE id=?`, id).
-		Scan(&t.ID, &t.Name, &t.Type, &t.Cron, &enabled, &t.PayloadJSON, &t.WebhookIDs, &t.LastRunAt, &t.NextRunAt, &t.LastStatus, &t.LastMessage, &t.CreatedAt, &t.UpdatedAt)
+	var onlyTradeDay int
+	err := s.db.QueryRow(`SELECT id,name,type,cron,enabled,only_trade_day,payload_json,webhook_ids,last_run_at,next_run_at,last_status,last_message,created_at,updated_at FROM automation_tasks WHERE id=?`, id).
+		Scan(&t.ID, &t.Name, &t.Type, &t.Cron, &enabled, &onlyTradeDay, &t.PayloadJSON, &t.WebhookIDs, &t.LastRunAt, &t.NextRunAt, &t.LastStatus, &t.LastMessage, &t.CreatedAt, &t.UpdatedAt)
 	t.Enabled = intBool(enabled)
+	t.OnlyTradeDay = intBool(onlyTradeDay)
 	return decorateAutomationTask(t), err
 }
 
@@ -2030,12 +2148,12 @@ func (s *AppStore) UpsertAutomationTask(t AutomationTask) (AutomationTask, error
 	t.UpdatedAt = now
 
 	_, err := s.db.Exec(`INSERT INTO automation_tasks
-		(id,name,type,cron,enabled,payload_json,webhook_ids,last_run_at,next_run_at,last_status,last_message,created_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+		(id,name,type,cron,enabled,only_trade_day,payload_json,webhook_ids,last_run_at,next_run_at,last_status,last_message,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
-			name=excluded.name,type=excluded.type,cron=excluded.cron,enabled=excluded.enabled,payload_json=excluded.payload_json,
+			name=excluded.name,type=excluded.type,cron=excluded.cron,enabled=excluded.enabled,only_trade_day=excluded.only_trade_day,payload_json=excluded.payload_json,
 			webhook_ids=excluded.webhook_ids,next_run_at=excluded.next_run_at,updated_at=excluded.updated_at`,
-		t.ID, t.Name, t.Type, t.Cron, boolInt(t.Enabled), t.PayloadJSON, t.WebhookIDs, t.LastRunAt, t.NextRunAt, t.LastStatus, t.LastMessage, t.CreatedAt, t.UpdatedAt)
+		t.ID, t.Name, t.Type, t.Cron, boolInt(t.Enabled), boolInt(t.OnlyTradeDay), t.PayloadJSON, t.WebhookIDs, t.LastRunAt, t.NextRunAt, t.LastStatus, t.LastMessage, t.CreatedAt, t.UpdatedAt)
 	return t, err
 }
 
@@ -2107,6 +2225,9 @@ func (s *AppStore) SaveSelectionResults(run AutomationRun, formula Formula, item
 	if _, err := tx.Exec(`DELETE FROM selection_results WHERE run_id=?`, run.ID); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(`DELETE FROM selection_result_tracking WHERE run_id=?`, run.ID); err != nil {
+		return err
+	}
 	for _, item := range items {
 		if item.ID == "" {
 			item.ID = uuid.NewString()
@@ -2122,14 +2243,16 @@ func (s *AppStore) SaveSelectionResults(run AutomationRun, formula Formula, item
 		if strings.TrimSpace(item.DetailJSON) == "" {
 			item.DetailJSON = "{}"
 		}
-		if strings.TrimSpace(item.TrackingJSON) == "" {
-			item.TrackingJSON = "{}"
-		}
 		if _, err := tx.Exec(`INSERT INTO selection_results
-			(id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,tracking_json,created_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-			item.ID, item.RunID, item.TaskID, item.TaskName, item.FormulaID, item.FormulaName, item.Symbol, item.Latest, item.DetailJSON, item.TrackingJSON, item.CreatedAt); err != nil {
+			(id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,created_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?)`,
+			item.ID, item.RunID, item.TaskID, item.TaskName, item.FormulaID, item.FormulaName, item.Symbol, item.Latest, item.DetailJSON, item.CreatedAt); err != nil {
 			return err
+		}
+		if item.Tracking != nil {
+			if err := syncSelectionResultTrackingTx(tx, item, *item.Tracking); err != nil {
+				return err
+			}
 		}
 	}
 	return tx.Commit()
@@ -2193,7 +2316,7 @@ func (s *AppStore) ListSelectionResults(taskID, formulaID, symbol string, onlyLa
 	if limit > 5000 {
 		limit = 5000
 	}
-	query := `SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,tracking_json,created_at FROM selection_results`
+	query := `SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,created_at FROM selection_results`
 	args := []interface{}{}
 	conds := []string{}
 	if taskID != "" {
@@ -2226,7 +2349,7 @@ func (s *AppStore) ListSelectionResults(taskID, formulaID, symbol string, onlyLa
 	var list []SelectionResult
 	for rows.Next() {
 		var item SelectionResult
-		if err := rows.Scan(&item.ID, &item.RunID, &item.TaskID, &item.TaskName, &item.FormulaID, &item.FormulaName, &item.Symbol, &item.Latest, &item.DetailJSON, &item.TrackingJSON, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.RunID, &item.TaskID, &item.TaskName, &item.FormulaID, &item.FormulaName, &item.Symbol, &item.Latest, &item.DetailJSON, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		list = append(list, item)
@@ -2234,7 +2357,12 @@ func (s *AppStore) ListSelectionResults(taskID, formulaID, symbol string, onlyLa
 	if list == nil {
 		list = []SelectionResult{}
 	}
-	return list, rows.Err()
+	queryErr := rows.Err()
+	_ = rows.Close()
+	if err := s.hydrateSelectionResultsTracking(list); err != nil {
+		return nil, err
+	}
+	return list, queryErr
 }
 
 // ListIncompleteSelectionTrackingResults returns every selection result whose
@@ -2254,19 +2382,20 @@ func (s *AppStore) ListIncompleteSelectionTrackingResults(horizons []int) ([]Sel
 		normalized = []int{3, 5, 10}
 	}
 
-	statusChecks := make([]string, 0, len(normalized))
+	structuredChecks := make([]string, 0, len(normalized))
+	for range normalized {
+		structuredChecks = append(structuredChecks, `NOT EXISTS (
+			SELECT 1 FROM selection_result_tracking AS tr
+			WHERE tr.selection_result_id=sr.id AND tr.horizon_days=? AND tr.status IN ('complete','unavailable')
+		)`)
+	}
 	args := make([]interface{}, 0, len(normalized))
 	for _, horizon := range normalized {
-		statusChecks = append(statusChecks, `COALESCE(json_extract(tracking_json, ?), '') NOT IN ('complete','unavailable')`)
-		args = append(args, fmt.Sprintf("$.horizons.d%d.status", horizon))
+		args = append(args, horizon)
 	}
-	query := `SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,tracking_json,created_at
-		FROM selection_results
-		WHERE CASE
-			WHEN TRIM(COALESCE(tracking_json,''))='' OR json_valid(tracking_json)=0 THEN 1
-			WHEN ` + strings.Join(statusChecks, " OR ") + ` THEN 1
-			ELSE 0
-		END=1
+	query := `SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,created_at
+		FROM selection_results AS sr
+		WHERE ` + strings.Join(structuredChecks, " OR ") + `
 		ORDER BY created_at ASC,id ASC`
 
 	rows, err := s.db.Query(query, args...)
@@ -2278,29 +2407,353 @@ func (s *AppStore) ListIncompleteSelectionTrackingResults(horizons []int) ([]Sel
 	list := make([]SelectionResult, 0)
 	for rows.Next() {
 		var item SelectionResult
-		if err := rows.Scan(&item.ID, &item.RunID, &item.TaskID, &item.TaskName, &item.FormulaID, &item.FormulaName, &item.Symbol, &item.Latest, &item.DetailJSON, &item.TrackingJSON, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.RunID, &item.TaskID, &item.TaskName, &item.FormulaID, &item.FormulaName, &item.Symbol, &item.Latest, &item.DetailJSON, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		list = append(list, item)
 	}
-	return list, rows.Err()
+	queryErr := rows.Err()
+	_ = rows.Close()
+	if err := s.hydrateSelectionResultsTracking(list); err != nil {
+		return nil, err
+	}
+	return list, queryErr
 }
 
 // UpdateSelectionTracking stores the deterministic forward-performance snapshot
 // separately from the original formula result, allowing it to be refreshed as
 // more trading days become available.
-func (s *AppStore) UpdateSelectionTracking(id, trackingJSON string) error {
+func (s *AppStore) UpdateSelectionTracking(id string, tracking SelectionTracking) error {
 	if strings.TrimSpace(id) == "" {
 		return errors.New("选股结果ID不能为空")
 	}
-	if strings.TrimSpace(trackingJSON) == "" {
-		trackingJSON = "{}"
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
 	}
-	if !json.Valid([]byte(trackingJSON)) {
-		return errors.New("tracking_json不是有效JSON")
+	defer tx.Rollback()
+	item, err := scanSelectionResultRow(tx.QueryRow(`SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,created_at FROM selection_results WHERE id=?`, id))
+	if err != nil {
+		return err
 	}
-	_, err := s.db.Exec(`UPDATE selection_results SET tracking_json=? WHERE id=?`, trackingJSON, id)
-	return err
+	if err := syncSelectionResultTrackingTx(tx, item, tracking); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+type selectionResultScanner interface {
+	Scan(dest ...interface{}) error
+}
+
+func scanSelectionResultRow(row selectionResultScanner) (SelectionResult, error) {
+	var item SelectionResult
+	err := row.Scan(&item.ID, &item.RunID, &item.TaskID, &item.TaskName, &item.FormulaID, &item.FormulaName, &item.Symbol, &item.Latest, &item.DetailJSON, &item.CreatedAt)
+	return item, err
+}
+
+func (s *AppStore) hydrateSelectionResultsTracking(items []SelectionResult) error {
+	if len(items) == 0 {
+		return nil
+	}
+	indexByID := make(map[string]int, len(items))
+	for index := range items {
+		indexByID[items[index].ID] = index
+	}
+	const batchSize = 400
+	for start := 0; start < len(items); start += batchSize {
+		end := min(start+batchSize, len(items))
+		placeholders := make([]string, end-start)
+		args := make([]interface{}, 0, end-start)
+		for index := start; index < end; index++ {
+			placeholders[index-start] = "?"
+			args = append(args, items[index].ID)
+		}
+		rows, err := s.db.Query(`SELECT selection_result_id,signal_date,base_date,base_price,base_price_from,
+			horizon_days,status,as_of_date,final_date,final_open,final_close,open_return,close_return,
+			max_gain,max_gain_date,max_gain_price,days_to_max_gain,max_drawdown,max_drawdown_date,max_drawdown_price,
+			days_to_max_drawdown,target_return,target_hit,target_hit_date,days_to_target_hit,drawdown_limit,
+			stop_loss_hit,stop_loss_hit_date,days_to_stop_loss,success,reason,updated_at
+			FROM selection_result_tracking
+			WHERE selection_result_id IN (`+strings.Join(placeholders, ",")+`)
+			ORDER BY selection_result_id,horizon_days`, args...)
+		if err != nil {
+			return err
+		}
+		trackingByID := map[string]*SelectionTracking{}
+		for rows.Next() {
+			var selectionResultID string
+			var record SelectionResultTracking
+			var targetHit, stopLossHit, success int
+			if err := rows.Scan(&selectionResultID, &record.SignalDate, &record.BaseDate, &record.BasePrice, &record.BasePriceFrom,
+				&record.HorizonDays, &record.Status, &record.AsOfDate, &record.FinalDate, &record.FinalOpen, &record.FinalClose,
+				&record.OpenReturn, &record.CloseReturn, &record.MaxGain, &record.MaxGainDate, &record.MaxGainPrice, &record.DaysToMaxGain,
+				&record.MaxDrawdown, &record.MaxDrawdownDate, &record.MaxDrawdownPrice, &record.DaysToMaxDrawdown,
+				&record.TargetReturn, &targetHit, &record.TargetHitDate, &record.DaysToTargetHit, &record.DrawdownLimit,
+				&stopLossHit, &record.StopLossHitDate, &record.DaysToStopLoss, &success, &record.Reason, &record.UpdatedAt); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			tracking := trackingByID[selectionResultID]
+			if tracking == nil {
+				tracking = &SelectionTracking{
+					Version: "2", SignalDate: record.SignalDate, BaseDate: record.BaseDate,
+					BasePrice: record.BasePrice, BasePriceFrom: record.BasePriceFrom,
+					TargetReturn: record.TargetReturn, DrawdownLimit: record.DrawdownLimit,
+					UpdatedAt: record.UpdatedAt, Horizons: map[string]SelectionHorizon{},
+				}
+				trackingByID[selectionResultID] = tracking
+			}
+			tracking.Horizons[horizonKey(record.HorizonDays)] = SelectionHorizon{
+				HorizonDays: record.HorizonDays, Status: record.Status, AsOfDate: record.AsOfDate,
+				FinalDate: record.FinalDate, FinalOpen: record.FinalOpen, FinalClose: record.FinalClose,
+				OpenReturn: record.OpenReturn, CloseReturn: record.CloseReturn,
+				MaxGain: record.MaxGain, MaxGainDate: record.MaxGainDate, MaxGainPrice: record.MaxGainPrice,
+				DaysToMaxGain: record.DaysToMaxGain, MaxDrawdown: record.MaxDrawdown,
+				MaxDrawdownDate: record.MaxDrawdownDate, MaxDrawdownPrice: record.MaxDrawdownPrice,
+				DaysToMaxDrawdown: record.DaysToMaxDrawdown, TargetReturn: record.TargetReturn,
+				TargetHit: intBool(targetHit), TargetHitDate: record.TargetHitDate, DaysToTargetHit: record.DaysToTargetHit,
+				DrawdownLimit: record.DrawdownLimit, StopLossHit: intBool(stopLossHit),
+				StopLossHitDate: record.StopLossHitDate, DaysToStopLoss: record.DaysToStopLoss,
+				Success: intBool(success), Reason: record.Reason,
+			}
+		}
+		queryErr := rows.Err()
+		_ = rows.Close()
+		if queryErr != nil {
+			return queryErr
+		}
+		for selectionResultID, tracking := range trackingByID {
+			if index, ok := indexByID[selectionResultID]; ok {
+				items[index].Tracking = tracking
+			}
+		}
+	}
+	return nil
+}
+
+func syncSelectionResultTrackingTx(tx *sql.Tx, item SelectionResult, tracking SelectionTracking) error {
+	if len(tracking.Horizons) == 0 {
+		_, err := tx.Exec(`DELETE FROM selection_result_tracking WHERE selection_result_id=?`, item.ID)
+		return err
+	}
+	seen := map[int]bool{}
+	for key, horizon := range tracking.Horizons {
+		if horizon.HorizonDays <= 0 {
+			horizon.HorizonDays = horizonDaysFromKey(key)
+		}
+		if horizon.HorizonDays <= 0 {
+			continue
+		}
+		seen[horizon.HorizonDays] = true
+		record := selectionResultTrackingFromHorizon(item, tracking, horizon)
+		if _, err := tx.Exec(`INSERT INTO selection_result_tracking
+			(id,selection_result_id,run_id,task_id,task_name,formula_id,formula_name,symbol,
+			 signal_date,base_date,base_price,base_price_from,horizon_days,status,as_of_date,final_date,final_open,final_close,
+			 open_return,close_return,max_gain,max_gain_date,max_gain_price,days_to_max_gain,
+			 max_drawdown,max_drawdown_date,max_drawdown_price,days_to_max_drawdown,
+			 target_return,target_hit,target_hit_date,days_to_target_hit,
+			 drawdown_limit,stop_loss_hit,stop_loss_hit_date,days_to_stop_loss,
+			 success,reason,created_at,updated_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			ON CONFLICT(selection_result_id,horizon_days) DO UPDATE SET
+				run_id=excluded.run_id,task_id=excluded.task_id,task_name=excluded.task_name,formula_id=excluded.formula_id,formula_name=excluded.formula_name,symbol=excluded.symbol,
+				signal_date=excluded.signal_date,base_date=excluded.base_date,base_price=excluded.base_price,base_price_from=excluded.base_price_from,status=excluded.status,
+				as_of_date=excluded.as_of_date,final_date=excluded.final_date,final_open=excluded.final_open,final_close=excluded.final_close,
+				open_return=excluded.open_return,close_return=excluded.close_return,max_gain=excluded.max_gain,max_gain_date=excluded.max_gain_date,max_gain_price=excluded.max_gain_price,days_to_max_gain=excluded.days_to_max_gain,
+				max_drawdown=excluded.max_drawdown,max_drawdown_date=excluded.max_drawdown_date,max_drawdown_price=excluded.max_drawdown_price,days_to_max_drawdown=excluded.days_to_max_drawdown,
+				target_return=excluded.target_return,target_hit=excluded.target_hit,target_hit_date=excluded.target_hit_date,days_to_target_hit=excluded.days_to_target_hit,
+				drawdown_limit=excluded.drawdown_limit,stop_loss_hit=excluded.stop_loss_hit,stop_loss_hit_date=excluded.stop_loss_hit_date,days_to_stop_loss=excluded.days_to_stop_loss,
+				success=excluded.success,reason=excluded.reason,updated_at=excluded.updated_at`,
+			record.ID, record.SelectionResultID, record.RunID, record.TaskID, record.TaskName, record.FormulaID, record.FormulaName, record.Symbol,
+			record.SignalDate, record.BaseDate, record.BasePrice, record.BasePriceFrom, record.HorizonDays, record.Status, record.AsOfDate, record.FinalDate, record.FinalOpen, record.FinalClose,
+			record.OpenReturn, record.CloseReturn, record.MaxGain, record.MaxGainDate, record.MaxGainPrice, record.DaysToMaxGain,
+			record.MaxDrawdown, record.MaxDrawdownDate, record.MaxDrawdownPrice, record.DaysToMaxDrawdown,
+			record.TargetReturn, boolInt(record.TargetHit), record.TargetHitDate, record.DaysToTargetHit,
+			record.DrawdownLimit, boolInt(record.StopLossHit), record.StopLossHitDate, record.DaysToStopLoss,
+			boolInt(record.Success), record.Reason, record.CreatedAt, record.UpdatedAt); err != nil {
+			return err
+		}
+	}
+	args := []interface{}{item.ID}
+	placeholders := make([]string, 0, len(seen))
+	for horizon := range seen {
+		placeholders = append(placeholders, "?")
+		args = append(args, horizon)
+	}
+	if len(placeholders) > 0 {
+		_, err := tx.Exec(`DELETE FROM selection_result_tracking WHERE selection_result_id=? AND horizon_days NOT IN (`+strings.Join(placeholders, ",")+`)`, args...)
+		return err
+	}
+	return nil
+}
+
+func horizonDaysFromKey(key string) int {
+	value := strings.TrimSpace(strings.ToLower(key))
+	value = strings.TrimPrefix(value, "d")
+	days, err := strconv.Atoi(value)
+	if err != nil {
+		return 0
+	}
+	return days
+}
+
+func selectionResultTrackingFromHorizon(item SelectionResult, tracking SelectionTracking, horizon SelectionHorizon) SelectionResultTracking {
+	updatedAt := tracking.UpdatedAt
+	if strings.TrimSpace(updatedAt) == "" {
+		updatedAt = NowText()
+	}
+	createdAt := item.CreatedAt
+	if strings.TrimSpace(createdAt) == "" {
+		createdAt = updatedAt
+	}
+	return SelectionResultTracking{
+		ID:                fmt.Sprintf("%s:d%d", item.ID, horizon.HorizonDays),
+		SelectionResultID: item.ID,
+		RunID:             item.RunID,
+		TaskID:            item.TaskID,
+		TaskName:          item.TaskName,
+		FormulaID:         item.FormulaID,
+		FormulaName:       item.FormulaName,
+		Symbol:            strings.ToUpper(strings.TrimSpace(item.Symbol)),
+		SignalDate:        tracking.SignalDate,
+		BaseDate:          tracking.BaseDate,
+		BasePrice:         tracking.BasePrice,
+		BasePriceFrom:     tracking.BasePriceFrom,
+		HorizonDays:       horizon.HorizonDays,
+		Status:            horizon.Status,
+		AsOfDate:          horizon.AsOfDate,
+		FinalDate:         horizon.FinalDate,
+		FinalOpen:         horizon.FinalOpen,
+		FinalClose:        horizon.FinalClose,
+		OpenReturn:        horizon.OpenReturn,
+		CloseReturn:       horizon.CloseReturn,
+		MaxGain:           horizon.MaxGain,
+		MaxGainDate:       horizon.MaxGainDate,
+		MaxGainPrice:      horizon.MaxGainPrice,
+		DaysToMaxGain:     horizon.DaysToMaxGain,
+		MaxDrawdown:       horizon.MaxDrawdown,
+		MaxDrawdownDate:   horizon.MaxDrawdownDate,
+		MaxDrawdownPrice:  horizon.MaxDrawdownPrice,
+		DaysToMaxDrawdown: horizon.DaysToMaxDrawdown,
+		TargetReturn:      horizon.TargetReturn,
+		TargetHit:         horizon.TargetHit,
+		TargetHitDate:     horizon.TargetHitDate,
+		DaysToTargetHit:   horizon.DaysToTargetHit,
+		DrawdownLimit:     horizon.DrawdownLimit,
+		StopLossHit:       horizon.StopLossHit,
+		StopLossHitDate:   horizon.StopLossHitDate,
+		DaysToStopLoss:    horizon.DaysToStopLoss,
+		Success:           horizon.Success,
+		Reason:            horizon.Reason,
+		CreatedAt:         createdAt,
+		UpdatedAt:         updatedAt,
+	}
+}
+
+func (s *AppStore) migrateLegacySelectionTracking() error {
+	hasLegacyColumn, err := s.tableHasColumn("selection_results", "tracking_json")
+	if err != nil {
+		return err
+	}
+	if !hasLegacyColumn {
+		return nil
+	}
+	if err := s.backfillLegacySelectionResultTracking(); err != nil {
+		return err
+	}
+	return s.dropSelectionResultsTrackingJSONColumn()
+}
+
+func (s *AppStore) backfillLegacySelectionResultTracking() error {
+	rows, err := s.db.Query(`SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,tracking_json,created_at
+		FROM selection_results
+		WHERE TRIM(COALESCE(tracking_json,''))<>'' AND TRIM(COALESCE(tracking_json,''))<>'{}' AND json_valid(tracking_json)=1
+			AND NOT EXISTS (
+				SELECT 1 FROM selection_result_tracking AS tr WHERE tr.selection_result_id=selection_results.id
+			)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type legacySelectionResult struct {
+		item         SelectionResult
+		trackingJSON string
+	}
+	items := make([]legacySelectionResult, 0)
+	for rows.Next() {
+		var item SelectionResult
+		var trackingJSON string
+		if err := rows.Scan(&item.ID, &item.RunID, &item.TaskID, &item.TaskName, &item.FormulaID, &item.FormulaName, &item.Symbol, &item.Latest, &item.DetailJSON, &trackingJSON, &item.CreatedAt); err != nil {
+			return err
+		}
+		items = append(items, legacySelectionResult{item: item, trackingJSON: trackingJSON})
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if len(items) == 0 {
+		return nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, item := range items {
+		var tracking SelectionTracking
+		if err := json.Unmarshal([]byte(item.trackingJSON), &tracking); err != nil {
+			return err
+		}
+		if err := syncSelectionResultTrackingTx(tx, item.item, tracking); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *AppStore) dropSelectionResultsTrackingJSONColumn() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stmts := []string{
+		`CREATE TABLE selection_results_new (
+			id TEXT PRIMARY KEY,
+			run_id TEXT NOT NULL,
+			task_id TEXT NOT NULL,
+			task_name TEXT NOT NULL,
+			formula_id TEXT NOT NULL,
+			formula_name TEXT NOT NULL,
+			symbol TEXT NOT NULL,
+			latest REAL NOT NULL DEFAULT 0,
+			detail_json TEXT NOT NULL DEFAULT '{}',
+			created_at TEXT NOT NULL
+		)`,
+		`INSERT INTO selection_results_new (id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,created_at)
+			SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,created_at FROM selection_results`,
+		`DROP TABLE selection_results`,
+		`ALTER TABLE selection_results_new RENAME TO selection_results`,
+		`CREATE INDEX IF NOT EXISTS idx_selection_results_created_at ON selection_results(created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_selection_results_run_created_at ON selection_results(run_id, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_selection_results_task_created_at ON selection_results(task_id, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_selection_results_formula_created_at ON selection_results(formula_id, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_selection_results_symbol_created_at ON selection_results(symbol, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_selection_results_symbol ON selection_results(symbol)`,
+		`CREATE INDEX IF NOT EXISTS idx_selection_results_formula ON selection_results(formula_id)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func normalizeWebhook(h Webhook) Webhook {

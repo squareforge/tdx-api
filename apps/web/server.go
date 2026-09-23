@@ -870,6 +870,9 @@ func registerMarketRoutes() {
 	http.HandleFunc("/api/kline-all/ths", handleGetKlineAllTHS)
 	http.HandleFunc("/api/workday", handleGetWorkday)
 	http.HandleFunc("/api/workday/range", handleGetWorkdayRange)
+	http.HandleFunc("/api/trade-calendar", handleTradeCalendarSummary)
+	http.HandleFunc("/api/trade-calendar/range", handleTradeCalendarRange)
+	http.HandleFunc("/api/trade-calendar/sync", handleTradeCalendarSync)
 	http.HandleFunc("/api/income", handleGetIncome)
 	http.HandleFunc("/api/call-auction", handleGetCallAuction)
 	http.HandleFunc("/api/gbbq", handleGetGbbq)
@@ -941,8 +944,11 @@ func registerWebRoutes() {
 	http.HandleFunc("/api/kline-all", marketAPIHandler(handleGetKlineAllTDX))
 	http.HandleFunc("/api/kline-all/tdx", marketAPIHandler(handleGetKlineAllTDX))
 	http.HandleFunc("/api/kline-all/ths", marketAPIHandler(handleGetKlineAllTHS))
-	http.HandleFunc("/api/workday", marketAPIHandler(handleGetWorkday))
-	http.HandleFunc("/api/workday/range", marketAPIHandler(handleGetWorkdayRange))
+	http.HandleFunc("/api/workday", handleGetWorkday)
+	http.HandleFunc("/api/workday/range", handleGetWorkdayRange)
+	http.HandleFunc("/api/trade-calendar", handleTradeCalendarSummary)
+	http.HandleFunc("/api/trade-calendar/range", handleTradeCalendarRange)
+	http.HandleFunc("/api/trade-calendar/sync", handleTradeCalendarSync)
 	http.HandleFunc("/api/income", marketAPIHandler(handleGetIncome))
 	http.HandleFunc("/api/call-auction", marketAPIHandler(handleGetCallAuction))
 	http.HandleFunc("/api/gbbq", marketAPIHandler(handleGetGbbq))
@@ -1031,6 +1037,7 @@ func registerWebRoutes() {
 	http.HandleFunc("/api/hqchart/history", handleHQChartHistory)
 	http.HandleFunc("/API/KLine3", handleHQChartMinuteCompat)
 	registerAIProxyRoutes()
+	startTradeCalendarScheduler()
 }
 
 func registerSelectionWorkerRoutes() {

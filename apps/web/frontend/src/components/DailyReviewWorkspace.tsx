@@ -57,22 +57,21 @@ function pct(value?: number) {
   return `${number >= 0 ? '+' : ''}${number.toFixed(2)}%`;
 }
 
-function horizonMetric(raw: string | undefined, horizon: number) {
-  return parseJSON<SelectionTracking>(raw, { horizons: {} }).horizons?.[`d${horizon}`];
+function horizonMetric(tracking: SelectionTracking | undefined, horizon: number) {
+  return tracking?.horizons?.[`d${horizon}`];
 }
 
-function horizonReturn(raw: string | undefined, horizon: number) {
-  const value = horizonMetric(raw, horizon);
+function horizonReturn(tracking: SelectionTracking | undefined, horizon: number) {
+  const value = horizonMetric(tracking, horizon);
   return value?.status === 'complete' && Number.isFinite(value.close_return) ? value.close_return : undefined;
 }
 
-function trackingCompleteness(raw?: string) {
-  const tracking = parseJSON<SelectionTracking>(raw, { horizons: {} });
-  return Object.values(tracking.horizons || {}).filter((item) => item.status === 'complete').length;
+function trackingCompleteness(tracking?: SelectionTracking) {
+  return Object.values(tracking?.horizons || {}).filter((item) => item.status === 'complete').length;
 }
 
-function horizonCell(raw: string | undefined, horizon: number) {
-  const value = horizonMetric(raw, horizon);
+function horizonCell(tracking: SelectionTracking | undefined, horizon: number) {
+  const value = horizonMetric(tracking, horizon);
   if (!value || value.status !== 'complete') return <Tag>待观察</Tag>;
   const change = Number(value.close_return);
   return <Tag color={change >= 0 ? 'error' : 'success'}>{pct(change)}</Tag>;
@@ -243,7 +242,7 @@ export function DailyReviewWorkspace() {
       if (signals.length === 0) return [];
       const strategyIDs = [...new Set(signals.map((signal) => signal.strategy_id))];
       const strategies = [...new Set(signals.map((signal) => signal.strategy_name))];
-      const bestTracking = signals.reduce((best, signal) => trackingCompleteness(signal.tracking_json) > trackingCompleteness(best) ? signal.tracking_json : best, signals[0]?.tracking_json || '');
+      const bestTracking = signals.reduce((best, signal) => trackingCompleteness(signal.tracking) > trackingCompleteness(best) ? signal.tracking : best, signals[0]?.tracking);
       const totalScore = signals.reduce((total, signal) => total + signal.score, 0);
       return [{
         ...stock,
@@ -253,7 +252,7 @@ export function DailyReviewWorkspace() {
         strategies,
         max_score: Math.max(...signals.map((signal) => signal.score)),
         average_score: totalScore / signals.length,
-        tracking_json: bestTracking,
+        tracking: bestTracking,
         signals
       }];
     }).sort((left, right) => right.signal_date.localeCompare(left.signal_date)
@@ -338,8 +337,8 @@ export function DailyReviewWorkspace() {
     { title: '信号价', dataIndex: 'latest', width: 88, sorter: (left: DailyReviewStock, right: DailyReviewStock) => left.latest - right.latest, render: (value: number) => value > 0 ? value.toFixed(2) : '--' },
     ...[3, 5, 10].map((days) => ({
       title: `D${days}`, key: `d${days}`, width: 92,
-      sorter: (left: DailyReviewStock, right: DailyReviewStock) => compareNullableNumber(horizonReturn(left.tracking_json, days), horizonReturn(right.tracking_json, days)),
-      render: (_: unknown, row: DailyReviewStock) => horizonCell(row.tracking_json, days)
+      sorter: (left: DailyReviewStock, right: DailyReviewStock) => compareNullableNumber(horizonReturn(left.tracking, days), horizonReturn(right.tracking, days)),
+      render: (_: unknown, row: DailyReviewStock) => horizonCell(row.tracking, days)
     })),
     { title: '状态', key: 'status', width: 88, filters: [{ text: '观察中', value: 'watch' }, { text: '已排除', value: 'exclude' }, { text: '待处理', value: '' }], onFilter: (value: boolean | React.Key, row: DailyReviewStock) => (row.status || '') === value, render: (_: unknown, row: DailyReviewStock) => { const meta = decisionMeta(row); return <Tag color={meta.color}>{meta.label}</Tag>; } },
     { title: '操作', key: 'actions', width: 142, fixed: 'right' as const, render: (_: unknown, row: DailyReviewStock) => <Space size={2} onClick={(event) => event.stopPropagation()}>

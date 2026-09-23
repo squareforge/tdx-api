@@ -767,11 +767,6 @@ func handleGetKlineAllTHS(w http.ResponseWriter, r *http.Request) {
 
 // 获取交易日信息
 func handleGetWorkday(w http.ResponseWriter, r *http.Request) {
-	if manager == nil || manager.Workday == nil {
-		errorResponse(w, "交易日模块未初始化")
-		return
-	}
-
 	dateParam := strings.TrimSpace(r.URL.Query().Get("date"))
 	countStr := strings.TrimSpace(r.URL.Query().Get("count"))
 
@@ -798,7 +793,11 @@ func handleGetWorkday(w http.ResponseWriter, r *http.Request) {
 		target = parsed
 	}
 
-	isWorkday := manager.Workday.Is(target)
+	isWorkday, err := isCalendarWorkday(target)
+	if err != nil {
+		errorResponse(w, "查询交易日失败: "+err.Error())
+		return
+	}
 
 	response := map[string]interface{}{
 		"date": map[string]string{
@@ -815,11 +814,6 @@ func handleGetWorkday(w http.ResponseWriter, r *http.Request) {
 
 // 获取指定范围内的交易日列表
 func handleGetWorkdayRange(w http.ResponseWriter, r *http.Request) {
-	if manager == nil || manager.Workday == nil {
-		errorResponse(w, "交易日模块未初始化")
-		return
-	}
-
 	startParam := strings.TrimSpace(r.URL.Query().Get("start"))
 	endParam := strings.TrimSpace(r.URL.Query().Get("end"))
 	if startParam == "" || endParam == "" {
@@ -842,27 +836,10 @@ func handleGetWorkdayRange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	list := make([]map[string]string, 0)
-	manager.Workday.Range(startDate, endDate.AddDate(0, 0, 1), func(t time.Time) bool {
-		list = append(list, map[string]string{
-			"iso":     t.Format("2006-01-02"),
-			"numeric": t.Format("20060102"),
-		})
-		return true
-	})
-
-	if len(list) == 0 {
-		if err := manager.Workday.Update(); err == nil {
-			manager.Workday.Range(startDate, endDate.AddDate(0, 0, 1), func(t time.Time) bool {
-				list = append(list, map[string]string{
-					"iso":     t.Format("2006-01-02"),
-					"numeric": t.Format("20060102"),
-				})
-				return true
-			})
-		} else {
-			log.Printf("刷新交易日失败: %v", err)
-		}
+	list, err := queryCalendarWorkdayRange(startDate, endDate)
+	if err != nil {
+		errorResponse(w, "查询交易日范围失败: "+err.Error())
+		return
 	}
 
 	successResponse(w, map[string]interface{}{
@@ -1065,16 +1042,14 @@ func parseWorkdayDate(value string) (time.Time, error) {
 
 func collectNeighborWorkdays(base time.Time, count int, step int) []map[string]string {
 	result := make([]map[string]string, 0, count)
-	if manager == nil || manager.Workday == nil {
-		return result
-	}
 	cursor := base
 	attempts := 0
 	maxAttempts := 366
 	for len(result) < count && attempts < maxAttempts {
 		attempts++
 		cursor = cursor.AddDate(0, 0, step)
-		if manager.Workday.Is(cursor) {
+		isWorkday, err := isCalendarWorkday(cursor)
+		if err == nil && isWorkday {
 			result = append(result, map[string]string{
 				"iso":     cursor.Format("2006-01-02"),
 				"numeric": cursor.Format("20060102"),

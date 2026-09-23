@@ -490,7 +490,7 @@ func handleAutomationTasks(w http.ResponseWriter, r *http.Request) {
 		}
 		successResponse(w, items)
 	case http.MethodPost:
-		var req AutomationTask
+		req := AutomationTask{OnlyTradeDay: true}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			errorResponse(w, "请求参数错误: "+err.Error())
 			return
@@ -549,93 +549,103 @@ func buildAutomationTemplate(name string) (AutomationTask, error) {
 	switch name {
 	case "morning_sync":
 		return AutomationTask{
-			Name:        "早盘基础数据同步",
-			Type:        "system_sync",
-			Cron:        "0 0 8 * * 1-5",
-			Enabled:     false,
-			PayloadJSON: `{"scope":"basic"}`,
-			WebhookIDs:  "[]",
+			Name:         "早盘基础数据同步",
+			Type:         "system_sync",
+			Cron:         "0 0 8 * * 1-5",
+			Enabled:      false,
+			OnlyTradeDay: true,
+			PayloadJSON:  `{"scope":"basic"}`,
+			WebhookIDs:   "[]",
 		}, nil
 	case "evening_kline":
 		return AutomationTask{
-			Name:        "晚盘日K同步",
-			Type:        "system_sync",
-			Cron:        "0 30 18 * * 1-5",
-			Enabled:     false,
-			PayloadJSON: `{"scope":"kline","tables":["day"],"limit":4}`,
-			WebhookIDs:  "[]",
+			Name:         "晚盘日K同步",
+			Type:         "system_sync",
+			Cron:         "0 30 18 * * 1-5",
+			Enabled:      false,
+			OnlyTradeDay: true,
+			PayloadJSON:  `{"scope":"kline","tables":["day"],"limit":4}`,
+			WebhookIDs:   "[]",
 		}, nil
 	case "evening_full":
 		return AutomationTask{
-			Name:        "晚盘完整数据同步",
-			Type:        "system_sync",
-			Cron:        "0 0 21 * * 1-5",
-			Enabled:     false,
-			PayloadJSON: `{"scope":"all","tables":["day"],"limit":4,"max_codes":200,"block_files":["gn","fg","zs","hy","block"],"with_index":true,"continue_on_error":true}`,
-			WebhookIDs:  "[]",
+			Name:         "晚盘完整数据同步",
+			Type:         "system_sync",
+			Cron:         "0 0 21 * * 1-5",
+			Enabled:      false,
+			OnlyTradeDay: true,
+			PayloadJSON:  `{"scope":"all","tables":["day"],"limit":4,"max_codes":200,"block_files":["gn","fg","zs","hy","block"],"with_index":true,"continue_on_error":true}`,
+			WebhookIDs:   "[]",
 		}, nil
 	case "selection_tracking":
 		return AutomationTask{
-			Name:        "选股结果跟踪评估",
-			Type:        "selection_tracking",
-			Cron:        "0 15 17 * * 1-5",
-			Enabled:     false,
-			PayloadJSON: `{"horizons":[3,5,10],"history_buffer":30,"target_return":3,"drawdown_limit":5,"continue_on_error":true}`,
-			WebhookIDs:  "[]",
+			Name:         "选股结果跟踪评估",
+			Type:         "selection_tracking",
+			Cron:         "0 15 17 * * 1-5",
+			Enabled:      false,
+			OnlyTradeDay: true,
+			PayloadJSON:  `{"horizons":[3,5,10],"history_buffer":30,"target_return":3,"drawdown_limit":5,"continue_on_error":true}`,
+			WebhookIDs:   "[]",
 		}, nil
 	case "strategy_execution":
 		return AutomationTask{
-			Name:        "策略执行",
-			Type:        "strategy_selection",
-			Cron:        "0 0 15 * * 1-5",
-			Enabled:     false,
-			PayloadJSON: `{"strategy_id":""}`,
-			WebhookIDs:  "[]",
+			Name:         "策略执行",
+			Type:         "strategy_selection",
+			Cron:         "0 0 15 * * 1-5",
+			Enabled:      false,
+			OnlyTradeDay: true,
+			PayloadJSON:  `{"strategy_id":""}`,
+			WebhookIDs:   "[]",
 		}, nil
 	case "market_long_tiger_sync":
 		return AutomationTask{
-			Name:        "龙虎榜同步",
-			Type:        "system_sync",
-			Cron:        "0 0 18 * * 1-5",
-			Enabled:     false,
-			PayloadJSON: `{"scope":"market_info","kinds":["long-tiger"],"continue_on_error":true}`,
-			WebhookIDs:  "[]",
+			Name:         "龙虎榜同步",
+			Type:         "system_sync",
+			Cron:         "0 0 18 * * 1-5",
+			Enabled:      false,
+			OnlyTradeDay: true,
+			PayloadJSON:  `{"scope":"market_info","kinds":["long-tiger"],"continue_on_error":true}`,
+			WebhookIDs:   "[]",
 		}, nil
 	case "market_hot_money_sync":
 		return AutomationTask{
-			Name:        "游资动向同步",
-			Type:        "system_sync",
-			Cron:        "0 5 18 * * 1-5",
-			Enabled:     false,
-			PayloadJSON: `{"scope":"market_info","kinds":["hot_money"],"max_codes":120,"continue_on_error":true}`,
-			WebhookIDs:  "[]",
+			Name:         "游资动向同步",
+			Type:         "system_sync",
+			Cron:         "0 5 18 * * 1-5",
+			Enabled:      false,
+			OnlyTradeDay: true,
+			PayloadJSON:  `{"scope":"market_info","kinds":["hot_money"],"max_codes":120,"continue_on_error":true}`,
+			WebhookIDs:   "[]",
 		}, nil
 	case "market_research_sync":
 		return AutomationTask{
-			Name:        "个股研报同步",
-			Type:        "system_sync",
-			Cron:        "0 10 18 * * 1-5",
-			Enabled:     false,
-			PayloadJSON: `{"scope":"market_info","kinds":["research"],"max_codes":120,"continue_on_error":true}`,
-			WebhookIDs:  "[]",
+			Name:         "个股研报同步",
+			Type:         "system_sync",
+			Cron:         "0 10 18 * * 1-5",
+			Enabled:      false,
+			OnlyTradeDay: true,
+			PayloadJSON:  `{"scope":"market_info","kinds":["research"],"max_codes":120,"continue_on_error":true}`,
+			WebhookIDs:   "[]",
 		}, nil
 	case "market_notice_sync":
 		return AutomationTask{
-			Name:        "公司公告同步",
-			Type:        "system_sync",
-			Cron:        "0 15 18 * * 1-5",
-			Enabled:     false,
-			PayloadJSON: `{"scope":"market_info","kinds":["notice"],"max_codes":120,"continue_on_error":true}`,
-			WebhookIDs:  "[]",
+			Name:         "公司公告同步",
+			Type:         "system_sync",
+			Cron:         "0 15 18 * * 1-5",
+			Enabled:      false,
+			OnlyTradeDay: true,
+			PayloadJSON:  `{"scope":"market_info","kinds":["notice"],"max_codes":120,"continue_on_error":true}`,
+			WebhookIDs:   "[]",
 		}, nil
 	case "market_industry_research_sync":
 		return AutomationTask{
-			Name:        "行业研究同步",
-			Type:        "system_sync",
-			Cron:        "0 20 18 * * 1-5",
-			Enabled:     false,
-			PayloadJSON: `{"scope":"market_industry_research","days":7,"limit":500,"continue_on_error":true}`,
-			WebhookIDs:  "[]",
+			Name:         "行业研究同步",
+			Type:         "system_sync",
+			Cron:         "0 20 18 * * 1-5",
+			Enabled:      false,
+			OnlyTradeDay: true,
+			PayloadJSON:  `{"scope":"market_industry_research","days":7,"limit":500,"continue_on_error":true}`,
+			WebhookIDs:   "[]",
 		}, nil
 	default:
 		return AutomationTask{}, fmt.Errorf("未知任务模板: %s", name)
@@ -715,7 +725,7 @@ func handleAutomationOperations(w http.ResponseWriter, r *http.Request) {
 			errorResponse(w, "固定任务只能开启或关闭，不能编辑")
 			return
 		}
-		var req AutomationTask
+		req := AutomationTask{OnlyTradeDay: true}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			errorResponse(w, "请求参数错误: "+err.Error())
 			return

@@ -22,9 +22,11 @@ func TestBuildDailyReviewAggregatesSystemStrategyBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tracking := `{"horizons":{"d3":{"status":"complete","close_return":4.2}}}`
+	tracking := &SelectionTracking{Horizons: map[string]SelectionHorizon{
+		"d3": {HorizonDays: 3, Status: "complete", CloseReturn: 4.2},
+	}}
 	if err := store.SaveSelectionResults(first, Formula{ID: "strategy:trend", Name: "趋势策略"}, []SelectionResult{
-		{Symbol: "000001", Latest: 10, DetailJSON: `{"score":80}`, TrackingJSON: tracking},
+		{Symbol: "000001", Latest: 10, DetailJSON: `{"score":80}`, Tracking: tracking},
 		{Symbol: "000002", Latest: 20, DetailJSON: `{"score":60}`},
 	}); err != nil {
 		t.Fatal(err)
@@ -61,8 +63,8 @@ func TestBuildDailyReviewAggregatesSystemStrategyBatch(t *testing.T) {
 	if len(review.Consensus) != 1 || review.Consensus[0].Symbol != "000001" || review.Consensus[0].StrategyCount != 2 {
 		t.Fatalf("unexpected consensus: %#v", review.Consensus)
 	}
-	if trackingCompleteness(review.Consensus[0].TrackingJSON) != 1 {
-		t.Fatalf("completed tracking was not retained: %s", review.Consensus[0].TrackingJSON)
+	if trackingCompleteness(review.Consensus[0].Tracking) != 1 {
+		t.Fatalf("completed tracking was not retained: %+v", review.Consensus[0].Tracking)
 	}
 	if review.Consensus[0].SignalDate != review.Date {
 		t.Fatalf("stock signal date = %q, want %q", review.Consensus[0].SignalDate, review.Date)
@@ -71,7 +73,9 @@ func TestBuildDailyReviewAggregatesSystemStrategyBatch(t *testing.T) {
 
 func TestBuildDailyStrategyAnalysisAggregatesDateRange(t *testing.T) {
 	store := newHistoricalBacktestTestStore(t)
-	tracking := `{"horizons":{"d5":{"status":"complete","close_return":4.2,"success":true}}}`
+	tracking := &SelectionTracking{Horizons: map[string]SelectionHorizon{
+		"d5": {HorizonDays: 5, Status: "complete", CloseReturn: 4.2, Success: true},
+	}}
 	createBatch := func(date string, items map[string][]SelectionResult) AutomationRun {
 		parent, err := store.CreateAutomationRun(AutomationTask{ID: SystemStrategyDailyBatchTaskID, Name: "系统策略日报", Type: "system_strategy_batch"})
 		if err != nil {
@@ -91,7 +95,7 @@ func TestBuildDailyStrategyAnalysisAggregatesDateRange(t *testing.T) {
 				t.Fatal(err)
 			}
 			for index := range signals {
-				signals[index].TrackingJSON = tracking
+				signals[index].Tracking = tracking
 				signals[index].CreatedAt = date + "T16:30:00+08:00"
 			}
 			if err := store.SaveSelectionResults(child, Formula{ID: "strategy:" + strategyID, Name: strategyID}, signals); err != nil {

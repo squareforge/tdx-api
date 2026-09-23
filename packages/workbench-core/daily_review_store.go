@@ -38,17 +38,17 @@ type DailyReviewStrategySummary struct {
 }
 
 type DailyReviewSignal struct {
-	ID           string  `json:"id"`
-	RunID        string  `json:"run_id"`
-	StrategyID   string  `json:"strategy_id"`
-	StrategyName string  `json:"strategy_name"`
-	SignalDate   string  `json:"signal_date"`
-	Symbol       string  `json:"symbol"`
-	Latest       float64 `json:"latest"`
-	Score        float64 `json:"score"`
-	DetailJSON   string  `json:"detail_json"`
-	TrackingJSON string  `json:"tracking_json"`
-	CreatedAt    string  `json:"created_at"`
+	ID           string             `json:"id"`
+	RunID        string             `json:"run_id"`
+	StrategyID   string             `json:"strategy_id"`
+	StrategyName string             `json:"strategy_name"`
+	SignalDate   string             `json:"signal_date"`
+	Symbol       string             `json:"symbol"`
+	Latest       float64            `json:"latest"`
+	Score        float64            `json:"score"`
+	DetailJSON   string             `json:"detail_json"`
+	Tracking     *SelectionTracking `json:"tracking,omitempty"`
+	CreatedAt    string             `json:"created_at"`
 }
 
 type DailyReviewStock struct {
@@ -60,7 +60,7 @@ type DailyReviewStock struct {
 	Strategies    []string            `json:"strategies"`
 	MaxScore      float64             `json:"max_score"`
 	AverageScore  float64             `json:"average_score"`
-	TrackingJSON  string              `json:"tracking_json"`
+	Tracking      *SelectionTracking  `json:"tracking,omitempty"`
 	Status        string              `json:"status"`
 	Watch         bool                `json:"watch"`
 	Excluded      bool                `json:"excluded"`
@@ -145,7 +145,7 @@ type DailyStrategyAnalysisData struct {
 type dailyAnalysisSignal struct {
 	date, symbol, strategyID string
 	score                    float64
-	tracking                 string
+	tracking                 *SelectionTracking
 }
 
 type dailyBatchResult struct {
@@ -273,7 +273,7 @@ func (s *AppStore) BuildDailyReview(date, batchID string, limit int) (DailyRevie
 		signal := DailyReviewSignal{
 			ID: item.ID, RunID: item.RunID, StrategyID: strategyIDsByRun[item.RunID], StrategyName: item.FormulaName,
 			SignalDate: selected.Date, Symbol: symbol, Latest: item.Latest, Score: selectionResultScore(item.DetailJSON),
-			DetailJSON: item.DetailJSON, TrackingJSON: item.TrackingJSON, CreatedAt: item.CreatedAt,
+			DetailJSON: item.DetailJSON, Tracking: item.Tracking, CreatedAt: item.CreatedAt,
 		}
 		signals = append(signals, signal)
 		stock := stockMap[symbol]
@@ -285,7 +285,7 @@ func (s *AppStore) BuildDailyReview(date, batchID string, limit int) (DailyRevie
 				status = "watch"
 			}
 			stock = &DailyReviewStock{
-				SignalDate: selected.Date, Symbol: symbol, Latest: item.Latest, MaxScore: signal.Score, TrackingJSON: item.TrackingJSON,
+				SignalDate: selected.Date, Symbol: symbol, Latest: item.Latest, MaxScore: signal.Score, Tracking: item.Tracking,
 				Status: status, Watch: watchSet[symbol], Excluded: excludeSet[symbol], Note: noteMap[symbol],
 				StrategyIDs: []string{}, Strategies: []string{}, Signals: []DailyReviewSignal{},
 			}
@@ -297,8 +297,8 @@ func (s *AppStore) BuildDailyReview(date, batchID string, limit int) (DailyRevie
 		if signal.Score > stock.MaxScore {
 			stock.MaxScore = signal.Score
 		}
-		if trackingCompleteness(item.TrackingJSON) > trackingCompleteness(stock.TrackingJSON) {
-			stock.TrackingJSON = item.TrackingJSON
+		if trackingCompleteness(item.Tracking) > trackingCompleteness(stock.Tracking) {
+			stock.Tracking = item.Tracking
 		}
 	}
 
@@ -442,10 +442,10 @@ func (s *AppStore) BuildDailyStrategyAnalysis(startDate, endDate string, days, l
 			reviewSignal := DailyReviewSignal{
 				ID: item.ID, RunID: item.RunID, StrategyID: strategyID, StrategyName: strategyName,
 				SignalDate: batch.Date, Symbol: symbol, Latest: item.Latest, Score: score,
-				DetailJSON: item.DetailJSON, TrackingJSON: item.TrackingJSON, CreatedAt: item.CreatedAt,
+				DetailJSON: item.DetailJSON, Tracking: item.Tracking, CreatedAt: item.CreatedAt,
 			}
 			reviewSignals = append(reviewSignals, reviewSignal)
-			s := dailyAnalysisSignal{date: batch.Date, symbol: symbol, strategyID: strategyID, score: score, tracking: item.TrackingJSON}
+			s := dailyAnalysisSignal{date: batch.Date, symbol: symbol, strategyID: strategyID, score: score, tracking: item.Tracking}
 			strategySignals[strategyID] = append(strategySignals[strategyID], s)
 			daySignals[batch.Date] = append(daySignals[batch.Date], s)
 		}
@@ -540,7 +540,7 @@ func buildDailyAnalysisStocks(signals []DailyReviewSignal, notes map[string]Deci
 			}
 			stock = &DailyReviewStock{
 				SignalDate: signal.SignalDate, Symbol: signal.Symbol, Latest: signal.Latest, MaxScore: signal.Score,
-				TrackingJSON: signal.TrackingJSON, Status: status, Watch: watch[signal.Symbol], Excluded: exclude[signal.Symbol],
+				Tracking: signal.Tracking, Status: status, Watch: watch[signal.Symbol], Excluded: exclude[signal.Symbol],
 				Note: notes[signal.Symbol], StrategyIDs: []string{}, Strategies: []string{}, Signals: []DailyReviewSignal{},
 			}
 			stockMap[key] = stock
@@ -551,8 +551,8 @@ func buildDailyAnalysisStocks(signals []DailyReviewSignal, notes map[string]Deci
 		if signal.Score > stock.MaxScore {
 			stock.MaxScore = signal.Score
 		}
-		if trackingCompleteness(signal.TrackingJSON) > trackingCompleteness(stock.TrackingJSON) {
-			stock.TrackingJSON = signal.TrackingJSON
+		if trackingCompleteness(signal.Tracking) > trackingCompleteness(stock.Tracking) {
+			stock.Tracking = signal.Tracking
 		}
 	}
 	stocks := make([]DailyReviewStock, 0, len(stockMap))
@@ -643,11 +643,10 @@ func aggregateTrackingStats(signals []dailyAnalysisSignal, key string) dailyTrac
 	total := 0.0
 	hasCompleted := false
 	for _, item := range signals {
-		var tracking SelectionTracking
-		if json.Unmarshal([]byte(item.tracking), &tracking) != nil {
+		if item.tracking == nil {
 			continue
 		}
-		horizon, ok := tracking.Horizons[key]
+		horizon, ok := item.tracking.Horizons[key]
 		if !ok || horizon.Status != "complete" {
 			continue
 		}
@@ -722,7 +721,7 @@ func (s *AppStore) ListSelectionResultsByRunIDs(runIDs []string, limit int) ([]S
 		args = append(args, runID)
 	}
 	args = append(args, limit)
-	rows, err := s.db.Query(`SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,tracking_json,created_at
+	rows, err := s.db.Query(`SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,created_at
 		FROM selection_results WHERE run_id IN (`+strings.Join(placeholders, ",")+`) ORDER BY created_at DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
@@ -731,12 +730,20 @@ func (s *AppStore) ListSelectionResultsByRunIDs(runIDs []string, limit int) ([]S
 	items := []SelectionResult{}
 	for rows.Next() {
 		var item SelectionResult
-		if err := rows.Scan(&item.ID, &item.RunID, &item.TaskID, &item.TaskName, &item.FormulaID, &item.FormulaName, &item.Symbol, &item.Latest, &item.DetailJSON, &item.TrackingJSON, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.RunID, &item.TaskID, &item.TaskName, &item.FormulaID, &item.FormulaName, &item.Symbol, &item.Latest, &item.DetailJSON, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
 	}
-	return items, rows.Err()
+	queryErr := rows.Err()
+	_ = rows.Close()
+	if queryErr != nil {
+		return nil, queryErr
+	}
+	if err := s.hydrateSelectionResultsTracking(items); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 func buildDailyStrategySummaries(parent AutomationRun, children []AutomationRun) []DailyReviewStrategySummary {
@@ -793,9 +800,8 @@ func selectionResultScore(detailJSON string) float64 {
 	return detail.Score
 }
 
-func trackingCompleteness(raw string) int {
-	var tracking SelectionTracking
-	if json.Unmarshal([]byte(raw), &tracking) != nil {
+func trackingCompleteness(tracking *SelectionTracking) int {
+	if tracking == nil {
 		return 0
 	}
 	count := 0

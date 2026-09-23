@@ -57,6 +57,10 @@ export function DataCenterWorkspace() {
   const [syncModalOpen, setSyncModalOpen] = useState(false);
   const [syncScope, setSyncScope] = useState<Record<string, boolean>>({ day: true, min: false, min5: false, finance: true, block: true, weight: true });
   const [syncTasks, setSyncTasks] = useState<Array<Record<string, unknown>>>([]);
+  const [calendarSummary, setCalendarSummary] = useState<Record<string, unknown>>({});
+  const [calendarRows, setCalendarRows] = useState<Array<Record<string, unknown>>>([]);
+  const [calendarOutput, setCalendarOutput] = useState<unknown>('尚未同步');
+  const [calendarLoading, setCalendarLoading] = useState(false);
   const syncingKeys = new Set(syncTasks.flatMap((task) => taskScopeKeys(task)));
   const syncingLabels = SYNC_SCOPE_ITEMS.filter((item) => syncingKeys.has(item.key)).map((item) => item.label);
 
@@ -97,6 +101,26 @@ export function DataCenterWorkspace() {
     loadOverview();
     loadDirectory();
   }, []);
+
+  const loadTradeCalendar = useCallback(async () => {
+    setCalendarLoading(true);
+    try {
+      const [summary, range] = await Promise.all([
+        apiFetch<Record<string, unknown>>('/api/trade-calendar'),
+        apiFetch<{ list?: Array<Record<string, unknown>> }>('/api/trade-calendar/range')
+      ]);
+      setCalendarSummary(summary);
+      setCalendarRows(range.list || []);
+    } catch (error) {
+      message.warning(error instanceof Error ? error.message : '交易日历加载失败');
+    } finally {
+      setCalendarLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadTradeCalendar();
+  }, [loadTradeCalendar]);
 
   async function loadProfile() {
     try {
@@ -189,6 +213,24 @@ export function DataCenterWorkspace() {
     }
     void refreshSyncTasks();
     void loadHikyuu('/api/hikyuu/tasks');
+  }
+
+  async function syncTradeCalendar(mode: 'future' | 'confirm' | 'all') {
+    setCalendarLoading(true);
+    try {
+      const result = await apiFetch('/api/trade-calendar/sync', {
+        method: 'POST',
+        body: JSON.stringify({ mode, years: 2 })
+      });
+      setCalendarOutput(result);
+      message.success(mode === 'future' ? '未来交易日历已同步' : mode === 'confirm' ? '交易日历已校验' : '交易日历同步完成');
+      await loadTradeCalendar();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '交易日历同步失败');
+      setCalendarOutput(error instanceof Error ? error.message : '交易日历同步失败');
+    } finally {
+      setCalendarLoading(false);
+    }
   }
 
   const refreshSyncTasks = useCallback(async () => {
@@ -308,6 +350,24 @@ export function DataCenterWorkspace() {
           );
         })}
         <JsonPane value={hikyuuStatus} />
+      </Card>
+
+      <Card className="work-card" title="交易日历" extra={<Button icon={<ReloadOutlined />} loading={calendarLoading} onClick={loadTradeCalendar}>刷新</Button>}>
+        <div className="metric-strip">
+          <Statistic title="日历范围" value={`${String(calendarSummary.start_date || '--')} ~ ${String(calendarSummary.end_date || '--')}`} />
+          <Statistic title="交易日" value={Number(calendarSummary.trade_days || 0)} />
+          <Statistic title="预测自然日" value={Number(calendarSummary.predicted_days || 0)} />
+          <Statistic title="确认自然日" value={Number(calendarSummary.confirmed_days || 0)} />
+        </div>
+        <Space wrap className="toolbar-row">
+          <Tag color="blue">下一交易日：{String(calendarSummary.next_trade_day || '--')}</Tag>
+          <Tag>确认至：{String(calendarSummary.confirmed_through || '--')}</Tag>
+          <Button type="primary" loading={calendarLoading} onClick={() => syncTradeCalendar('future')}>同步未来2年</Button>
+          <Button loading={calendarLoading} onClick={() => syncTradeCalendar('confirm')}>TDX校验</Button>
+          <Button loading={calendarLoading} onClick={() => syncTradeCalendar('all')}>一键同步</Button>
+        </Space>
+        <DynamicTable rows={calendarRows} scrollY={260} />
+        {!calendarRows.length ? <JsonPane value={calendarOutput} /> : null}
       </Card>
 
       <Card className="work-card" title="个股资料" extra={<Button icon={<SearchOutlined />} onClick={loadProfile}>查询</Button>}>

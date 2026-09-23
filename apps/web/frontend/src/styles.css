@@ -7232,6 +7232,10 @@ textarea::placeholder {
   color: var(--primary);
 }
 
+.automation-run-state.skipped {
+  color: var(--warning);
+}
+
 .automation-template-list {
   display: grid;
   gap: 7px;
@@ -7382,7 +7386,7 @@ textarea::placeholder {
 }
 
 .automation-form-grid-basic {
-  grid-template-columns: minmax(220px, 1.2fr) minmax(150px, 0.8fr) minmax(180px, 1fr) 130px;
+  grid-template-columns: minmax(220px, 1.2fr) minmax(150px, 0.8fr) minmax(180px, 1fr) 120px 130px;
 }
 
 .automation-form-grid-json,

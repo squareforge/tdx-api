@@ -32,7 +32,8 @@ FROM docker.1ms.run/library/alpine:latest
 
 # 替换Alpine镜像源为阿里云，安装必要的运行时依赖
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories && \
-    apk --no-cache add ca-certificates tzdata wget python3 py3-pip libstdc++
+    apk --no-cache add ca-certificates tzdata wget python3 py3-pip libstdc++ && \
+    PIP_BREAK_SYSTEM_PACKAGES=1 python3 -m pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple --trusted-host pypi.tuna.tsinghua.edu.cn pandas_market_calendars
 
 # 设置时区为上海
 ENV TZ=Asia/Shanghai
