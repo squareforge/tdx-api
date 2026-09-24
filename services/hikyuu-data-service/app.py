@@ -837,7 +837,13 @@ def create_task(task_type: str, request: SyncRequest) -> Dict[str, Any]:
 
 
 def scheduled_after_close_sync() -> None:
-    request = SyncRequest()
+    expected_date = datetime.now(TZ).date().isoformat()
+    request = SyncRequest(
+        expected_date=expected_date,
+        day_start_date=expected_date,
+        min_start_date=expected_date,
+        min5_start_date=expected_date,
+    )
     try:
         create_task("after_close_sync", request)
     except HTTPException:
@@ -1011,6 +1017,11 @@ def full_sync(request: SyncRequest = SyncRequest()) -> Dict[str, Any]:
 
 @app.post("/api/hikyuu/tasks/after-close-sync")
 def after_close_sync(request: SyncRequest = SyncRequest()) -> Dict[str, Any]:
+    if request.expected_date:
+        payload = request.model_dump()
+        for field in ("day_start_date", "min_start_date", "min5_start_date"):
+            payload[field] = payload[field] or request.expected_date
+        request = SyncRequest(**payload)
     task = create_task("after_close_sync", request)
     return {"code": 0, "message": "success", "data": task_snapshot(task)}
 
