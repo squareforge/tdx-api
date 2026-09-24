@@ -16,7 +16,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 WORKDIR /app
 
-RUN apt-get update && \
+# Use a domestic Debian mirror to keep ARM64 image builds reliable in China.
+RUN sed -i \
+        -e 's|deb.debian.org/debian-security|mirrors.aliyun.com/debian-security|g' \
+        -e 's|deb.debian.org/debian|mirrors.aliyun.com/debian|g' \
+        /etc/apt/sources.list.d/debian.sources && \
+    apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates tzdata wget libgomp1 libgl1 libglib2.0-0 && \
     rm -rf /var/lib/apt/lists/*
 
