@@ -90,3 +90,32 @@ func TestSelectionTrackingWebhookUsesUpdateCount(t *testing.T) {
 		t.Fatalf("message = %q", message)
 	}
 }
+
+func TestScheduledTradeDayHonorsTaskSwitch(t *testing.T) {
+	runner := &AutomationRunner{}
+	allowed, err := runner.gateScheduledTask(context.Background(), AutomationTask{OnlyTradeDay: false})
+	if err != nil || !allowed {
+		t.Fatalf("task with OnlyTradeDay=false should run without a calendar check: allowed=%v err=%v", allowed, err)
+	}
+
+	calls := 0
+	client, closeServer := newTestMarketClient(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/workday" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		calls++
+		writeMarketTestResponse(t, w, map[string]interface{}{"is_workday": false})
+	})
+	defer closeServer()
+	previous := marketClient
+	marketClient = client
+	t.Cleanup(func() { marketClient = previous })
+
+	isWorkday, err := runner.scheduledTradeDay(context.Background(), "2026-09-25")
+	if err != nil || isWorkday {
+		t.Fatalf("expected calendar to report a non-trading day: isWorkday=%v err=%v", isWorkday, err)
+	}
+	if calls != 1 {
+		t.Fatalf("calendar calls = %d, want 1 for OnlyTradeDay=true path", calls)
+	}
+}

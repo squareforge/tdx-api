@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"sort"
 	"strconv"
@@ -23,6 +24,13 @@ type systemStrategyBatchPlan struct {
 func (r *AutomationRunner) triggerSystemStrategyDailyBatch() {
 	task, err := r.store.GetAutomationTask(SystemStrategyDailyBatchTaskID)
 	if err != nil || !task.Enabled {
+		return
+	}
+	allowed, err := r.gateScheduledTask(context.Background(), task)
+	if err != nil || !allowed {
+		if err != nil {
+			log.Printf("系统策略日报交易日判断失败: %v", err)
+		}
 		return
 	}
 	today := time.Now().In(time.Local).Format("2006-01-02")

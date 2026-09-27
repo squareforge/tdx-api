@@ -185,17 +185,13 @@ func (r *AutomationRunner) Reload() error {
 		}
 		entryID, err := r.cron.AddFunc(task.Cron, func(taskID string) func() {
 			return func() {
-				if taskID == FixedSelectionTrackingTaskID {
-					r.triggerSelectionTrackingOncePerDay()
-					return
-				}
 				timeout := 20 * time.Minute
 				if taskID == FixedCloseSyncTaskID {
 					timeout = 2 * time.Hour
 				}
 				ctx, cancel := context.WithTimeout(context.Background(), timeout)
 				defer cancel()
-				if _, err := r.RunTask(ctx, taskID); err != nil {
+				if err := r.runScheduledTask(ctx, taskID); err != nil {
 					log.Printf("自动化任务执行失败: %s %v", taskID, err)
 				}
 			}
@@ -210,6 +206,80 @@ func (r *AutomationRunner) Reload() error {
 		}
 	}
 	return nil
+}
+
+// runScheduledTask applies the task's OnlyTradeDay setting before dispatching
+// a cron-triggered run. Manual RunTask calls intentionally bypass this gate.
+func (r *AutomationRunner) runScheduledTask(ctx context.Context, taskID string) error {
+	task, err := r.store.GetAutomationTask(taskID)
+	if err != nil {
+		return err
+	}
+	if taskID == FixedSelectionTrackingTaskID {
+		return r.triggerSelectionTrackingOncePerDay()
+	}
+	allowed, err := r.gateScheduledTask(ctx, task)
+	if err != nil || !allowed {
+		return err
+	}
+	_, err = r.runTask(ctx, task)
+	return err
+}
+
+func (r *AutomationRunner) gateScheduledTask(ctx context.Context, task AutomationTask) (bool, error) {
+	if !task.OnlyTradeDay {
+		return true, nil
+	}
+
+	today := time.Now().In(time.Local).Format("2006-01-02")
+	isWorkday, err := r.scheduledTradeDay(ctx, today)
+	if err != nil {
+		gateErr := fmt.Errorf("交易日判断失败: %w", err)
+		if recordErr := r.recordScheduledGateRun(task, "failed", gateErr.Error(), map[string]interface{}{
+			"skipped": false,
+			"reason":  "trade_day_check_failed",
+			"date":    today,
+		}); recordErr != nil {
+			return false, fmt.Errorf("%w；记录任务状态失败: %v", gateErr, recordErr)
+		}
+		return false, gateErr
+	}
+	if isWorkday {
+		return true, nil
+	}
+	if err := r.recordScheduledGateRun(task, "skipped", "非交易日，已跳过", map[string]interface{}{
+		"skipped": true,
+		"reason":  "non_trade_day",
+		"date":    today,
+	}); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+func (r *AutomationRunner) scheduledTradeDay(ctx context.Context, date string) (bool, error) {
+	if useMarketService() {
+		return marketClient.IsWorkday(ctx, date)
+	}
+	if manager != nil && manager.Workday != nil {
+		parsed, err := time.ParseInLocation("2006-01-02", date, time.Local)
+		if err != nil {
+			return false, err
+		}
+		return manager.Workday.Is(parsed), nil
+	}
+	return false, errors.New("交易日服务未配置")
+}
+
+func (r *AutomationRunner) recordScheduledGateRun(task AutomationTask, status, message string, result interface{}) error {
+	run, err := r.store.CreateAutomationRun(task)
+	if err != nil {
+		return err
+	}
+	if err := r.store.FinishAutomationRun(run.ID, status, message, mustJSON(result), 0); err != nil {
+		return err
+	}
+	return r.store.UpdateTaskRunState(task.ID, status, message)
 }
 
 func (r *AutomationRunner) RunTask(ctx context.Context, taskID string) (AutomationRun, error) {
@@ -337,6 +407,10 @@ func (r *AutomationRunner) triggerSelectionTrackingOncePerDay() error {
 			return err
 		}
 		return errors.New("验证选股表现任务未启用，已阻止系统策略日报")
+	}
+	allowed, err := r.gateScheduledTask(context.Background(), task)
+	if err != nil || !allowed {
+		return err
 	}
 	today := time.Now().In(time.Local).Format("2006-01-02")
 	runs, err := r.store.ListAutomationRuns(FixedSelectionTrackingTaskID, 20)
