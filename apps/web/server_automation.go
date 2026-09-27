@@ -871,6 +871,15 @@ func handleDailyReviewAnalysis(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, err.Error())
 		return
 	}
+	data.ReturnBasis = strings.TrimSpace(r.URL.Query().Get("basis"))
+	if data.ReturnBasis != "trade" {
+		data.ReturnBasis = "signal"
+	}
+	data.ExecutionPolicy = strings.TrimSpace(r.URL.Query().Get("execution_policy"))
+	if data.ExecutionPolicy == "" {
+		data.ExecutionPolicy = "none"
+	}
+	data.Benchmark = strings.TrimSpace(r.URL.Query().Get("benchmark"))
 	successResponse(w, data)
 }
 

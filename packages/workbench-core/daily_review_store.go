@@ -38,17 +38,25 @@ type DailyReviewStrategySummary struct {
 }
 
 type DailyReviewSignal struct {
-	ID           string             `json:"id"`
-	RunID        string             `json:"run_id"`
-	StrategyID   string             `json:"strategy_id"`
-	StrategyName string             `json:"strategy_name"`
-	SignalDate   string             `json:"signal_date"`
-	Symbol       string             `json:"symbol"`
-	Latest       float64            `json:"latest"`
-	Score        float64            `json:"score"`
-	DetailJSON   string             `json:"detail_json"`
-	Tracking     *SelectionTracking `json:"tracking,omitempty"`
-	CreatedAt    string             `json:"created_at"`
+	ID              string             `json:"id"`
+	RunID           string             `json:"run_id"`
+	StrategyID      string             `json:"strategy_id"`
+	StrategyName    string             `json:"strategy_name"`
+	SignalDate      string             `json:"signal_date"`
+	Symbol          string             `json:"symbol"`
+	Latest          float64            `json:"latest"`
+	SignalAt        string             `json:"signal_at,omitempty"`
+	SignalPrice     float64            `json:"signal_price,omitempty"`
+	QuoteAt         string             `json:"quote_at,omitempty"`
+	QuoteSource     string             `json:"quote_source,omitempty"`
+	PriceType       string             `json:"price_type,omitempty"`
+	QuoteAgeMS      int64              `json:"quote_age_ms,omitempty"`
+	SnapshotStatus  string             `json:"snapshot_status,omitempty"`
+	StrategyVersion string             `json:"strategy_version,omitempty"`
+	Score           float64            `json:"score"`
+	DetailJSON      string             `json:"detail_json"`
+	Tracking        *SelectionTracking `json:"tracking,omitempty"`
+	CreatedAt       string             `json:"created_at"`
 }
 
 type DailyReviewStock struct {
@@ -96,57 +104,76 @@ type DailyReviewData struct {
 }
 
 type DailyStrategyAnalysisMetric struct {
-	StrategyID          string  `json:"strategy_id"`
-	StrategyName        string  `json:"strategy_name"`
-	RunDays             int     `json:"run_days"`
-	SignalCount         int     `json:"signal_count"`
-	AverageDailySignals float64 `json:"average_daily_signals"`
-	UniqueSymbols       int     `json:"unique_symbols"`
-	AverageScore        float64 `json:"average_score"`
-	ConsensusSignals    int     `json:"consensus_signals"`
-	D1Completed         int     `json:"d1_completed"`
-	D1SuccessCount      int     `json:"d1_success_count"`
-	D1SuccessRate       float64 `json:"d1_success_rate"`
-	D1PositiveCount     int     `json:"d1_positive_count"`
-	D1PositiveRate      float64 `json:"d1_positive_rate"`
-	D1AverageReturn     float64 `json:"d1_average_return"`
-	D1MaxReturn         float64 `json:"d1_max_return"`
-	D3Completed         int     `json:"d3_completed"`
-	D3SuccessCount      int     `json:"d3_success_count"`
-	D3SuccessRate       float64 `json:"d3_success_rate"`
-	D3PositiveCount     int     `json:"d3_positive_count"`
-	D3PositiveRate      float64 `json:"d3_positive_rate"`
-	D3AverageReturn     float64 `json:"d3_average_return"`
-	D3MaxReturn         float64 `json:"d3_max_return"`
-	D5Completed         int     `json:"d5_completed"`
-	D5SuccessCount      int     `json:"d5_success_count"`
-	D5SuccessRate       float64 `json:"d5_success_rate"`
-	D5PositiveCount     int     `json:"d5_positive_count"`
-	D5PositiveRate      float64 `json:"d5_positive_rate"`
-	D5AverageReturn     float64 `json:"d5_average_return"`
-	D5MaxReturn         float64 `json:"d5_max_return"`
-	D10Completed        int     `json:"d10_completed"`
-	D10SuccessCount     int     `json:"d10_success_count"`
-	D10SuccessRate      float64 `json:"d10_success_rate"`
-	D10PositiveCount    int     `json:"d10_positive_count"`
-	D10PositiveRate     float64 `json:"d10_positive_rate"`
-	D10AverageReturn    float64 `json:"d10_average_return"`
-	D10MaxReturn        float64 `json:"d10_max_return"`
+	StrategyID          string                               `json:"strategy_id"`
+	StrategyName        string                               `json:"strategy_name"`
+	RunDays             int                                  `json:"run_days"`
+	SignalCount         int                                  `json:"signal_count"`
+	AverageDailySignals float64                              `json:"average_daily_signals"`
+	UniqueSymbols       int                                  `json:"unique_symbols"`
+	AverageScore        float64                              `json:"average_score"`
+	ConsensusSignals    int                                  `json:"consensus_signals"`
+	D1Completed         int                                  `json:"d1_completed"`
+	D1SuccessCount      int                                  `json:"d1_success_count"`
+	D1SuccessRate       float64                              `json:"d1_success_rate"`
+	D1PositiveCount     int                                  `json:"d1_positive_count"`
+	D1PositiveRate      float64                              `json:"d1_positive_rate"`
+	D1AverageReturn     float64                              `json:"d1_average_return"`
+	D1MaxReturn         float64                              `json:"d1_max_return"`
+	D3Completed         int                                  `json:"d3_completed"`
+	D3SuccessCount      int                                  `json:"d3_success_count"`
+	D3SuccessRate       float64                              `json:"d3_success_rate"`
+	D3PositiveCount     int                                  `json:"d3_positive_count"`
+	D3PositiveRate      float64                              `json:"d3_positive_rate"`
+	D3AverageReturn     float64                              `json:"d3_average_return"`
+	D3MaxReturn         float64                              `json:"d3_max_return"`
+	D5Completed         int                                  `json:"d5_completed"`
+	D5SuccessCount      int                                  `json:"d5_success_count"`
+	D5SuccessRate       float64                              `json:"d5_success_rate"`
+	D5PositiveCount     int                                  `json:"d5_positive_count"`
+	D5PositiveRate      float64                              `json:"d5_positive_rate"`
+	D5AverageReturn     float64                              `json:"d5_average_return"`
+	D5MaxReturn         float64                              `json:"d5_max_return"`
+	D10Completed        int                                  `json:"d10_completed"`
+	D10SuccessCount     int                                  `json:"d10_success_count"`
+	D10SuccessRate      float64                              `json:"d10_success_rate"`
+	D10PositiveCount    int                                  `json:"d10_positive_count"`
+	D10PositiveRate     float64                              `json:"d10_positive_rate"`
+	D10AverageReturn    float64                              `json:"d10_average_return"`
+	D10MaxReturn        float64                              `json:"d10_max_return"`
+	HorizonStats        map[string]DailyAnalysisHorizonStats `json:"horizon_stats"`
+}
+
+type DailyAnalysisHorizonStats struct {
+	Completed           int     `json:"completed"`
+	PositiveCount       int     `json:"positive_count"`
+	PositiveRate        float64 `json:"positive_rate"`
+	AverageReturn       float64 `json:"average_return"`
+	MedianReturn        float64 `json:"median_return"`
+	P25Return           float64 `json:"p25_return"`
+	P75Return           float64 `json:"p75_return"`
+	MaxReturn           float64 `json:"max_return"`
+	AverageMFE          float64 `json:"average_mfe"`
+	AverageMAE          float64 `json:"average_mae"`
+	AveragePathDrawdown float64 `json:"average_path_drawdown"`
+	CompleteRate        float64 `json:"complete_rate"`
 }
 
 type DailyStrategyAnalysisData struct {
-	StartDate      string                        `json:"start_date"`
-	EndDate        string                        `json:"end_date"`
-	TradingDays    int                           `json:"trading_days"`
-	StrategyCount  int                           `json:"strategy_count"`
-	SignalCount    int                           `json:"signal_count"`
-	UniqueSymbols  int                           `json:"unique_symbols"`
-	ConsensusCount int                           `json:"consensus_count"`
-	AverageScore   float64                       `json:"average_score"`
-	Strategies     []DailyStrategyAnalysisMetric `json:"strategies"`
-	Stocks         []DailyReviewStock            `json:"stocks"`
-	Signals        []DailyReviewSignal           `json:"signals"`
-	Consensus      []DailyReviewStock            `json:"consensus"`
+	StartDate       string                        `json:"start_date"`
+	EndDate         string                        `json:"end_date"`
+	TradingDays     int                           `json:"trading_days"`
+	StrategyCount   int                           `json:"strategy_count"`
+	SignalCount     int                           `json:"signal_count"`
+	UniqueSymbols   int                           `json:"unique_symbols"`
+	ConsensusCount  int                           `json:"consensus_count"`
+	AverageScore    float64                       `json:"average_score"`
+	ReturnBasis     string                        `json:"return_basis"`
+	ExecutionPolicy string                        `json:"execution_policy"`
+	Benchmark       string                        `json:"benchmark"`
+	Strategies      []DailyStrategyAnalysisMetric `json:"strategies"`
+	Stocks          []DailyReviewStock            `json:"stocks"`
+	Signals         []DailyReviewSignal           `json:"signals"`
+	Consensus       []DailyReviewStock            `json:"consensus"`
 }
 
 type dailyAnalysisSignal struct {
@@ -277,9 +304,12 @@ func (s *AppStore) BuildDailyReview(date, batchID string, limit int) (DailyRevie
 	stockMap := map[string]*DailyReviewStock{}
 	for _, item := range results {
 		symbol := strings.ToUpper(item.Symbol)
+		selectionPrice := effectiveSelectionPrice(item)
 		signal := DailyReviewSignal{
 			ID: item.ID, RunID: item.RunID, StrategyID: strategyIDsByRun[item.RunID], StrategyName: item.FormulaName,
-			SignalDate: selected.Date, Symbol: symbol, Latest: item.Latest, Score: selectionResultScore(item.DetailJSON),
+			SignalDate: selected.Date, Symbol: symbol, Latest: selectionPrice, SignalAt: item.SignalAt, SignalPrice: selectionPrice,
+			QuoteAt: item.QuoteAt, QuoteSource: item.QuoteSource, PriceType: item.PriceType, QuoteAgeMS: item.QuoteAgeMS,
+			SnapshotStatus: item.SnapshotStatus, StrategyVersion: item.StrategyVersion, Score: selectionResultScore(item.DetailJSON),
 			DetailJSON: item.DetailJSON, Tracking: item.Tracking, CreatedAt: item.CreatedAt,
 		}
 		signals = append(signals, signal)
@@ -292,7 +322,7 @@ func (s *AppStore) BuildDailyReview(date, batchID string, limit int) (DailyRevie
 				status = "watch"
 			}
 			stock = &DailyReviewStock{
-				SignalDate: selected.Date, Symbol: symbol, Latest: item.Latest, MaxScore: signal.Score, Tracking: item.Tracking,
+				SignalDate: selected.Date, Symbol: symbol, Latest: selectionPrice, MaxScore: signal.Score, Tracking: item.Tracking,
 				Status: status, Watch: watchSet[symbol], Excluded: excludeSet[symbol], Note: noteMap[symbol],
 				StrategyIDs: []string{}, Strategies: []string{}, Signals: []DailyReviewSignal{},
 			}
@@ -445,10 +475,13 @@ func (s *AppStore) BuildDailyStrategyAnalysis(startDate, endDate string, days, l
 			}
 			strategyNames[strategyID] = strategyName
 			symbol := strings.ToUpper(item.Symbol)
+			selectionPrice := effectiveSelectionPrice(item)
 			score := selectionResultScore(item.DetailJSON)
 			reviewSignal := DailyReviewSignal{
 				ID: item.ID, RunID: item.RunID, StrategyID: strategyID, StrategyName: strategyName,
-				SignalDate: batch.Date, Symbol: symbol, Latest: item.Latest, Score: score,
+				SignalDate: batch.Date, Symbol: symbol, Latest: selectionPrice, SignalAt: item.SignalAt, SignalPrice: selectionPrice,
+				QuoteAt: item.QuoteAt, QuoteSource: item.QuoteSource, PriceType: item.PriceType, QuoteAgeMS: item.QuoteAgeMS,
+				SnapshotStatus: item.SnapshotStatus, StrategyVersion: item.StrategyVersion, Score: score,
 				DetailJSON: item.DetailJSON, Tracking: item.Tracking, CreatedAt: item.CreatedAt,
 			}
 			reviewSignals = append(reviewSignals, reviewSignal)
@@ -478,7 +511,7 @@ func (s *AppStore) BuildDailyStrategyAnalysis(startDate, endDate string, days, l
 	var totalScore float64
 	for strategyID, strategyName := range strategyNames {
 		signals := strategySignals[strategyID]
-		metric := DailyStrategyAnalysisMetric{StrategyID: strategyID, StrategyName: strategyName, RunDays: len(strategyDays[strategyID]), SignalCount: len(signals), UniqueSymbols: 0}
+		metric := DailyStrategyAnalysisMetric{StrategyID: strategyID, StrategyName: strategyName, RunDays: len(strategyDays[strategyID]), SignalCount: len(signals), UniqueSymbols: 0, HorizonStats: map[string]DailyAnalysisHorizonStats{}}
 		symbols := map[string]bool{}
 		for _, item := range signals {
 			symbols[item.symbol] = true
@@ -489,15 +522,23 @@ func (s *AppStore) BuildDailyStrategyAnalysis(startDate, endDate string, days, l
 		metric.AverageScore = roundDailyFloat(averageSignalScore(signals))
 		metric.ConsensusSignals = strategyConsensusCount(signals, daySignals)
 		d1 := aggregateTrackingStats(signals, "d1")
+		metric.HorizonStats["d1"] = d1.toPublic()
+		metric.HorizonStats["d1"] = withCompleteRate(metric.HorizonStats["d1"], len(signals))
 		metric.D1Completed, metric.D1SuccessCount, metric.D1SuccessRate = d1.completed, d1.successCount, d1.successRate
 		metric.D1PositiveCount, metric.D1PositiveRate, metric.D1AverageReturn, metric.D1MaxReturn = d1.positiveCount, d1.positiveRate, d1.averageReturn, d1.maxReturn
 		d3 := aggregateTrackingStats(signals, "d3")
+		metric.HorizonStats["d3"] = d3.toPublic()
+		metric.HorizonStats["d3"] = withCompleteRate(metric.HorizonStats["d3"], len(signals))
 		metric.D3Completed, metric.D3SuccessCount, metric.D3SuccessRate = d3.completed, d3.successCount, d3.successRate
 		metric.D3PositiveCount, metric.D3PositiveRate, metric.D3AverageReturn, metric.D3MaxReturn = d3.positiveCount, d3.positiveRate, d3.averageReturn, d3.maxReturn
 		d5 := aggregateTrackingStats(signals, "d5")
+		metric.HorizonStats["d5"] = d5.toPublic()
+		metric.HorizonStats["d5"] = withCompleteRate(metric.HorizonStats["d5"], len(signals))
 		metric.D5Completed, metric.D5SuccessCount, metric.D5SuccessRate = d5.completed, d5.successCount, d5.successRate
 		metric.D5PositiveCount, metric.D5PositiveRate, metric.D5AverageReturn, metric.D5MaxReturn = d5.positiveCount, d5.positiveRate, d5.averageReturn, d5.maxReturn
 		d10 := aggregateTrackingStats(signals, "d10")
+		metric.HorizonStats["d10"] = d10.toPublic()
+		metric.HorizonStats["d10"] = withCompleteRate(metric.HorizonStats["d10"], len(signals))
 		metric.D10Completed, metric.D10SuccessCount, metric.D10SuccessRate = d10.completed, d10.successCount, d10.successRate
 		metric.D10PositiveCount, metric.D10PositiveRate, metric.D10AverageReturn, metric.D10MaxReturn = d10.positiveCount, d10.positiveRate, d10.averageReturn, d10.maxReturn
 		metrics = append(metrics, metric)
@@ -603,6 +644,13 @@ func ensureBoolSet(value map[string]bool) map[string]bool {
 	}
 	return value
 }
+
+func effectiveSelectionPrice(item SelectionResult) float64 {
+	if item.SignalPrice > 0 {
+		return item.SignalPrice
+	}
+	return item.Latest
+}
 func maxInt(a, b int) int {
 	if a > b {
 		return a
@@ -643,14 +691,18 @@ func strategyConsensusCount(signals []dailyAnalysisSignal, days map[string][]dai
 }
 
 type dailyTrackingStats struct {
-	completed, successCount, positiveCount int
-	successRate, positiveRate              float64
-	averageReturn, maxReturn               float64
+	completed, successCount, positiveCount      int
+	successRate, positiveRate                   float64
+	averageReturn, maxReturn                    float64
+	medianReturn, p25Return, p75Return          float64
+	averageMFE, averageMAE, averagePathDrawdown float64
 }
 
 func aggregateTrackingStats(signals []dailyAnalysisSignal, key string) dailyTrackingStats {
 	stats := dailyTrackingStats{}
 	total := 0.0
+	returns := []float64{}
+	mfeTotal, maeTotal, pathDrawdownTotal := 0.0, 0.0, 0.0
 	hasCompleted := false
 	for _, item := range signals {
 		if item.tracking == nil {
@@ -662,6 +714,10 @@ func aggregateTrackingStats(signals []dailyAnalysisSignal, key string) dailyTrac
 		}
 		stats.completed++
 		total += horizon.CloseReturn
+		returns = append(returns, horizon.CloseReturn)
+		mfeTotal += horizon.MFE
+		maeTotal += horizon.MAE
+		pathDrawdownTotal += horizon.MaxPathDrawdown
 		if !hasCompleted || horizon.CloseReturn > stats.maxReturn {
 			stats.maxReturn = horizon.CloseReturn
 			hasCompleted = true
@@ -680,7 +736,50 @@ func aggregateTrackingStats(signals []dailyAnalysisSignal, key string) dailyTrac
 	stats.positiveRate = roundDailyFloat(float64(stats.positiveCount) / float64(stats.completed) * 100)
 	stats.averageReturn = roundDailyFloat(total / float64(stats.completed))
 	stats.maxReturn = roundDailyFloat(stats.maxReturn)
+	sort.Float64s(returns)
+	stats.p25Return = roundDailyFloat(percentileDaily(returns, 0.25))
+	stats.medianReturn = roundDailyFloat(percentileDaily(returns, 0.50))
+	stats.p75Return = roundDailyFloat(percentileDaily(returns, 0.75))
+	stats.averageMFE = roundDailyFloat(mfeTotal / float64(stats.completed))
+	stats.averageMAE = roundDailyFloat(maeTotal / float64(stats.completed))
+	stats.averagePathDrawdown = roundDailyFloat(pathDrawdownTotal / float64(stats.completed))
 	return stats
+}
+
+func (stats dailyTrackingStats) toPublic() DailyAnalysisHorizonStats {
+	return DailyAnalysisHorizonStats{
+		Completed: stats.completed, PositiveCount: stats.positiveCount, PositiveRate: stats.positiveRate,
+		AverageReturn: stats.averageReturn, MedianReturn: stats.medianReturn, P25Return: stats.p25Return, P75Return: stats.p75Return,
+		MaxReturn: stats.maxReturn, AverageMFE: stats.averageMFE, AverageMAE: stats.averageMAE,
+		AveragePathDrawdown: stats.averagePathDrawdown,
+	}
+}
+
+func withCompleteRate(stats DailyAnalysisHorizonStats, total int) DailyAnalysisHorizonStats {
+	if total > 0 {
+		stats.CompleteRate = roundDailyFloat(float64(stats.Completed) / float64(total) * 100)
+	}
+	return stats
+}
+
+func percentileDaily(values []float64, ratio float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	if ratio <= 0 {
+		return values[0]
+	}
+	if ratio >= 1 {
+		return values[len(values)-1]
+	}
+	position := ratio * float64(len(values)-1)
+	low := int(position)
+	high := low + 1
+	if high >= len(values) {
+		return values[low]
+	}
+	weight := position - float64(low)
+	return values[low]*(1-weight) + values[high]*weight
 }
 
 func (s *AppStore) ListAutomationChildRuns(parent AutomationRun) ([]AutomationRun, error) {
@@ -731,7 +830,9 @@ func (s *AppStore) ListSelectionResultsByRunIDs(runIDs []string, limit int) ([]S
 		args = append(args, runID)
 	}
 	args = append(args, limit)
-	rows, err := s.db.Query(`SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,created_at
+	rows, err := s.db.Query(`SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,
+		signal_at,signal_price,quote_at,quote_source,price_type,quote_age_ms,signal_score,strategy_version,market_context_json,snapshot_status,
+		detail_json,created_at
 		FROM selection_results WHERE run_id IN (`+strings.Join(placeholders, ",")+`) ORDER BY created_at DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
@@ -740,7 +841,7 @@ func (s *AppStore) ListSelectionResultsByRunIDs(runIDs []string, limit int) ([]S
 	items := []SelectionResult{}
 	for rows.Next() {
 		var item SelectionResult
-		if err := rows.Scan(&item.ID, &item.RunID, &item.TaskID, &item.TaskName, &item.FormulaID, &item.FormulaName, &item.Symbol, &item.Latest, &item.DetailJSON, &item.CreatedAt); err != nil {
+		if err := scanSelectionResult(&item, rows); err != nil {
 			return nil, err
 		}
 		items = append(items, item)

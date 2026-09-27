@@ -25,32 +25,49 @@ type TrackingBar struct {
 }
 
 type SelectionHorizon struct {
-	HorizonDays       int     `json:"horizon_days"`
-	Status            string  `json:"status"` // pending / complete / unavailable
-	AsOfDate          int     `json:"as_of_date,omitempty"`
-	FinalDate         int     `json:"final_date,omitempty"`
-	FinalOpen         float64 `json:"final_open,omitempty"`
-	FinalClose        float64 `json:"final_close,omitempty"`
-	OpenReturn        float64 `json:"open_return,omitempty"`
-	CloseReturn       float64 `json:"close_return,omitempty"`
-	MaxGain           float64 `json:"max_gain,omitempty"`
-	MaxGainDate       int     `json:"max_gain_date,omitempty"`
-	MaxGainPrice      float64 `json:"max_gain_price,omitempty"`
-	DaysToMaxGain     int     `json:"days_to_max_gain,omitempty"`
-	MaxDrawdown       float64 `json:"max_drawdown,omitempty"`
-	MaxDrawdownDate   int     `json:"max_drawdown_date,omitempty"`
-	MaxDrawdownPrice  float64 `json:"max_drawdown_price,omitempty"`
-	DaysToMaxDrawdown int     `json:"days_to_max_drawdown,omitempty"`
-	TargetReturn      float64 `json:"target_return"`
-	TargetHit         bool    `json:"target_hit"`
-	TargetHitDate     int     `json:"target_hit_date,omitempty"`
-	DaysToTargetHit   int     `json:"days_to_target_hit,omitempty"`
-	DrawdownLimit     float64 `json:"drawdown_limit"`
-	StopLossHit       bool    `json:"stop_loss_hit"`
-	StopLossHitDate   int     `json:"stop_loss_hit_date,omitempty"`
-	DaysToStopLoss    int     `json:"days_to_stop_loss,omitempty"`
-	Success           bool    `json:"success"`
-	Reason            string  `json:"reason,omitempty"`
+	HorizonDays          int     `json:"horizon_days"`
+	Status               string  `json:"status"` // pending / complete / unavailable
+	AsOfDate             int     `json:"as_of_date,omitempty"`
+	FinalDate            int     `json:"final_date,omitempty"`
+	FinalOpen            float64 `json:"final_open,omitempty"`
+	FinalClose           float64 `json:"final_close,omitempty"`
+	FinalHigh            float64 `json:"final_high,omitempty"`
+	FinalLow             float64 `json:"final_low,omitempty"`
+	AverageClose         float64 `json:"average_close,omitempty"`
+	AverageCloseReturn   float64 `json:"average_close_return,omitempty"`
+	OpenReturn           float64 `json:"open_return,omitempty"`
+	CloseReturn          float64 `json:"close_return,omitempty"`
+	HighReturn           float64 `json:"high_return,omitempty"`
+	LowReturn            float64 `json:"low_return,omitempty"`
+	MFE                  float64 `json:"mfe,omitempty"`
+	MAE                  float64 `json:"mae,omitempty"`
+	MaxPathDrawdown      float64 `json:"max_path_drawdown,omitempty"`
+	BenchmarkCloseReturn float64 `json:"benchmark_close_return,omitempty"`
+	ExcessCloseReturn    float64 `json:"excess_close_return,omitempty"`
+	GrossReturn          float64 `json:"gross_return,omitempty"`
+	NetReturn            float64 `json:"net_return,omitempty"`
+	TotalCost            float64 `json:"total_cost,omitempty"`
+	FirstEvent           string  `json:"first_event,omitempty"`
+	CalculationVersion   string  `json:"calculation_version,omitempty"`
+	DataQuality          string  `json:"data_quality,omitempty"`
+	MaxGain              float64 `json:"max_gain,omitempty"`
+	MaxGainDate          int     `json:"max_gain_date,omitempty"`
+	MaxGainPrice         float64 `json:"max_gain_price,omitempty"`
+	DaysToMaxGain        int     `json:"days_to_max_gain,omitempty"`
+	MaxDrawdown          float64 `json:"max_drawdown,omitempty"`
+	MaxDrawdownDate      int     `json:"max_drawdown_date,omitempty"`
+	MaxDrawdownPrice     float64 `json:"max_drawdown_price,omitempty"`
+	DaysToMaxDrawdown    int     `json:"days_to_max_drawdown,omitempty"`
+	TargetReturn         float64 `json:"target_return"`
+	TargetHit            bool    `json:"target_hit"`
+	TargetHitDate        int     `json:"target_hit_date,omitempty"`
+	DaysToTargetHit      int     `json:"days_to_target_hit,omitempty"`
+	DrawdownLimit        float64 `json:"drawdown_limit"`
+	StopLossHit          bool    `json:"stop_loss_hit"`
+	StopLossHitDate      int     `json:"stop_loss_hit_date,omitempty"`
+	DaysToStopLoss       int     `json:"days_to_stop_loss,omitempty"`
+	Success              bool    `json:"success"`
+	Reason               string  `json:"reason,omitempty"`
 }
 
 type SelectionTracking struct {
@@ -224,7 +241,7 @@ func EvaluateSelectionTracking(item SelectionResult, bars []TrackingBar, horizon
 	}
 
 	for _, horizon := range horizons {
-		result := SelectionHorizon{HorizonDays: horizon, TargetReturn: targetReturn, DrawdownLimit: drawdownLimit}
+		result := SelectionHorizon{HorizonDays: horizon, TargetReturn: targetReturn, DrawdownLimit: drawdownLimit, CalculationVersion: "tracking-v3", DataQuality: "complete", FirstEvent: "none"}
 		if horizon <= 0 {
 			result.Status = "unavailable"
 			result.Reason = "观察窗口必须大于0"
@@ -251,10 +268,22 @@ func EvaluateSelectionTracking(item SelectionResult, bars []TrackingBar, horizon
 		result.FinalDate = finalBar.Date
 		result.FinalOpen = finalBar.Open
 		result.FinalClose = finalBar.Close
+		result.FinalHigh = finalBar.High
+		result.FinalLow = finalBar.Low
+		closeTotal := 0.0
+		for _, bar := range window {
+			closeTotal += bar.Close
+		}
+		result.AverageClose = roundTrackingPrice(closeTotal / float64(len(window)))
+		result.AverageCloseReturn = roundTrackingPercent(pctTracking(result.AverageClose, tracking.BasePrice))
 		result.OpenReturn = roundTrackingPercent(pctTracking(finalBar.Open, tracking.BasePrice))
 		result.CloseReturn = roundTrackingPercent(pctTracking(finalBar.Close, tracking.BasePrice))
+		result.HighReturn = roundTrackingPercent(pctTracking(finalBar.High, tracking.BasePrice))
+		result.LowReturn = roundTrackingPercent(pctTracking(finalBar.Low, tracking.BasePrice))
 		maxGain := math.Inf(-1)
 		maxDrawdown := math.Inf(1)
+		maxPathDrawdown := 0.0
+		peakPrice := tracking.BasePrice
 		for index, bar := range window {
 			if gain := pctTracking(bar.High, tracking.BasePrice); gain > maxGain {
 				maxGain = gain
@@ -267,6 +296,15 @@ func EvaluateSelectionTracking(item SelectionResult, bars []TrackingBar, horizon
 				result.MaxDrawdownDate = bar.Date
 				result.MaxDrawdownPrice = bar.Low
 				result.DaysToMaxDrawdown = index + 1
+			}
+			if bar.High > peakPrice {
+				peakPrice = bar.High
+			}
+			if peakPrice > 0 {
+				pathDrawdown := pctTracking(bar.Low, peakPrice)
+				if pathDrawdown < maxPathDrawdown {
+					maxPathDrawdown = pathDrawdown
+				}
 			}
 			if !result.TargetHit && pctTracking(bar.High, tracking.BasePrice) >= targetReturn {
 				result.TargetHit = true
@@ -281,8 +319,25 @@ func EvaluateSelectionTracking(item SelectionResult, bars []TrackingBar, horizon
 		}
 		result.MaxGain = roundTrackingPercent(maxGain)
 		result.MaxDrawdown = roundTrackingPercent(maxDrawdown)
+		result.MFE = result.MaxGain
+		result.MAE = result.MaxDrawdown
+		result.MaxPathDrawdown = roundTrackingPercent(maxPathDrawdown)
 		result.MaxGainPrice = roundTrackingPrice(result.MaxGainPrice)
 		result.MaxDrawdownPrice = roundTrackingPrice(result.MaxDrawdownPrice)
+		if result.TargetHit && result.StopLossHit {
+			switch {
+			case result.DaysToTargetHit < result.DaysToStopLoss:
+				result.FirstEvent = "target"
+			case result.DaysToStopLoss < result.DaysToTargetHit:
+				result.FirstEvent = "stop"
+			default:
+				result.FirstEvent = "ambiguous"
+			}
+		} else if result.TargetHit {
+			result.FirstEvent = "target"
+		} else if result.StopLossHit {
+			result.FirstEvent = "stop"
+		}
 		result.Success = result.CloseReturn >= targetReturn && result.MaxDrawdown >= -drawdownLimit
 		if result.Success {
 			result.Reason = "达到收益与回撤标准"

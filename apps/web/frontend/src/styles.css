@@ -10906,6 +10906,12 @@ textarea::placeholder {
   border-top: 1px solid var(--line);
 }
 
+.daily-analysis-basis-note {
+  margin-left: auto;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .daily-analysis-strategy-horizon {
   display: grid;
   gap: 2px;
@@ -10917,6 +10923,21 @@ textarea::placeholder {
 }
 
 .daily-analysis-strategy-horizon small {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.daily-analysis-distribution-cell {
+  display: grid;
+  gap: 2px;
+  line-height: 1.3;
+}
+
+.daily-analysis-distribution-cell strong {
+  font-size: 11px;
+}
+
+.daily-analysis-distribution-cell small {
   color: var(--text-muted);
   font-size: 10px;
 }
@@ -11023,6 +11044,42 @@ textarea::placeholder {
   white-space: nowrap;
 }
 
+.tracking-horizon-cell {
+  display: grid;
+  min-width: 150px;
+  gap: 2px;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+}
+
+.tracking-horizon-cell-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 20px;
+}
+
+.tracking-horizon-cell-head .ant-tag {
+  margin: 0;
+  padding-inline: 5px;
+  border-radius: 2px;
+  font-size: 10px;
+  line-height: 17px;
+}
+
+.tracking-horizon-cell-head strong {
+  color: var(--text);
+  font: 800 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.tracking-horizon-cell small {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .daily-review-signal-detail {
   display: grid;
   gap: 1px;
@@ -11040,6 +11097,16 @@ textarea::placeholder {
   color: var(--text-soft);
   font-size: 11px;
   line-height: 1.5;
+}
+
+.daily-review-signal-detail > .daily-review-signal-fact {
+  grid-template-columns: minmax(150px, 210px) minmax(220px, 1fr) minmax(220px, 1fr);
+  align-items: center;
+  background: #f2f6fb;
+}
+
+.daily-review-signal-fact .ant-tag {
+  margin-inline-end: 5px;
 }
 
 .daily-review-signal-detail strong {
@@ -11257,6 +11324,10 @@ textarea::placeholder {
   }
   .daily-analysis-result .historical-backtest-title > small {
     display: none;
+  }
+  .daily-analysis-basis-note {
+    margin-left: 0;
+    white-space: normal;
   }
 }
 

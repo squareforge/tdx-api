@@ -455,6 +455,16 @@ export interface SelectionResult {
   formula_name: string;
   symbol: string;
   latest: number;
+  signal_at?: string;
+  signal_price?: number;
+  quote_at?: string;
+  quote_source?: string;
+  price_type?: string;
+  quote_age_ms?: number;
+  signal_score?: number;
+  strategy_version?: string;
+  market_context_json?: string;
+  snapshot_status?: string;
   detail_json: string;
   tracking?: SelectionTracking;
   created_at: string;
@@ -467,8 +477,25 @@ export interface SelectionHorizon {
   final_date?: number;
   final_open?: number;
   final_close?: number;
+  final_high?: number;
+  final_low?: number;
+  average_close?: number;
+  average_close_return?: number;
   open_return?: number;
   close_return?: number;
+  high_return?: number;
+  low_return?: number;
+  mfe?: number;
+  mae?: number;
+  max_path_drawdown?: number;
+  benchmark_close_return?: number;
+  excess_close_return?: number;
+  gross_return?: number;
+  net_return?: number;
+  total_cost?: number;
+  first_event?: string;
+  calculation_version?: string;
+  data_quality?: string;
   max_gain?: number;
   max_gain_date?: number;
   max_gain_price?: number;
@@ -577,6 +604,14 @@ export interface DailyReviewSignal {
   signal_date: string;
   symbol: string;
   latest: number;
+  signal_at?: string;
+  signal_price?: number;
+  quote_at?: string;
+  quote_source?: string;
+  price_type?: string;
+  quote_age_ms?: number;
+  snapshot_status?: string;
+  strategy_version?: string;
   score: number;
   detail_json: string;
   tracking?: SelectionTracking;
@@ -662,6 +697,22 @@ export interface DailyStrategyAnalysisMetric {
   d10_positive_rate: number;
   d10_average_return: number;
   d10_max_return: number;
+  horizon_stats?: Record<string, DailyAnalysisHorizonStats>;
+}
+
+export interface DailyAnalysisHorizonStats {
+  completed: number;
+  positive_count: number;
+  positive_rate: number;
+  average_return: number;
+  median_return: number;
+  p25_return: number;
+  p75_return: number;
+  max_return: number;
+  average_mfe: number;
+  average_mae: number;
+  average_path_drawdown: number;
+  complete_rate?: number;
 }
 
 export interface DailyStrategyAnalysisResponse {
@@ -673,6 +724,9 @@ export interface DailyStrategyAnalysisResponse {
   unique_symbols: number;
   consensus_count: number;
   average_score: number;
+  return_basis?: 'signal' | 'trade' | string;
+  execution_policy?: string;
+  benchmark?: string;
   strategies: DailyStrategyAnalysisMetric[];
   stocks: DailyReviewStock[];
   signals: DailyReviewSignal[];

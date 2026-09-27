@@ -4,8 +4,9 @@ import dayjs, { Dayjs } from 'dayjs';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '../lib/api';
 import { normalizeSymbol } from '../lib/format';
-import type { AutomationRun, SelectionHorizon, SelectionResult, SelectionTracking, SelectionTrackingResponse } from '../types';
+import type { AutomationRun, SelectionResult, SelectionTracking, SelectionTrackingResponse } from '../types';
 import { StockQuoteModal, type StockQuoteTarget } from './StockQuoteModal';
+import { TrackingHorizonCell } from './TrackingHorizonCell';
 
 const { Text } = Typography;
 const selectionTaskTypes = new Set(['stock_selection', 'strategy_selection']);
@@ -54,12 +55,6 @@ function runStatus(status?: string) {
 function runTypeLabel(type?: string) { return type === 'strategy_selection' ? '策略选股' : '公式选股'; }
 function resultTracking(result: SelectionResult): SelectionTracking { return result.tracking || {}; }
 function formatPct(value?: number) { return Number.isFinite(value) ? `${Number(value) >= 0 ? '+' : ''}${Number(value).toFixed(2)}%` : '--'; }
-function trackingLabel(value?: SelectionHorizon) {
-  if (!value) return '待观察';
-  if (value.status === 'complete') return value.success ? '达标' : '未达标';
-  return value.reason?.replace(/^已获得(\d+)\/(\d+)个交易日$/, '已获得 $1/$2 个交易日') || (value.status === 'unavailable' ? '暂无数据' : '待观察');
-}
-function trackingColor(value?: SelectionHorizon) { if (!value || value.status !== 'complete') return 'default'; return value.success ? 'success' : 'error'; }
 function selectionDetail(result: SelectionResult): StrategySelectionDetail {
   try { return JSON.parse(result.detail_json || '{}') as StrategySelectionDetail; } catch { return {}; }
 }
@@ -172,10 +167,10 @@ export function SelectionResultsWorkspace() {
     { title: '最新值', dataIndex: 'latest', width: 100, render: (value: number) => value ? value.toFixed(2) : '--' },
     ...[1, 3, 5, 10].map((days) => ({
       title: `D${days}`,
-      width: 145,
+      width: 166,
       render: (_value: unknown, record: SelectionResult) => {
         const value = getTracking(record).horizons?.[`d${days}`];
-        return <Tag color={trackingColor(value)}>{trackingLabel(value)}{value?.status === 'complete' ? ` ${formatPct(value.close_return)}` : ''}</Tag>;
+        return <TrackingHorizonCell value={value} />;
       }
     }))
   ];
@@ -199,7 +194,7 @@ export function SelectionResultsWorkspace() {
       )}
 
       <Modal open={resultModalOpen} onCancel={() => setResultModalOpen(false)} footer={null} width={1120} centered destroyOnHidden className="app-themed-modal selection-run-modal" title={<div className="quote-dialog-title selection-run-dialog-title"><div><strong>{modalRun?.task_name || '选股执行结果'}</strong><span>{modalRun ? `${runTypeLabel(modalRun.task_type)} · ${formatRunDate(runDateKey(modalRun))} ${formatRunTime(modalRun)}` : '本次执行的全部命中标的'}</span></div><small>RUN RESULTS</small></div>}>
-        {modalRun ? <div className="selection-run-modal-content"><div className="selection-run-facts"><div><span>执行状态</span><strong><Tag color={runStatus(modalRun.status).color}>{runStatus(modalRun.status).label}</Tag></strong></div><div><span>命中数量</span><strong>{modalRun.matched_count ?? modalResults.length} 只</strong></div><div><span>执行耗时</span><strong>{formatRunDuration(modalRun)}</strong></div><div><span>开始时间</span><strong>{modalRun.started_at || '--'}</strong></div><div><span>结束时间</span><strong>{modalRun.finished_at || '--'}</strong></div></div><Table<SelectionResult> size="small" rowKey="id" dataSource={modalResults} pagination={{ pageSize: 12, size: 'small' }} scroll={{ x: 1110 }} onRow={(record) => ({ onClick: () => setSelectedResult(record) })} rowClassName={(record) => (record.id === selectedResult?.id ? 'row-active' : '')} locale={{ emptyText: '本次执行没有命中标的' }} columns={modalColumns} />{selectedResult ? <div className="selection-run-result-detail"><Text type="secondary">当前标的</Text><strong>{stockName(selectedResult.symbol) || '名称未知'} · {selectedResult.symbol}</strong><span>{selectedResult.formula_name} · 信号时间 {selectedResult.created_at}</span>{selectionDetail(selectedResult).rank_reason ? <span>{selectionDetail(selectedResult).rank_reason}</span> : null}<div className="selection-run-tracking-detail"><strong>结构化跟踪</strong><span>基准日 {selectedResult.tracking?.base_date || '--'} · 基准价 {Number(selectedResult.tracking?.base_price || 0).toFixed(3)} · {selectedResult.tracking?.base_price_from || '--'}</span>{[1, 3, 5, 10].map((days) => { const value = getTracking(selectedResult).horizons?.[`d${days}`]; return <span key={days}>D{days}：{value?.status || '暂无'} · 收益 {formatPct(value?.close_return)} · 最大涨幅 {formatPct(value?.max_gain)} · 最大回撤 {formatPct(value?.max_drawdown)} · 达标 {value?.target_hit ? '是' : '否'} · 止损 {value?.stop_loss_hit ? '是' : '否'} · {value?.reason || '--'}</span>; })}</div></div> : null}</div> : null}
+        {modalRun ? <div className="selection-run-modal-content"><div className="selection-run-facts"><div><span>执行状态</span><strong><Tag color={runStatus(modalRun.status).color}>{runStatus(modalRun.status).label}</Tag></strong></div><div><span>命中数量</span><strong>{modalRun.matched_count ?? modalResults.length} 只</strong></div><div><span>执行耗时</span><strong>{formatRunDuration(modalRun)}</strong></div><div><span>开始时间</span><strong>{modalRun.started_at || '--'}</strong></div><div><span>结束时间</span><strong>{modalRun.finished_at || '--'}</strong></div></div><Table<SelectionResult> size="small" rowKey="id" dataSource={modalResults} pagination={{ pageSize: 12, size: 'small' }} scroll={{ x: 1220 }} onRow={(record) => ({ onClick: () => setSelectedResult(record) })} rowClassName={(record) => (record.id === selectedResult?.id ? 'row-active' : '')} locale={{ emptyText: '本次执行没有命中标的' }} columns={modalColumns} />{selectedResult ? <div className="selection-run-result-detail"><Text type="secondary">当前标的</Text><strong>{stockName(selectedResult.symbol) || '名称未知'} · {selectedResult.symbol}</strong><span>{selectedResult.formula_name} · 信号时间 {selectedResult.created_at}</span>{selectionDetail(selectedResult).rank_reason ? <span>{selectionDetail(selectedResult).rank_reason}</span> : null}<div className="selection-run-tracking-detail"><strong>结构化跟踪</strong><span>基准日 {selectedResult.tracking?.base_date || '--'} · 基准价 {Number(selectedResult.tracking?.base_price || 0).toFixed(3)} · {selectedResult.tracking?.base_price_from || '--'}</span>{[1, 3, 5, 10].map((days) => { const value = getTracking(selectedResult).horizons?.[`d${days}`]; return <span key={days}>D{days}：{value?.status || '暂无'} · 均收 {value?.average_close ? `${value.average_close.toFixed(3)} / ${formatPct(value.average_close_return)}` : '--'} · 周期最高 {formatPct(value?.max_gain)}{value?.max_gain_price ? ` / ${value.max_gain_price.toFixed(3)}` : ''} · 终盘收益 {formatPct(value?.close_return)} · 最大回撤 {formatPct(value?.max_drawdown)} · 达标 {value?.target_hit ? '是' : '否'} · 止损 {value?.stop_loss_hit ? '是' : '否'} · {value?.reason || '--'}</span>; })}</div></div> : null}</div> : null}
       </Modal>
       <StockQuoteModal target={quoteTarget} onClose={() => setQuoteTarget(null)} />
     </div>

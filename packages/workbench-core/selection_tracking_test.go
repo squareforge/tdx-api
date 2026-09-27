@@ -23,7 +23,7 @@ func TestEvaluateSelectionTrackingAfterCloseStartsNextSession(t *testing.T) {
 		t.Fatalf("unexpected d1: %#v", d1)
 	}
 	d5 := tracking.Horizons["d5"]
-	if d5.Status != "complete" || d5.CloseReturn != 4 || d5.MaxDrawdown != -2 || !d5.Success {
+	if d5.Status != "complete" || d5.CloseReturn != 4 || d5.MaxDrawdown != -2 || d5.AverageClose != 102.8 || d5.AverageCloseReturn != 2.8 || !d5.Success {
 		t.Fatalf("unexpected d5: %#v", d5)
 	}
 	if tracking.Horizons["d10"].Status != "pending" {

@@ -255,7 +255,7 @@ func (r *AutomationRunner) runTaskWithRun(ctx context.Context, task AutomationTa
 }
 
 func (r *AutomationRunner) runSelectionTracking(ctx context.Context, task AutomationTask) (interface{}, int, error) {
-	payload := SelectionTrackingPayload{Limit: 500, Horizons: []int{1, 5, 10}, ContinueOnError: true}
+	payload := SelectionTrackingPayload{Limit: 500, Horizons: []int{1, 3, 5, 10}, ContinueOnError: true}
 	if strings.TrimSpace(task.PayloadJSON) != "" {
 		if err := json.Unmarshal([]byte(task.PayloadJSON), &payload); err != nil {
 			return nil, 0, err

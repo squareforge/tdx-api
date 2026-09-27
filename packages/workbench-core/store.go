@@ -109,60 +109,87 @@ type AutomationRun struct {
 }
 
 type SelectionResult struct {
-	ID          string             `json:"id"`
-	RunID       string             `json:"run_id"`
-	TaskID      string             `json:"task_id"`
-	TaskName    string             `json:"task_name"`
-	FormulaID   string             `json:"formula_id"`
-	FormulaName string             `json:"formula_name"`
-	Symbol      string             `json:"symbol"`
-	Latest      float64            `json:"latest"`
-	DetailJSON  string             `json:"detail_json"`
-	Tracking    *SelectionTracking `json:"tracking,omitempty"`
-	CreatedAt   string             `json:"created_at"`
+	ID                string             `json:"id"`
+	RunID             string             `json:"run_id"`
+	TaskID            string             `json:"task_id"`
+	TaskName          string             `json:"task_name"`
+	FormulaID         string             `json:"formula_id"`
+	FormulaName       string             `json:"formula_name"`
+	Symbol            string             `json:"symbol"`
+	Latest            float64            `json:"latest"`
+	SignalAt          string             `json:"signal_at,omitempty"`
+	SignalPrice       float64            `json:"signal_price,omitempty"`
+	QuoteAt           string             `json:"quote_at,omitempty"`
+	QuoteSource       string             `json:"quote_source,omitempty"`
+	PriceType         string             `json:"price_type,omitempty"`
+	QuoteAgeMS        int64              `json:"quote_age_ms,omitempty"`
+	SignalScore       float64            `json:"signal_score,omitempty"`
+	StrategyVersion   string             `json:"strategy_version,omitempty"`
+	MarketContextJSON string             `json:"market_context_json,omitempty"`
+	SnapshotStatus    string             `json:"snapshot_status,omitempty"`
+	DetailJSON        string             `json:"detail_json"`
+	Tracking          *SelectionTracking `json:"tracking,omitempty"`
+	CreatedAt         string             `json:"created_at"`
 }
 
 type SelectionResultTracking struct {
-	ID                string  `json:"id"`
-	SelectionResultID string  `json:"selection_result_id"`
-	RunID             string  `json:"run_id"`
-	TaskID            string  `json:"task_id"`
-	TaskName          string  `json:"task_name"`
-	FormulaID         string  `json:"formula_id"`
-	FormulaName       string  `json:"formula_name"`
-	Symbol            string  `json:"symbol"`
-	SignalDate        int     `json:"signal_date"`
-	BaseDate          int     `json:"base_date"`
-	BasePrice         float64 `json:"base_price"`
-	BasePriceFrom     string  `json:"base_price_from"`
-	HorizonDays       int     `json:"horizon_days"`
-	Status            string  `json:"status"`
-	AsOfDate          int     `json:"as_of_date"`
-	FinalDate         int     `json:"final_date"`
-	FinalOpen         float64 `json:"final_open"`
-	FinalClose        float64 `json:"final_close"`
-	OpenReturn        float64 `json:"open_return"`
-	CloseReturn       float64 `json:"close_return"`
-	MaxGain           float64 `json:"max_gain"`
-	MaxGainDate       int     `json:"max_gain_date"`
-	MaxGainPrice      float64 `json:"max_gain_price"`
-	DaysToMaxGain     int     `json:"days_to_max_gain"`
-	MaxDrawdown       float64 `json:"max_drawdown"`
-	MaxDrawdownDate   int     `json:"max_drawdown_date"`
-	MaxDrawdownPrice  float64 `json:"max_drawdown_price"`
-	DaysToMaxDrawdown int     `json:"days_to_max_drawdown"`
-	TargetReturn      float64 `json:"target_return"`
-	TargetHit         bool    `json:"target_hit"`
-	TargetHitDate     int     `json:"target_hit_date"`
-	DaysToTargetHit   int     `json:"days_to_target_hit"`
-	DrawdownLimit     float64 `json:"drawdown_limit"`
-	StopLossHit       bool    `json:"stop_loss_hit"`
-	StopLossHitDate   int     `json:"stop_loss_hit_date"`
-	DaysToStopLoss    int     `json:"days_to_stop_loss"`
-	Success           bool    `json:"success"`
-	Reason            string  `json:"reason"`
-	CreatedAt         string  `json:"created_at"`
-	UpdatedAt         string  `json:"updated_at"`
+	ID                   string  `json:"id"`
+	SelectionResultID    string  `json:"selection_result_id"`
+	RunID                string  `json:"run_id"`
+	TaskID               string  `json:"task_id"`
+	TaskName             string  `json:"task_name"`
+	FormulaID            string  `json:"formula_id"`
+	FormulaName          string  `json:"formula_name"`
+	Symbol               string  `json:"symbol"`
+	SignalDate           int     `json:"signal_date"`
+	BaseDate             int     `json:"base_date"`
+	BasePrice            float64 `json:"base_price"`
+	BasePriceFrom        string  `json:"base_price_from"`
+	HorizonDays          int     `json:"horizon_days"`
+	Status               string  `json:"status"`
+	AsOfDate             int     `json:"as_of_date"`
+	FinalDate            int     `json:"final_date"`
+	FinalOpen            float64 `json:"final_open"`
+	FinalClose           float64 `json:"final_close"`
+	FinalHigh            float64 `json:"final_high"`
+	FinalLow             float64 `json:"final_low"`
+	AverageClose         float64 `json:"average_close"`
+	AverageCloseReturn   float64 `json:"average_close_return"`
+	OpenReturn           float64 `json:"open_return"`
+	CloseReturn          float64 `json:"close_return"`
+	HighReturn           float64 `json:"high_return"`
+	LowReturn            float64 `json:"low_return"`
+	MFE                  float64 `json:"mfe"`
+	MAE                  float64 `json:"mae"`
+	MaxPathDrawdown      float64 `json:"max_path_drawdown"`
+	BenchmarkCloseReturn float64 `json:"benchmark_close_return"`
+	ExcessCloseReturn    float64 `json:"excess_close_return"`
+	GrossReturn          float64 `json:"gross_return"`
+	NetReturn            float64 `json:"net_return"`
+	TotalCost            float64 `json:"total_cost"`
+	FirstEvent           string  `json:"first_event"`
+	CalculationVersion   string  `json:"calculation_version"`
+	DataQuality          string  `json:"data_quality"`
+	MaxGain              float64 `json:"max_gain"`
+	MaxGainDate          int     `json:"max_gain_date"`
+	MaxGainPrice         float64 `json:"max_gain_price"`
+	DaysToMaxGain        int     `json:"days_to_max_gain"`
+	MaxDrawdown          float64 `json:"max_drawdown"`
+	MaxDrawdownDate      int     `json:"max_drawdown_date"`
+	MaxDrawdownPrice     float64 `json:"max_drawdown_price"`
+	DaysToMaxDrawdown    int     `json:"days_to_max_drawdown"`
+	TargetReturn         float64 `json:"target_return"`
+	TargetHit            bool    `json:"target_hit"`
+	TargetHitDate        int     `json:"target_hit_date"`
+	DaysToTargetHit      int     `json:"days_to_target_hit"`
+	DrawdownLimit        float64 `json:"drawdown_limit"`
+	StopLossHit          bool    `json:"stop_loss_hit"`
+	StopLossHitDate      int     `json:"stop_loss_hit_date"`
+	DaysToStopLoss       int     `json:"days_to_stop_loss"`
+	Success              bool    `json:"success"`
+	Reason               string  `json:"reason"`
+	CreatedAt            string  `json:"created_at"`
+	UpdatedAt            string  `json:"updated_at"`
 }
 
 type DecisionNote struct {
@@ -366,6 +393,16 @@ func (s *AppStore) migrate() error {
 			formula_name TEXT NOT NULL,
 			symbol TEXT NOT NULL,
 			latest REAL NOT NULL DEFAULT 0,
+			signal_at TEXT NOT NULL DEFAULT '',
+			signal_price REAL NOT NULL DEFAULT 0,
+			quote_at TEXT NOT NULL DEFAULT '',
+			quote_source TEXT NOT NULL DEFAULT '',
+			price_type TEXT NOT NULL DEFAULT '',
+			quote_age_ms INTEGER NOT NULL DEFAULT 0,
+			signal_score REAL NOT NULL DEFAULT 0,
+			strategy_version TEXT NOT NULL DEFAULT '',
+			market_context_json TEXT NOT NULL DEFAULT '{}',
+			snapshot_status TEXT NOT NULL DEFAULT 'missing',
 			detail_json TEXT NOT NULL DEFAULT '{}',
 			created_at TEXT NOT NULL
 		)`,
@@ -395,8 +432,25 @@ func (s *AppStore) migrate() error {
 			final_date INTEGER NOT NULL DEFAULT 0,       -- 周期结束日期
 			final_open REAL NOT NULL DEFAULT 0,          -- 周期结束日开盘价
 			final_close REAL NOT NULL DEFAULT 0,         -- 周期结束日收盘价
+			final_high REAL NOT NULL DEFAULT 0,
+			final_low REAL NOT NULL DEFAULT 0,
+			average_close REAL NOT NULL DEFAULT 0,
+			average_close_return REAL NOT NULL DEFAULT 0,
 			open_return REAL NOT NULL DEFAULT 0,         -- 周期结束日开盘收益率，百分比
 			close_return REAL NOT NULL DEFAULT 0,        -- 周期结束日收盘收益率，百分比
+			high_return REAL NOT NULL DEFAULT 0,
+			low_return REAL NOT NULL DEFAULT 0,
+			mfe REAL NOT NULL DEFAULT 0,
+			mae REAL NOT NULL DEFAULT 0,
+			max_path_drawdown REAL NOT NULL DEFAULT 0,
+			benchmark_close_return REAL NOT NULL DEFAULT 0,
+			excess_close_return REAL NOT NULL DEFAULT 0,
+			gross_return REAL NOT NULL DEFAULT 0,
+			net_return REAL NOT NULL DEFAULT 0,
+			total_cost REAL NOT NULL DEFAULT 0,
+			first_event TEXT NOT NULL DEFAULT 'none',
+			calculation_version TEXT NOT NULL DEFAULT 'tracking-v3',
+			data_quality TEXT NOT NULL DEFAULT 'complete',
 			max_gain REAL NOT NULL DEFAULT 0,            -- 跟踪周期内最大涨幅，百分比
 			max_gain_date INTEGER NOT NULL DEFAULT 0,    -- 最大涨幅发生日期
 			max_gain_price REAL NOT NULL DEFAULT 0,      -- 最大涨幅对应价格
@@ -633,6 +687,24 @@ func (s *AppStore) migrate() error {
 	}
 	// Existing workbench databases predate the extended event and notification fields.
 	for table, columns := range map[string]map[string]string{
+		"selection_results": {
+			"signal_at": "TEXT NOT NULL DEFAULT ''", "signal_price": "REAL NOT NULL DEFAULT 0",
+			"quote_at": "TEXT NOT NULL DEFAULT ''", "quote_source": "TEXT NOT NULL DEFAULT ''",
+			"price_type": "TEXT NOT NULL DEFAULT ''", "quote_age_ms": "INTEGER NOT NULL DEFAULT 0",
+			"signal_score": "REAL NOT NULL DEFAULT 0", "strategy_version": "TEXT NOT NULL DEFAULT ''",
+			"market_context_json": "TEXT NOT NULL DEFAULT '{}'", "snapshot_status": "TEXT NOT NULL DEFAULT 'missing'",
+		},
+		"selection_result_tracking": {
+			"final_high": "REAL NOT NULL DEFAULT 0", "final_low": "REAL NOT NULL DEFAULT 0",
+			"average_close": "REAL NOT NULL DEFAULT 0", "average_close_return": "REAL NOT NULL DEFAULT 0",
+			"high_return": "REAL NOT NULL DEFAULT 0", "low_return": "REAL NOT NULL DEFAULT 0",
+			"mfe": "REAL NOT NULL DEFAULT 0", "mae": "REAL NOT NULL DEFAULT 0",
+			"max_path_drawdown": "REAL NOT NULL DEFAULT 0", "benchmark_close_return": "REAL NOT NULL DEFAULT 0",
+			"excess_close_return": "REAL NOT NULL DEFAULT 0", "gross_return": "REAL NOT NULL DEFAULT 0",
+			"net_return": "REAL NOT NULL DEFAULT 0", "total_cost": "REAL NOT NULL DEFAULT 0",
+			"first_event": "TEXT NOT NULL DEFAULT 'none'", "calculation_version": "TEXT NOT NULL DEFAULT 'tracking-v3'",
+			"data_quality": "TEXT NOT NULL DEFAULT 'complete'",
+		},
 		"macro_events": {
 			"scheduled_at": "TEXT NOT NULL DEFAULT ''", "released_at": "TEXT NOT NULL DEFAULT ''",
 			"previous_value": "TEXT NOT NULL DEFAULT ''", "forecast_value": "TEXT NOT NULL DEFAULT ''",
@@ -655,6 +727,21 @@ func (s *AppStore) migrate() error {
 		}
 	}
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_automation_runs_parent_started_at ON automation_runs(parent_run_id, started_at)`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_selection_results_signal_at ON selection_results(signal_at DESC)`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`UPDATE selection_results SET
+		signal_at=CASE WHEN TRIM(signal_at)='' THEN created_at ELSE signal_at END,
+		signal_price=CASE WHEN signal_price<=0 THEN latest ELSE signal_price END,
+		quote_at=CASE WHEN TRIM(quote_at)='' THEN created_at ELSE quote_at END,
+		quote_source=CASE WHEN TRIM(quote_source)='' THEN 'legacy_selection' ELSE quote_source END,
+		price_type=CASE WHEN TRIM(price_type)='' THEN 'latest' ELSE price_type END,
+		strategy_version=CASE WHEN TRIM(strategy_version)='' THEN formula_id ELSE strategy_version END,
+		market_context_json=CASE WHEN TRIM(market_context_json)='' THEN '{}' ELSE market_context_json END,
+		snapshot_status=CASE WHEN (TRIM(snapshot_status)='' OR snapshot_status='missing') AND latest>0 THEN 'inferred' WHEN latest<=0 THEN 'missing' ELSE snapshot_status END
+		WHERE TRIM(signal_at)='' OR signal_price<=0 OR TRIM(quote_at)='' OR TRIM(quote_source)='' OR TRIM(price_type)='' OR TRIM(strategy_version)=''`); err != nil {
 		return err
 	}
 	// Runs created before parent_run_id existed are linked to the enclosing
@@ -2260,10 +2347,15 @@ func (s *AppStore) SaveSelectionResults(run AutomationRun, formula Formula, item
 		if strings.TrimSpace(item.DetailJSON) == "" {
 			item.DetailJSON = "{}"
 		}
+		normalizeSelectionSnapshot(&item)
 		if _, err := tx.Exec(`INSERT INTO selection_results
-			(id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,created_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?)`,
-			item.ID, item.RunID, item.TaskID, item.TaskName, item.FormulaID, item.FormulaName, item.Symbol, item.Latest, item.DetailJSON, item.CreatedAt); err != nil {
+			(id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,
+			 signal_at,signal_price,quote_at,quote_source,price_type,quote_age_ms,signal_score,strategy_version,market_context_json,snapshot_status,
+			 detail_json,created_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			item.ID, item.RunID, item.TaskID, item.TaskName, item.FormulaID, item.FormulaName, item.Symbol, item.Latest,
+			item.SignalAt, item.SignalPrice, item.QuoteAt, item.QuoteSource, item.PriceType, item.QuoteAgeMS, item.SignalScore,
+			item.StrategyVersion, item.MarketContextJSON, item.SnapshotStatus, item.DetailJSON, item.CreatedAt); err != nil {
 			return err
 		}
 		if item.Tracking != nil {
@@ -2273,6 +2365,42 @@ func (s *AppStore) SaveSelectionResults(run AutomationRun, formula Formula, item
 		}
 	}
 	return tx.Commit()
+}
+
+// normalizeSelectionSnapshot preserves the original selection row while making
+// the signal price/time semantics explicit for legacy and newly generated rows.
+func normalizeSelectionSnapshot(item *SelectionResult) {
+	if item.SignalAt == "" {
+		item.SignalAt = item.CreatedAt
+	}
+	if item.SignalPrice <= 0 {
+		item.SignalPrice = item.Latest
+	}
+	if item.QuoteAt == "" {
+		item.QuoteAt = item.SignalAt
+	}
+	if item.QuoteSource == "" {
+		item.QuoteSource = "selection_result"
+	}
+	if item.PriceType == "" {
+		item.PriceType = "latest"
+	}
+	if item.SignalScore == 0 {
+		item.SignalScore = selectionResultScore(item.DetailJSON)
+	}
+	if item.StrategyVersion == "" {
+		item.StrategyVersion = item.FormulaID
+	}
+	if strings.TrimSpace(item.MarketContextJSON) == "" {
+		item.MarketContextJSON = "{}"
+	}
+	if item.SnapshotStatus == "" {
+		if item.SignalPrice > 0 && item.SignalAt != "" {
+			item.SnapshotStatus = "inferred"
+		} else {
+			item.SnapshotStatus = "missing"
+		}
+	}
 }
 
 func (s *AppStore) GetAutomationRun(runID string) (AutomationRun, error) {
@@ -2333,7 +2461,9 @@ func (s *AppStore) ListSelectionResults(taskID, formulaID, symbol string, onlyLa
 	if limit > 5000 {
 		limit = 5000
 	}
-	query := `SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,created_at FROM selection_results`
+	query := `SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,
+		signal_at,signal_price,quote_at,quote_source,price_type,quote_age_ms,signal_score,strategy_version,market_context_json,snapshot_status,
+		detail_json,created_at FROM selection_results`
 	args := []interface{}{}
 	conds := []string{}
 	if taskID != HistoricalBacktestTaskID {
@@ -2371,7 +2501,7 @@ func (s *AppStore) ListSelectionResults(taskID, formulaID, symbol string, onlyLa
 	var list []SelectionResult
 	for rows.Next() {
 		var item SelectionResult
-		if err := rows.Scan(&item.ID, &item.RunID, &item.TaskID, &item.TaskName, &item.FormulaID, &item.FormulaName, &item.Symbol, &item.Latest, &item.DetailJSON, &item.CreatedAt); err != nil {
+		if err := scanSelectionResult(&item, rows); err != nil {
 			return nil, err
 		}
 		list = append(list, item)
@@ -2416,7 +2546,9 @@ func (s *AppStore) ListIncompleteSelectionTrackingResults(horizons []int) ([]Sel
 	for _, horizon := range normalized {
 		args = append(args, horizon)
 	}
-	query := `SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,created_at
+	query := `SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,
+		signal_at,signal_price,quote_at,quote_source,price_type,quote_age_ms,signal_score,strategy_version,market_context_json,snapshot_status,
+		detail_json,created_at
 		FROM selection_results AS sr
 		WHERE sr.task_id<>? AND (` + strings.Join(structuredChecks, " OR ") + `)
 		ORDER BY created_at ASC,id ASC`
@@ -2430,7 +2562,7 @@ func (s *AppStore) ListIncompleteSelectionTrackingResults(horizons []int) ([]Sel
 	list := make([]SelectionResult, 0)
 	for rows.Next() {
 		var item SelectionResult
-		if err := rows.Scan(&item.ID, &item.RunID, &item.TaskID, &item.TaskName, &item.FormulaID, &item.FormulaName, &item.Symbol, &item.Latest, &item.DetailJSON, &item.CreatedAt); err != nil {
+		if err := scanSelectionResult(&item, rows); err != nil {
 			return nil, err
 		}
 		list = append(list, item)
@@ -2455,7 +2587,9 @@ func (s *AppStore) UpdateSelectionTracking(id string, tracking SelectionTracking
 		return err
 	}
 	defer tx.Rollback()
-	item, err := scanSelectionResultRow(tx.QueryRow(`SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,created_at FROM selection_results WHERE id=?`, id))
+	item, err := scanSelectionResultRow(tx.QueryRow(`SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,
+		signal_at,signal_price,quote_at,quote_source,price_type,quote_age_ms,signal_score,strategy_version,market_context_json,snapshot_status,
+		detail_json,created_at FROM selection_results WHERE id=?`, id))
 	if err != nil {
 		return err
 	}
@@ -2471,8 +2605,18 @@ type selectionResultScanner interface {
 
 func scanSelectionResultRow(row selectionResultScanner) (SelectionResult, error) {
 	var item SelectionResult
-	err := row.Scan(&item.ID, &item.RunID, &item.TaskID, &item.TaskName, &item.FormulaID, &item.FormulaName, &item.Symbol, &item.Latest, &item.DetailJSON, &item.CreatedAt)
+	err := scanSelectionResult(&item, row)
 	return item, err
+}
+
+func scanSelectionResult(item *SelectionResult, row selectionResultScanner) error {
+	if err := row.Scan(&item.ID, &item.RunID, &item.TaskID, &item.TaskName, &item.FormulaID, &item.FormulaName, &item.Symbol, &item.Latest,
+		&item.SignalAt, &item.SignalPrice, &item.QuoteAt, &item.QuoteSource, &item.PriceType, &item.QuoteAgeMS, &item.SignalScore,
+		&item.StrategyVersion, &item.MarketContextJSON, &item.SnapshotStatus, &item.DetailJSON, &item.CreatedAt); err != nil {
+		return err
+	}
+	normalizeSelectionSnapshot(item)
+	return nil
 }
 
 func (s *AppStore) hydrateSelectionResultsTracking(items []SelectionResult) error {
@@ -2493,7 +2637,8 @@ func (s *AppStore) hydrateSelectionResultsTracking(items []SelectionResult) erro
 			args = append(args, items[index].ID)
 		}
 		rows, err := s.db.Query(`SELECT selection_result_id,signal_date,base_date,base_price,base_price_from,
-			horizon_days,status,as_of_date,final_date,final_open,final_close,open_return,close_return,
+			horizon_days,status,as_of_date,final_date,final_open,final_close,final_high,final_low,average_close,average_close_return,open_return,close_return,high_return,low_return,
+			mfe,mae,max_path_drawdown,benchmark_close_return,excess_close_return,gross_return,net_return,total_cost,first_event,calculation_version,data_quality,
 			max_gain,max_gain_date,max_gain_price,days_to_max_gain,max_drawdown,max_drawdown_date,max_drawdown_price,
 			days_to_max_drawdown,target_return,target_hit,target_hit_date,days_to_target_hit,drawdown_limit,
 			stop_loss_hit,stop_loss_hit_date,days_to_stop_loss,success,reason,updated_at
@@ -2509,8 +2654,10 @@ func (s *AppStore) hydrateSelectionResultsTracking(items []SelectionResult) erro
 			var record SelectionResultTracking
 			var targetHit, stopLossHit, success int
 			if err := rows.Scan(&selectionResultID, &record.SignalDate, &record.BaseDate, &record.BasePrice, &record.BasePriceFrom,
-				&record.HorizonDays, &record.Status, &record.AsOfDate, &record.FinalDate, &record.FinalOpen, &record.FinalClose,
-				&record.OpenReturn, &record.CloseReturn, &record.MaxGain, &record.MaxGainDate, &record.MaxGainPrice, &record.DaysToMaxGain,
+				&record.HorizonDays, &record.Status, &record.AsOfDate, &record.FinalDate, &record.FinalOpen, &record.FinalClose, &record.FinalHigh, &record.FinalLow, &record.AverageClose, &record.AverageCloseReturn,
+				&record.OpenReturn, &record.CloseReturn, &record.HighReturn, &record.LowReturn,
+				&record.MFE, &record.MAE, &record.MaxPathDrawdown, &record.BenchmarkCloseReturn, &record.ExcessCloseReturn, &record.GrossReturn, &record.NetReturn, &record.TotalCost, &record.FirstEvent, &record.CalculationVersion, &record.DataQuality,
+				&record.MaxGain, &record.MaxGainDate, &record.MaxGainPrice, &record.DaysToMaxGain,
 				&record.MaxDrawdown, &record.MaxDrawdownDate, &record.MaxDrawdownPrice, &record.DaysToMaxDrawdown,
 				&record.TargetReturn, &targetHit, &record.TargetHitDate, &record.DaysToTargetHit, &record.DrawdownLimit,
 				&stopLossHit, &record.StopLossHitDate, &record.DaysToStopLoss, &success, &record.Reason, &record.UpdatedAt); err != nil {
@@ -2527,10 +2674,19 @@ func (s *AppStore) hydrateSelectionResultsTracking(items []SelectionResult) erro
 				}
 				trackingByID[selectionResultID] = tracking
 			}
+			mfe, mae := record.MFE, record.MAE
+			if mfe == 0 && record.MaxGain != 0 {
+				mfe = record.MaxGain
+			}
+			if mae == 0 && record.MaxDrawdown != 0 {
+				mae = record.MaxDrawdown
+			}
 			tracking.Horizons[horizonKey(record.HorizonDays)] = SelectionHorizon{
 				HorizonDays: record.HorizonDays, Status: record.Status, AsOfDate: record.AsOfDate,
-				FinalDate: record.FinalDate, FinalOpen: record.FinalOpen, FinalClose: record.FinalClose,
-				OpenReturn: record.OpenReturn, CloseReturn: record.CloseReturn,
+				FinalDate: record.FinalDate, FinalOpen: record.FinalOpen, FinalClose: record.FinalClose, FinalHigh: record.FinalHigh, FinalLow: record.FinalLow, AverageClose: record.AverageClose, AverageCloseReturn: record.AverageCloseReturn,
+				OpenReturn: record.OpenReturn, CloseReturn: record.CloseReturn, HighReturn: record.HighReturn, LowReturn: record.LowReturn,
+				MFE: mfe, MAE: mae, MaxPathDrawdown: record.MaxPathDrawdown, BenchmarkCloseReturn: record.BenchmarkCloseReturn, ExcessCloseReturn: record.ExcessCloseReturn,
+				GrossReturn: record.GrossReturn, NetReturn: record.NetReturn, TotalCost: record.TotalCost, FirstEvent: record.FirstEvent, CalculationVersion: record.CalculationVersion, DataQuality: record.DataQuality,
 				MaxGain: record.MaxGain, MaxGainDate: record.MaxGainDate, MaxGainPrice: record.MaxGainPrice,
 				DaysToMaxGain: record.DaysToMaxGain, MaxDrawdown: record.MaxDrawdown,
 				MaxDrawdownDate: record.MaxDrawdownDate, MaxDrawdownPrice: record.MaxDrawdownPrice,
@@ -2572,25 +2728,28 @@ func syncSelectionResultTrackingTx(tx *sql.Tx, item SelectionResult, tracking Se
 		record := selectionResultTrackingFromHorizon(item, tracking, horizon)
 		if _, err := tx.Exec(`INSERT INTO selection_result_tracking
 			(id,selection_result_id,run_id,task_id,task_name,formula_id,formula_name,symbol,
-			 signal_date,base_date,base_price,base_price_from,horizon_days,status,as_of_date,final_date,final_open,final_close,
-			 open_return,close_return,max_gain,max_gain_date,max_gain_price,days_to_max_gain,
+			 signal_date,base_date,base_price,base_price_from,horizon_days,status,as_of_date,final_date,final_open,final_close,final_high,final_low,average_close,average_close_return,
+			 open_return,close_return,high_return,low_return,mfe,mae,max_path_drawdown,benchmark_close_return,excess_close_return,gross_return,net_return,total_cost,first_event,calculation_version,data_quality,
+			 max_gain,max_gain_date,max_gain_price,days_to_max_gain,
 			 max_drawdown,max_drawdown_date,max_drawdown_price,days_to_max_drawdown,
 			 target_return,target_hit,target_hit_date,days_to_target_hit,
 			 drawdown_limit,stop_loss_hit,stop_loss_hit_date,days_to_stop_loss,
 			 success,reason,created_at,updated_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(selection_result_id,horizon_days) DO UPDATE SET
 				run_id=excluded.run_id,task_id=excluded.task_id,task_name=excluded.task_name,formula_id=excluded.formula_id,formula_name=excluded.formula_name,symbol=excluded.symbol,
 				signal_date=excluded.signal_date,base_date=excluded.base_date,base_price=excluded.base_price,base_price_from=excluded.base_price_from,status=excluded.status,
-				as_of_date=excluded.as_of_date,final_date=excluded.final_date,final_open=excluded.final_open,final_close=excluded.final_close,
-				open_return=excluded.open_return,close_return=excluded.close_return,max_gain=excluded.max_gain,max_gain_date=excluded.max_gain_date,max_gain_price=excluded.max_gain_price,days_to_max_gain=excluded.days_to_max_gain,
+				as_of_date=excluded.as_of_date,final_date=excluded.final_date,final_open=excluded.final_open,final_close=excluded.final_close,final_high=excluded.final_high,final_low=excluded.final_low,average_close=excluded.average_close,average_close_return=excluded.average_close_return,
+				open_return=excluded.open_return,close_return=excluded.close_return,high_return=excluded.high_return,low_return=excluded.low_return,mfe=excluded.mfe,mae=excluded.mae,max_path_drawdown=excluded.max_path_drawdown,benchmark_close_return=excluded.benchmark_close_return,excess_close_return=excluded.excess_close_return,gross_return=excluded.gross_return,net_return=excluded.net_return,total_cost=excluded.total_cost,first_event=excluded.first_event,calculation_version=excluded.calculation_version,data_quality=excluded.data_quality,
+				max_gain=excluded.max_gain,max_gain_date=excluded.max_gain_date,max_gain_price=excluded.max_gain_price,days_to_max_gain=excluded.days_to_max_gain,
 				max_drawdown=excluded.max_drawdown,max_drawdown_date=excluded.max_drawdown_date,max_drawdown_price=excluded.max_drawdown_price,days_to_max_drawdown=excluded.days_to_max_drawdown,
 				target_return=excluded.target_return,target_hit=excluded.target_hit,target_hit_date=excluded.target_hit_date,days_to_target_hit=excluded.days_to_target_hit,
 				drawdown_limit=excluded.drawdown_limit,stop_loss_hit=excluded.stop_loss_hit,stop_loss_hit_date=excluded.stop_loss_hit_date,days_to_stop_loss=excluded.days_to_stop_loss,
 				success=excluded.success,reason=excluded.reason,updated_at=excluded.updated_at`,
 			record.ID, record.SelectionResultID, record.RunID, record.TaskID, record.TaskName, record.FormulaID, record.FormulaName, record.Symbol,
-			record.SignalDate, record.BaseDate, record.BasePrice, record.BasePriceFrom, record.HorizonDays, record.Status, record.AsOfDate, record.FinalDate, record.FinalOpen, record.FinalClose,
-			record.OpenReturn, record.CloseReturn, record.MaxGain, record.MaxGainDate, record.MaxGainPrice, record.DaysToMaxGain,
+			record.SignalDate, record.BaseDate, record.BasePrice, record.BasePriceFrom, record.HorizonDays, record.Status, record.AsOfDate, record.FinalDate, record.FinalOpen, record.FinalClose, record.FinalHigh, record.FinalLow, record.AverageClose, record.AverageCloseReturn,
+			record.OpenReturn, record.CloseReturn, record.HighReturn, record.LowReturn, record.MFE, record.MAE, record.MaxPathDrawdown, record.BenchmarkCloseReturn, record.ExcessCloseReturn, record.GrossReturn, record.NetReturn, record.TotalCost, record.FirstEvent, record.CalculationVersion, record.DataQuality,
+			record.MaxGain, record.MaxGainDate, record.MaxGainPrice, record.DaysToMaxGain,
 			record.MaxDrawdown, record.MaxDrawdownDate, record.MaxDrawdownPrice, record.DaysToMaxDrawdown,
 			record.TargetReturn, boolInt(record.TargetHit), record.TargetHitDate, record.DaysToTargetHit,
 			record.DrawdownLimit, boolInt(record.StopLossHit), record.StopLossHitDate, record.DaysToStopLoss,
@@ -2631,46 +2790,63 @@ func selectionResultTrackingFromHorizon(item SelectionResult, tracking Selection
 		createdAt = updatedAt
 	}
 	return SelectionResultTracking{
-		ID:                fmt.Sprintf("%s:d%d", item.ID, horizon.HorizonDays),
-		SelectionResultID: item.ID,
-		RunID:             item.RunID,
-		TaskID:            item.TaskID,
-		TaskName:          item.TaskName,
-		FormulaID:         item.FormulaID,
-		FormulaName:       item.FormulaName,
-		Symbol:            strings.ToUpper(strings.TrimSpace(item.Symbol)),
-		SignalDate:        tracking.SignalDate,
-		BaseDate:          tracking.BaseDate,
-		BasePrice:         tracking.BasePrice,
-		BasePriceFrom:     tracking.BasePriceFrom,
-		HorizonDays:       horizon.HorizonDays,
-		Status:            horizon.Status,
-		AsOfDate:          horizon.AsOfDate,
-		FinalDate:         horizon.FinalDate,
-		FinalOpen:         horizon.FinalOpen,
-		FinalClose:        horizon.FinalClose,
-		OpenReturn:        horizon.OpenReturn,
-		CloseReturn:       horizon.CloseReturn,
-		MaxGain:           horizon.MaxGain,
-		MaxGainDate:       horizon.MaxGainDate,
-		MaxGainPrice:      horizon.MaxGainPrice,
-		DaysToMaxGain:     horizon.DaysToMaxGain,
-		MaxDrawdown:       horizon.MaxDrawdown,
-		MaxDrawdownDate:   horizon.MaxDrawdownDate,
-		MaxDrawdownPrice:  horizon.MaxDrawdownPrice,
-		DaysToMaxDrawdown: horizon.DaysToMaxDrawdown,
-		TargetReturn:      horizon.TargetReturn,
-		TargetHit:         horizon.TargetHit,
-		TargetHitDate:     horizon.TargetHitDate,
-		DaysToTargetHit:   horizon.DaysToTargetHit,
-		DrawdownLimit:     horizon.DrawdownLimit,
-		StopLossHit:       horizon.StopLossHit,
-		StopLossHitDate:   horizon.StopLossHitDate,
-		DaysToStopLoss:    horizon.DaysToStopLoss,
-		Success:           horizon.Success,
-		Reason:            horizon.Reason,
-		CreatedAt:         createdAt,
-		UpdatedAt:         updatedAt,
+		ID:                   fmt.Sprintf("%s:d%d", item.ID, horizon.HorizonDays),
+		SelectionResultID:    item.ID,
+		RunID:                item.RunID,
+		TaskID:               item.TaskID,
+		TaskName:             item.TaskName,
+		FormulaID:            item.FormulaID,
+		FormulaName:          item.FormulaName,
+		Symbol:               strings.ToUpper(strings.TrimSpace(item.Symbol)),
+		SignalDate:           tracking.SignalDate,
+		BaseDate:             tracking.BaseDate,
+		BasePrice:            tracking.BasePrice,
+		BasePriceFrom:        tracking.BasePriceFrom,
+		HorizonDays:          horizon.HorizonDays,
+		Status:               horizon.Status,
+		AsOfDate:             horizon.AsOfDate,
+		FinalDate:            horizon.FinalDate,
+		FinalOpen:            horizon.FinalOpen,
+		FinalClose:           horizon.FinalClose,
+		FinalHigh:            horizon.FinalHigh,
+		FinalLow:             horizon.FinalLow,
+		AverageClose:         horizon.AverageClose,
+		AverageCloseReturn:   horizon.AverageCloseReturn,
+		OpenReturn:           horizon.OpenReturn,
+		CloseReturn:          horizon.CloseReturn,
+		HighReturn:           horizon.HighReturn,
+		LowReturn:            horizon.LowReturn,
+		MFE:                  horizon.MFE,
+		MAE:                  horizon.MAE,
+		MaxPathDrawdown:      horizon.MaxPathDrawdown,
+		BenchmarkCloseReturn: horizon.BenchmarkCloseReturn,
+		ExcessCloseReturn:    horizon.ExcessCloseReturn,
+		GrossReturn:          horizon.GrossReturn,
+		NetReturn:            horizon.NetReturn,
+		TotalCost:            horizon.TotalCost,
+		FirstEvent:           horizon.FirstEvent,
+		CalculationVersion:   horizon.CalculationVersion,
+		DataQuality:          horizon.DataQuality,
+		MaxGain:              horizon.MaxGain,
+		MaxGainDate:          horizon.MaxGainDate,
+		MaxGainPrice:         horizon.MaxGainPrice,
+		DaysToMaxGain:        horizon.DaysToMaxGain,
+		MaxDrawdown:          horizon.MaxDrawdown,
+		MaxDrawdownDate:      horizon.MaxDrawdownDate,
+		MaxDrawdownPrice:     horizon.MaxDrawdownPrice,
+		DaysToMaxDrawdown:    horizon.DaysToMaxDrawdown,
+		TargetReturn:         horizon.TargetReturn,
+		TargetHit:            horizon.TargetHit,
+		TargetHitDate:        horizon.TargetHitDate,
+		DaysToTargetHit:      horizon.DaysToTargetHit,
+		DrawdownLimit:        horizon.DrawdownLimit,
+		StopLossHit:          horizon.StopLossHit,
+		StopLossHitDate:      horizon.StopLossHitDate,
+		DaysToStopLoss:       horizon.DaysToStopLoss,
+		Success:              horizon.Success,
+		Reason:               horizon.Reason,
+		CreatedAt:            createdAt,
+		UpdatedAt:            updatedAt,
 	}
 }
 
@@ -2756,11 +2932,25 @@ func (s *AppStore) dropSelectionResultsTrackingJSONColumn() error {
 			formula_name TEXT NOT NULL,
 			symbol TEXT NOT NULL,
 			latest REAL NOT NULL DEFAULT 0,
+			signal_at TEXT NOT NULL DEFAULT '',
+			signal_price REAL NOT NULL DEFAULT 0,
+			quote_at TEXT NOT NULL DEFAULT '',
+			quote_source TEXT NOT NULL DEFAULT '',
+			price_type TEXT NOT NULL DEFAULT '',
+			quote_age_ms INTEGER NOT NULL DEFAULT 0,
+			signal_score REAL NOT NULL DEFAULT 0,
+			strategy_version TEXT NOT NULL DEFAULT '',
+			market_context_json TEXT NOT NULL DEFAULT '{}',
+			snapshot_status TEXT NOT NULL DEFAULT 'missing',
 			detail_json TEXT NOT NULL DEFAULT '{}',
 			created_at TEXT NOT NULL
 		)`,
-		`INSERT INTO selection_results_new (id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,created_at)
-			SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,created_at FROM selection_results`,
+		`INSERT INTO selection_results_new (id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,
+			signal_at,signal_price,quote_at,quote_source,price_type,quote_age_ms,signal_score,strategy_version,market_context_json,snapshot_status,
+			detail_json,created_at)
+			SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,
+			signal_at,signal_price,quote_at,quote_source,price_type,quote_age_ms,signal_score,strategy_version,market_context_json,snapshot_status,
+			detail_json,created_at FROM selection_results`,
 		`DROP TABLE selection_results`,
 		`ALTER TABLE selection_results_new RENAME TO selection_results`,
 		`CREATE INDEX IF NOT EXISTS idx_selection_results_created_at ON selection_results(created_at)`,
@@ -2770,6 +2960,7 @@ func (s *AppStore) dropSelectionResultsTrackingJSONColumn() error {
 		`CREATE INDEX IF NOT EXISTS idx_selection_results_symbol_created_at ON selection_results(symbol, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_selection_results_symbol ON selection_results(symbol)`,
 		`CREATE INDEX IF NOT EXISTS idx_selection_results_formula ON selection_results(formula_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_selection_results_signal_at ON selection_results(signal_at DESC)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := tx.Exec(stmt); err != nil {
