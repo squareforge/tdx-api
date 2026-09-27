@@ -163,7 +163,7 @@ func ensureTradeCalendarSchema(db *sql.DB) error {
 	}
 	if _, err := db.Exec(`UPDATE workday SET
 		market = CASE WHEN market = '' THEN ? ELSE market END,
-		is_trade_day = CASE WHEN is_trade_day = 0 THEN 1 ELSE is_trade_day END,
+		is_trade_day = CASE WHEN is_trade_day IS NULL THEN 1 ELSE is_trade_day END,
 		source = CASE WHEN source = '' THEN ? ELSE source END,
 		confidence = CASE WHEN confidence = '' THEN ? ELSE confidence END,
 		open_time = CASE WHEN open_time = '' THEN '09:30' ELSE open_time END,

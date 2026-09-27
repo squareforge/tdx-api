@@ -239,7 +239,7 @@ func (this *Workday) ensureSchema() error {
 	now := time.Now().Format(time.RFC3339)
 	if _, err := this.db.Exec(`UPDATE workday SET
 		market = CASE WHEN market IS NULL OR market = '' THEN ? ELSE market END,
-		is_trade_day = CASE WHEN is_trade_day IS NULL OR is_trade_day = 0 THEN 1 ELSE is_trade_day END,
+		is_trade_day = CASE WHEN is_trade_day IS NULL THEN 1 ELSE is_trade_day END,
 		source = CASE WHEN source IS NULL OR source = '' THEN ? ELSE source END,
 		confidence = CASE WHEN confidence IS NULL OR confidence = '' THEN ? ELSE confidence END,
 		open_time = CASE WHEN open_time IS NULL OR open_time = '' THEN ? ELSE open_time END,
