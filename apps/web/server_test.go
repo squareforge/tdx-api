@@ -39,6 +39,36 @@ func TestNormalizeMinuteDateRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestDailyReviewAnalysisRejectsUnsupportedReturnBasis(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/daily-review/analysis?basis=unsupported", nil)
+	response := httptest.NewRecorder()
+	handleDailyReviewAnalysis(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", response.Code)
+	}
+	var envelope struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Code != -1 || envelope.Message == "" {
+		t.Fatalf("unexpected error response: %+v", envelope)
+	}
+}
+
+func TestDailyReviewAnalysisRejectsUnimplementedBenchmark(t *testing.T) {
+	for _, benchmark := range []string{"csi300", "none"} {
+		request := httptest.NewRequest(http.MethodGet, "/api/daily-review/analysis?benchmark="+benchmark, nil)
+		response := httptest.NewRecorder()
+		handleDailyReviewAnalysis(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("benchmark %s: status = %d, want 400", benchmark, response.Code)
+		}
+	}
+}
+
 func TestGetAllCodeModelsPrefersMarketService(t *testing.T) {
 	t.Setenv("MARKET_SERVICE_URL", "")
 

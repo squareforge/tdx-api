@@ -11109,6 +11109,40 @@ textarea::placeholder {
   margin-inline-end: 5px;
 }
 
+.daily-review-signal-fact .ant-btn-link {
+  height: 22px;
+  padding: 0 4px;
+  font-size: 11px;
+}
+
+.daily-review-signal-detail-extra {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 1px;
+  padding: 0;
+  background: var(--line);
+}
+
+.daily-review-execution-head,
+.daily-review-execution-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 210px) minmax(0, 1fr);
+  gap: 10px;
+  padding: 7px 10px;
+  background: #f7fafc;
+  color: var(--text-soft);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.daily-review-execution-head {
+  background: #eef4f8;
+}
+
+.daily-review-execution-head span {
+  text-align: right;
+}
+
 .daily-review-signal-detail strong {
   color: var(--text);
 }

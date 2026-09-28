@@ -22,6 +22,8 @@ type TrackingBar struct {
 	High   float64
 	Low    float64
 	Close  float64
+	Volume float64
+	Amount float64
 }
 
 type SelectionHorizon struct {
@@ -193,12 +195,12 @@ func EvaluateSelectionTracking(item SelectionResult, bars []TrackingBar, horizon
 		if !validTrackingBar(bar) {
 			continue
 		}
-		if preOpenSignal && bar.Date == tracking.SignalDate {
+		if preOpenSignal && bar.Date == tracking.SignalDate && item.SignalPrice <= 0 {
 			tracking.BasePrice = bar.Open
 			tracking.BaseDate = bar.Date
 			tracking.BasePriceFrom = "signal_day_open"
 		}
-		if !preOpenSignal && bar.Date <= tracking.SignalDate {
+		if !preOpenSignal && bar.Date <= tracking.SignalDate && item.SignalPrice <= 0 {
 			tracking.BasePrice = bar.Close
 			tracking.BaseDate = bar.Date
 			tracking.BasePriceFrom = "signal_day_close"
@@ -214,6 +216,11 @@ func EvaluateSelectionTracking(item SelectionResult, bars []TrackingBar, horizon
 			tracking.Horizons[horizonKey(horizon)] = result
 		}
 		return tracking
+	}
+	if item.SignalPrice > 0 {
+		tracking.BasePrice = item.SignalPrice
+		tracking.BaseDate = tracking.SignalDate
+		tracking.BasePriceFrom = "signal_price"
 	}
 	if tracking.BasePrice <= 0 {
 		if positiveFiniteTrackingValue(item.Latest) {
@@ -241,7 +248,11 @@ func EvaluateSelectionTracking(item SelectionResult, bars []TrackingBar, horizon
 	}
 
 	for _, horizon := range horizons {
-		result := SelectionHorizon{HorizonDays: horizon, TargetReturn: targetReturn, DrawdownLimit: drawdownLimit, CalculationVersion: "tracking-v3", DataQuality: "complete", FirstEvent: "none"}
+		dataQuality := "complete"
+		if item.SignalPrice <= 0 || (item.SnapshotStatus != "fresh" && item.SnapshotStatus != "valid") {
+			dataQuality = "suspect"
+		}
+		result := SelectionHorizon{HorizonDays: horizon, TargetReturn: targetReturn, DrawdownLimit: drawdownLimit, CalculationVersion: "tracking-v3", DataQuality: dataQuality, FirstEvent: "none"}
 		if horizon <= 0 {
 			result.Status = "unavailable"
 			result.Reason = "观察窗口必须大于0"
@@ -283,7 +294,7 @@ func EvaluateSelectionTracking(item SelectionResult, bars []TrackingBar, horizon
 		maxGain := math.Inf(-1)
 		maxDrawdown := math.Inf(1)
 		maxPathDrawdown := 0.0
-		peakPrice := tracking.BasePrice
+		peakClose := tracking.BasePrice
 		for index, bar := range window {
 			if gain := pctTracking(bar.High, tracking.BasePrice); gain > maxGain {
 				maxGain = gain
@@ -297,11 +308,11 @@ func EvaluateSelectionTracking(item SelectionResult, bars []TrackingBar, horizon
 				result.MaxDrawdownPrice = bar.Low
 				result.DaysToMaxDrawdown = index + 1
 			}
-			if bar.High > peakPrice {
-				peakPrice = bar.High
+			if bar.Close > peakClose {
+				peakClose = bar.Close
 			}
-			if peakPrice > 0 {
-				pathDrawdown := pctTracking(bar.Low, peakPrice)
+			if peakClose > 0 {
+				pathDrawdown := pctTracking(bar.Close, peakClose)
 				if pathDrawdown < maxPathDrawdown {
 					maxPathDrawdown = pathDrawdown
 				}
@@ -350,6 +361,9 @@ func EvaluateSelectionTracking(item SelectionResult, bars []TrackingBar, horizon
 }
 
 func selectionResultSignalTime(item SelectionResult) (time.Time, bool) {
+	if t, err := time.Parse(time.RFC3339, item.SignalAt); err == nil {
+		return t.In(time.FixedZone("CST", 8*60*60)), true
+	}
 	if t, err := time.Parse(time.RFC3339, item.CreatedAt); err == nil {
 		return t.In(time.FixedZone("CST", 8*60*60)), true
 	}

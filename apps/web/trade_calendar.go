@@ -136,6 +136,10 @@ func ensureTradeCalendarSchema(db *sql.DB) error {
 	)`); err != nil {
 		return err
 	}
+	isTradeDayExists, err := workdayColumnExists(db, "is_trade_day")
+	if err != nil {
+		return err
+	}
 
 	columns := map[string]string{
 		"market":       "TEXT NOT NULL DEFAULT ''",
@@ -159,6 +163,14 @@ func ensureTradeCalendarSchema(db *sql.DB) error {
 			if _, err := db.Exec(fmt.Sprintf("ALTER TABLE workday ADD COLUMN %s %s", name, definition)); err != nil {
 				return err
 			}
+		}
+	}
+	// The original workday table had no trade-day flag. Its historical rows
+	// represent trading sessions, so preserve that meaning when the column is
+	// first added. A pre-existing column may contain explicit 0 values.
+	if !isTradeDayExists {
+		if _, err := db.Exec(`UPDATE workday SET is_trade_day=1 WHERE Date IS NOT NULL AND Date != ''`); err != nil {
+			return err
 		}
 	}
 	if _, err := db.Exec(`UPDATE workday SET

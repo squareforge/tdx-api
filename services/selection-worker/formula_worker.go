@@ -44,15 +44,17 @@ type FormulaRunResponse struct {
 }
 
 type FormulaKline struct {
-	Date   int     `json:"date"`
-	Time   int     `json:"time,omitempty"`
-	YClose float64 `json:"yclose"`
-	Open   float64 `json:"open"`
-	High   float64 `json:"high"`
-	Low    float64 `json:"low"`
-	Close  float64 `json:"close"`
-	Vol    float64 `json:"vol"`
-	Amount float64 `json:"amount"`
+	Date           int     `json:"date"`
+	Time           int     `json:"time,omitempty"`
+	YClose         float64 `json:"yclose"`
+	Open           float64 `json:"open"`
+	High           float64 `json:"high"`
+	Low            float64 `json:"low"`
+	Close          float64 `json:"close"`
+	Vol            float64 `json:"vol"`
+	Amount         float64 `json:"amount"`
+	SnapshotAt     string  `json:"snapshot_at,omitempty"`
+	SnapshotSource string  `json:"snapshot_source,omitempty"`
 }
 
 func NewFormulaWorkerClient() *FormulaWorkerClient {

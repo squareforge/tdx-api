@@ -3,7 +3,7 @@ import {
 } from 'antd';
 import {
   CheckCircleOutlined, ClearOutlined, ClockCircleOutlined, EditOutlined, EyeOutlined, ReloadOutlined,
-  StopOutlined, TeamOutlined, UnorderedListOutlined, BarChartOutlined, CalendarOutlined
+  StopOutlined, TeamOutlined, UnorderedListOutlined, BarChartOutlined, CalendarOutlined, DownloadOutlined
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
@@ -11,14 +11,15 @@ import { apiFetch } from '../lib/api';
 import { normalizeSymbol } from '../lib/format';
 import type {
   DailyReviewBatchSummary, DailyReviewResponse, DailyReviewStock, DailyReviewStrategySummary,
-  DecisionNote, SelectionTracking, DailyReviewSignal, DailyStrategyAnalysisResponse, DailyStrategyAnalysisMetric
+  DecisionNote, SelectionTracking, DailyReviewSignal, DailyStrategyAnalysisResponse, DailyStrategyAnalysisMetric,
+  DailyReviewSignalDetail, SignalExecutionPath
 } from '../types';
 import { StockQuoteModal, type StockQuoteTarget } from './StockQuoteModal';
 import { TrackingHorizonCell } from './TrackingHorizonCell';
 
 const { Text } = Typography;
 const { TextArea } = Input;
-type ReviewView = 'overview' | 'stocks' | 'consensus' | 'distribution';
+type ReviewView = 'overview' | 'stocks' | 'consensus' | 'distribution' | 'paper';
 type DailyReviewMode = 'single' | 'analysis';
 interface StockDirectoryItem { code?: string; name?: string; }
 interface StockDirectory { codes?: StockDirectoryItem[]; }
@@ -88,7 +89,7 @@ function formatSignalTimestamp(value?: string) {
 }
 
 function snapshotStatusMeta(status?: string) {
-  if (status === 'valid') return { label: '有效快照', color: 'success' } as const;
+  if (status === 'valid' || status === 'fresh') return { label: '有效快照', color: 'success' } as const;
   if (status === 'stale') return { label: '行情过期', color: 'warning' } as const;
   if (status === 'inferred') return { label: '历史推断', color: 'default' } as const;
   return { label: '缺少快照', color: 'error' } as const;
@@ -108,19 +109,51 @@ function trackingDetail(tracking?: SelectionTracking) {
       const peakPrice = Number(value.max_gain_price || 0);
       return <div key={days}>
         <strong>D{days} · {status}</strong>
-        <span>均收 {averageClose > 0 ? `${averageClose.toFixed(3)} / ${pct(averageCloseReturn)}` : '--'} · 周期最高 {Number.isFinite(peakReturn) ? `${pct(peakReturn)}${peakPrice > 0 ? ` / ${peakPrice.toFixed(3)}` : ''}` : '--'} · 终盘 {Number(value.final_close || 0).toFixed(3)} / ${pct(value.close_return)} · MAE {pct(value.mae ?? value.max_drawdown)} · 路径回撤 {pct(value.max_path_drawdown)} · 达标 {value.target_hit ? `${formatTrackingDate(value.target_hit_date)} / 第${value.days_to_target_hit || '--'}天` : '否'} · 止损 {value.stop_loss_hit ? `${formatTrackingDate(value.stop_loss_hit_date)} / 第${value.days_to_stop_loss || '--'}天` : '否'} · {value.data_quality || 'complete'} · {value.reason || '--'}</span>
+        <span>均收 {averageClose > 0 ? `${averageClose.toFixed(3)} / ${pct(averageCloseReturn)}` : '--'} · 周期最高 {Number.isFinite(peakReturn) ? `${pct(peakReturn)}${peakPrice > 0 ? ` / ${peakPrice.toFixed(3)}` : ''}` : '--'} · 终盘 {Number(value.final_close || 0).toFixed(3)} / {pct(value.close_return)} · MAE {pct(value.mae ?? value.max_drawdown)} · 路径回撤 {pct(value.max_path_drawdown)} · 达标 {value.target_hit ? `${formatTrackingDate(value.target_hit_date)} / 第${value.days_to_target_hit || '--'}天` : '否'} · 止损 {value.stop_loss_hit ? `${formatTrackingDate(value.stop_loss_hit_date)} / 第${value.days_to_stop_loss || '--'}天` : '否'} · {value.data_quality || 'complete'} · {value.reason || '--'}</span>
       </div>;
     })}
   </div>;
 }
 
-function signalFact(signal: DailyReviewSignal) {
+function signalFact(signal: DailyReviewSignal, onOpen?: (signal: DailyReviewSignal) => void) {
   const status = snapshotStatusMeta(signal.snapshot_status);
-  const signalPrice = Number(signal.signal_price || signal.latest || 0);
+  const signalPrice = Number(signal.signal_price || 0);
+  const confirmedSnapshot = signal.snapshot_status === 'valid' || signal.snapshot_status === 'fresh' || signal.snapshot_status === 'stale';
+  const priceLabel = signalPrice > 0
+    ? `${confirmedSnapshot ? '信号价' : '历史参考价'} ${signalPrice.toFixed(3)}`
+    : '信号价 缺少快照';
   return <div className="daily-review-signal-fact">
     <strong>{signal.strategy_name}</strong>
     <span><Tag color={status.color}>{status.label}</Tag> 信号 {formatSignalTimestamp(signal.signal_at || signal.created_at)} · 行情 {formatSignalTimestamp(signal.quote_at)} · {signal.quote_source || '--'}</span>
-    <span>信号价 {signalPrice > 0 ? signalPrice.toFixed(3) : '--'} · {signal.price_type || 'latest'} · 延迟 {signal.quote_age_ms ? `${signal.quote_age_ms}ms` : '--'} · 策略版本 {signal.strategy_version || '--'}</span>
+    <span>{priceLabel} · {signal.price_type || 'latest'} · 延迟 {signal.quote_age_ms ? `${signal.quote_age_ms}ms` : '--'} · 策略版本 {signal.strategy_version || '--'} {onOpen ? <Button type="link" size="small" onClick={() => onOpen(signal)}>查看执行与路径</Button> : null}</span>
+  </div>;
+}
+
+function executionStatusMeta(status?: string) {
+  if (status === 'filled') return { label: '已成交', color: 'success' } as const;
+  if (status === 'rejected') return { label: '已拒绝', color: 'error' } as const;
+  if (status === 'unavailable') return { label: '无行情', color: 'warning' } as const;
+  return { label: '等待中', color: 'processing' } as const;
+}
+
+function signalExecutionDetail(detail?: DailyReviewSignalDetail, loading = false) {
+  if (loading) return <div className="daily-review-signal-detail-extra">正在加载执行与路径...</div>;
+  if (!detail) return null;
+  return <div className="daily-review-signal-detail-extra">
+    <div className="daily-review-execution-head"><strong>模拟执行</strong><span>执行版本 {detail.execution_version} · 计算版本 {detail.calculation_version}</span></div>
+    {detail.executions.map((path: SignalExecutionPath) => {
+      const execution = path.execution;
+      const meta = executionStatusMeta(execution.status);
+      return <div className="daily-review-execution-row" key={execution.id}>
+        <strong>{execution.policy_name === 'next_quote' ? '信号后下一行情' : '次日开盘'} <Tag color={meta.color}>{meta.label}</Tag></strong>
+        <span>{execution.status === 'filled' ? `成交 ${execution.fill_price.toFixed(3)} · ${execution.quantity} 股 · 毛额 ${execution.gross_amount.toFixed(2)} · 费用 ${execution.total_cost.toFixed(2)}` : execution.failure_reason || '等待可用行情'} · 滑点 {execution.slippage_bps.toFixed(1)}bp · {execution.data_quality}</span>
+        <span>{path.observations.length ? `路径 ${path.observations.length} 个交易日，最新收盘 ${path.observations[path.observations.length - 1].close.toFixed(3)}，成交口径收益 ${pct(path.observations[path.observations.length - 1].trade_close_return)}` : '暂无该成交模型路径'}</span>
+      </div>;
+    })}
+    <div className="daily-review-execution-row">
+      <strong>信号价格路径</strong>
+      <span>{detail.signal_path.length ? detail.signal_path.map((point) => `D${point.symbol_day_index} ${formatTrackingDate(point.trade_date)} ${pct(point.signal_close_return)}`).join(' · ') : '暂无有效路径数据'}</span>
+    </div>
   </div>;
 }
 
@@ -141,6 +174,29 @@ function decisionMeta(stock: DailyReviewStock) {
 
 function formatAnalysisPct(value?: number) {
   return Number.isFinite(value) ? `${Number(value) >= 0 ? '+' : ''}${Number(value).toFixed(2)}%` : '--';
+}
+
+function downloadAnalysisCSV(signals: DailyReviewSignal[], basis: string, executionPolicy: string) {
+  const header = ['signal_id', 'signal_date', 'symbol', 'strategy', 'score', 'return_basis', 'execution_policy', 'snapshot_status', 'd1_close_return', 'd3_close_return', 'd5_close_return', 'd10_close_return', 'd5_mfe', 'd5_mae', 'd5_path_drawdown', 'calculation_version', 'data_quality'];
+  const rows = signals.map((signal) => {
+    const horizon = (days: number) => {
+      const value = signal.tracking?.horizons?.[`d${days}`];
+      return value?.status === 'complete' ? value : undefined;
+    };
+    const d5 = horizon(5);
+    return [signal.id, signal.signal_date, signal.symbol, signal.strategy_name, signal.score.toFixed(4), basis, executionPolicy, signal.snapshot_status || '',
+      ...[1, 3, 5, 10].map((days) => horizon(days)?.close_return?.toFixed(4) || ''),
+      d5?.mfe?.toFixed(4) || '', d5?.mae?.toFixed(4) || '', d5?.max_path_drawdown?.toFixed(4) || '', d5?.calculation_version || '', d5?.data_quality || ''];
+  });
+  const csv = '\uFEFF' + [header, ...rows].map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(',')).join('\r\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'strategy-analysis.csv';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 type AnalysisHorizonKey = 'd1' | 'd3' | 'd5' | 'd10';
@@ -229,6 +285,8 @@ export function DailyReviewWorkspace() {
   const [analysisStrategies, setAnalysisStrategies] = useState<string[]>([]);
   const [analysisBasis, setAnalysisBasis] = useState<'signal' | 'trade'>('signal');
   const [analysisExecutionPolicy, setAnalysisExecutionPolicy] = useState('none');
+  const [signalDetails, setSignalDetails] = useState<Record<string, DailyReviewSignalDetail>>({});
+  const [signalDetailLoading, setSignalDetailLoading] = useState('');
 
   const load = useCallback(async (batchID?: string) => {
     setLoading(true);
@@ -256,6 +314,22 @@ export function DailyReviewWorkspace() {
     } catch (error) { message.error(error instanceof Error ? error.message : '多日策略分析加载失败'); }
     finally { setAnalysisLoading(false); }
   }, [analysisBasis, analysisEndDate, analysisExecutionPolicy, analysisPreset, analysisStartDate]);
+
+  async function loadSignalDetail(signal: DailyReviewSignal) {
+    if (signalDetails[signal.id]) {
+      setSignalDetails((current) => { const next = { ...current }; delete next[signal.id]; return next; });
+      return;
+    }
+    setSignalDetailLoading(signal.id);
+    try {
+      const detail = await apiFetch<DailyReviewSignalDetail>(`/api/daily-review/signals/${encodeURIComponent(signal.id)}`);
+      setSignalDetails((current) => ({ ...current, [signal.id]: detail }));
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '信号详情加载失败');
+    } finally {
+      setSignalDetailLoading('');
+    }
+  }
 
   useEffect(() => {
     void Promise.all([
@@ -319,6 +393,15 @@ export function DailyReviewWorkspace() {
     if (!value) return source;
     return source.filter((stock) => [stock.symbol, stockNames[normalizeSymbol(stock.symbol)] || '', ...stock.strategies].some((item) => item.toLowerCase().includes(value)));
   }, [analysisKeyword, analysisStockRows, analysisView, stockNames]);
+
+  const visibleAnalysisExecutionRows = useMemo(() => {
+    const selectedStrategyIDs = new Set(analysisStrategies);
+    const value = analysisKeyword.trim().toLowerCase();
+    return (analysis.signals || []).filter((signal) => {
+      if (selectedStrategyIDs.size > 0 && !selectedStrategyIDs.has(signal.strategy_id)) return false;
+      return !value || [signal.symbol, signal.strategy_name].some((item) => item.toLowerCase().includes(value));
+    });
+  }, [analysis.signals, analysisKeyword, analysisStrategies]);
 
   async function setDecision(stock: DailyReviewStock, next: 'watch' | 'exclude' | 'clear') {
     setActionSymbol(stock.symbol);
@@ -408,6 +491,7 @@ export function DailyReviewWorkspace() {
     { title: '日均', dataIndex: 'average_daily_signals', width: 76, sorter: (left: DailyStrategyAnalysisMetric, right: DailyStrategyAnalysisMetric) => left.average_daily_signals - right.average_daily_signals, render: (value: number) => value.toFixed(1) },
     { title: '股票数', dataIndex: 'unique_symbols', width: 82, sorter: (left: DailyStrategyAnalysisMetric, right: DailyStrategyAnalysisMetric) => left.unique_symbols - right.unique_symbols },
     { title: '均分', dataIndex: 'average_score', width: 78, sorter: (left: DailyStrategyAnalysisMetric, right: DailyStrategyAnalysisMetric) => left.average_score - right.average_score, render: (value: number) => value.toFixed(1) },
+    { title: 'D5 IC', dataIndex: 'd5_ic', width: 76, sorter: (left: DailyStrategyAnalysisMetric, right: DailyStrategyAnalysisMetric) => Number(left.d5_ic || 0) - Number(right.d5_ic || 0), render: (value: number) => Number.isFinite(value) ? value.toFixed(2) : '--' },
     { title: '共振', dataIndex: 'consensus_signals', width: 76, sorter: (left: DailyStrategyAnalysisMetric, right: DailyStrategyAnalysisMetric) => left.consensus_signals - right.consensus_signals },
     ...(['d1', 'd3', 'd5', 'd10'] as AnalysisHorizonKey[]).map((horizon) => ({
       title: horizon.toUpperCase(), key: horizon, width: 174,
@@ -431,9 +515,22 @@ export function DailyReviewWorkspace() {
           <strong className={stats.median_return >= 0 ? 'analysis-positive' : 'analysis-negative'}>中位 {formatAnalysisPct(stats.median_return)}</strong>
           <small>P25 {formatAnalysisPct(stats.p25_return)} · P75 {formatAnalysisPct(stats.p75_return)}</small>
           <small>均值 {formatAnalysisPct(stats.average_return)} · MFE {formatAnalysisPct(stats.average_mfe)} · MAE {formatAnalysisPct(stats.average_mae)}</small>
+          <small>95%区间 {formatAnalysisPct(stats.confidence_low)} 至 {formatAnalysisPct(stats.confidence_high)} · 超额 {formatAnalysisPct(stats.average_excess_return)} {stats.sample_sufficient ? '' : `· 样本少于${stats.minimum_sample_size}`}</small>
         </span>;
       }
     }))
+  ];
+
+  const analysisExecutionColumns = [
+    { title: '日期', dataIndex: 'signal_date', width: 108 },
+    { title: '策略', dataIndex: 'strategy_name', width: 180 },
+    { title: '股票', dataIndex: 'symbol', width: 100, render: (value: string) => <strong>{value}</strong> },
+    { title: '模型', dataIndex: 'execution_policy', width: 130, render: (value: string) => value === 'next_quote' ? '信号后下一行情' : '次日开盘' },
+    { title: '状态', dataIndex: 'execution_status', width: 100, render: (value: string) => { const meta = executionStatusMeta(value); return <Tag color={meta.color}>{meta.label}</Tag>; } },
+    { title: '信号价', dataIndex: 'signal_price', width: 100, render: (value: number) => value > 0 ? value.toFixed(3) : '--' },
+    { title: '成交价', dataIndex: 'entry_price', width: 100, render: (value: number) => value > 0 ? value.toFixed(3) : '--' },
+    { title: '费用', dataIndex: 'execution_cost', width: 90, render: (value: number) => value > 0 ? value.toFixed(2) : '--' },
+    { title: '失败原因', dataIndex: 'failure_reason', width: 240, render: (value: string) => value || '--' }
   ];
 
   const selected = review.selected_batch;
@@ -453,6 +550,9 @@ export function DailyReviewWorkspace() {
     d5: summarizeAnalysisHorizon(visibleAnalysisStrategies, 'd5'),
     d10: summarizeAnalysisHorizon(visibleAnalysisStrategies, 'd10')
   };
+  const exportAnalysisSignals = analysisView === 'paper' ? visibleAnalysisExecutionRows
+    : analysisView === 'stocks' || analysisView === 'consensus' ? visibleAnalysisStocks.flatMap((stock) => stock.signals)
+      : (analysis.signals || []).filter((signal) => analysisStrategies.length === 0 || analysisStrategies.includes(signal.strategy_id));
   return (
     <div className="daily-review-workspace">
       <div className="daily-review-mode-bar">
@@ -469,8 +569,8 @@ export function DailyReviewWorkspace() {
             {analysisPreset === 'custom' ? <label className="daily-analysis-filter-field"><span>开始日期</span><Input type="date" value={analysisStartDate} onChange={(event) => setAnalysisStartDate(event.target.value)} /></label> : null}
             <label className="daily-analysis-filter-field"><span>结束日期</span><Input type="date" value={analysisEndDate} onChange={(event) => setAnalysisEndDate(event.target.value)} /></label>
             <label className="daily-analysis-filter-field daily-analysis-strategy-field"><span>选择策略（可多选）</span><Select mode="multiple" value={analysisStrategies} onChange={setAnalysisStrategies} allowClear showSearch optionFilterProp="label" maxTagCount={2} maxTagPlaceholder={(omittedValues) => `+${omittedValues.length} 个`} placeholder="全部系统策略" options={analysis.strategies.map((item) => ({ value: item.strategy_id, label: item.strategy_name }))} /></label>
-            <label className="daily-analysis-filter-field"><span>收益口径</span><Select value={analysisBasis} onChange={setAnalysisBasis} options={[{ value: 'signal', label: '相对信号价' }, { value: 'trade', label: '相对成交价（待执行）', disabled: true }]} /></label>
-            <label className="daily-analysis-filter-field"><span>成交模型</span><Select value={analysisExecutionPolicy} onChange={setAnalysisExecutionPolicy} options={[{ value: 'none', label: '仅信号跟踪' }, { value: 'next_quote', label: '下一行情（待执行）', disabled: true }, { value: 'next_day_open', label: '次日开盘（待执行）', disabled: true }]} /></label>
+            <label className="daily-analysis-filter-field"><span>收益口径</span><Select value={analysisBasis} onChange={setAnalysisBasis} options={[{ value: 'signal', label: '相对信号价' }, { value: 'trade', label: '相对成交价' }]} /></label>
+            <label className="daily-analysis-filter-field"><span>成交模型</span><Select value={analysisExecutionPolicy} onChange={setAnalysisExecutionPolicy} options={[{ value: 'none', label: '自动选择' }, { value: 'next_quote', label: '信号后下一行情' }, { value: 'next_day_open', label: '次日开盘' }]} /></label>
             <Button className="daily-analysis-apply" type="primary" icon={<BarChartOutlined />} loading={analysisLoading} onClick={() => void loadAnalysis(analysisPreset, analysisEndDate, analysisStartDate, analysisBasis, analysisExecutionPolicy)}>应用分析</Button>
           </div>
           <div className="daily-analysis-range"><span>当前区间</span><strong>{analysis.start_date || '--'} 至 {analysis.end_date || '--'}</strong><small>{analysis.trading_days} 个有日报的交易日<br />{analysisStrategies.length ? `已选 ${analysisStrategies.length} 个策略` : '全部系统策略'} · {analysisBasis === 'signal' ? '相对信号价' : '相对成交价'}</small></div>
@@ -506,10 +606,12 @@ export function DailyReviewWorkspace() {
               { value: 'overview', label: `策略概览 ${visibleAnalysisStrategies.length}`, icon: <CheckCircleOutlined /> },
               { value: 'stocks', label: `全部股票 ${analysisStockRows.length}`, icon: <UnorderedListOutlined /> },
               { value: 'consensus', label: `多策略共振 ${selectedAnalysisConsensusCount}`, icon: <TeamOutlined /> },
-              { value: 'distribution', label: '收益分布', icon: <BarChartOutlined /> }
+              { value: 'distribution', label: '收益分布', icon: <BarChartOutlined /> },
+              { value: 'paper', label: '模拟执行', icon: <ClockCircleOutlined /> }
             ]} />
-            {analysisView === 'stocks' || analysisView === 'consensus' ? <Input.Search allowClear placeholder="代码、名称或策略" value={analysisKeyword} onChange={(event) => setAnalysisKeyword(event.target.value)} /> : null}
+            {analysisView === 'stocks' || analysisView === 'consensus' || analysisView === 'paper' ? <Input.Search allowClear placeholder="代码、名称或策略" value={analysisKeyword} onChange={(event) => setAnalysisKeyword(event.target.value)} /> : null}
             <Text type="secondary" className="daily-analysis-basis-note">收益口径：{analysisBasis === 'signal' ? '相对信号价' : '相对成交价'} · 跟踪版本 tracking-v3</Text>
+            <Tooltip title="导出当前分析结果"><Button aria-label="导出当前分析结果" icon={<DownloadOutlined />} onClick={() => downloadAnalysisCSV(exportAnalysisSignals, analysis.return_basis || 'signal', analysis.execution_policy || 'next_day_open')} /></Tooltip>
           </div>
           {analysisView === 'overview' ? <Table<DailyStrategyAnalysisMetric>
             size="small" rowKey="strategy_id" loading={analysisLoading} dataSource={visibleAnalysisStrategies} columns={analysisStrategyColumns}
@@ -524,8 +626,13 @@ export function DailyReviewWorkspace() {
           {analysisView === 'stocks' || analysisView === 'consensus' ? <Table<DailyReviewStock>
             size="small" rowKey={(row) => `${row.signal_date}-${row.symbol}`} loading={analysisLoading} dataSource={visibleAnalysisStocks} columns={stockColumns}
             sortDirections={['ascend', 'descend']} pagination={{ pageSize: 50, showSizeChanger: false, showTotal: (total) => `共 ${total} 条` }} scroll={{ x: 1540 }}
-            expandable={{ expandedRowRender: (stock) => <div className="daily-review-signal-detail">{trackingDetail(stock.tracking)}{stock.signals.map((signal) => { const detail = parseJSON<{ rank?: number; strategy_score?: number; reasons?: string[]; rank_reason?: string }>(signal.detail_json, {}); return <Fragment key={signal.id}>{signalFact(signal)}<div><strong>{signal.strategy_name}</strong><span>第 {detail.rank || '--'} 名 · 统一分 {signal.score.toFixed(1)} · 策略分 {Number(detail.strategy_score || 0).toFixed(1)}</span><span>{detail.rank_reason || detail.reasons?.join('；') || '无附加说明'}</span></div></Fragment>; })}</div> }}
+            expandable={{ expandedRowRender: (stock) => <div className="daily-review-signal-detail">{trackingDetail(stock.tracking)}{stock.signals.map((signal) => { const detail = parseJSON<{ rank?: number; strategy_score?: number; reasons?: string[]; rank_reason?: string }>(signal.detail_json, {}); return <Fragment key={signal.id}>{signalFact(signal, loadSignalDetail)}{signalExecutionDetail(signalDetails[signal.id], signalDetailLoading === signal.id)}<div><strong>{signal.strategy_name}</strong><span>第 {detail.rank || '--'} 名 · 统一分 {signal.score.toFixed(1)} · 策略分 {Number(detail.strategy_score || 0).toFixed(1)}</span><span>{detail.rank_reason || detail.reasons?.join('；') || '无附加说明'}</span></div></Fragment>; })}</div> }}
             locale={{ emptyText: analysisView === 'consensus' ? '所选策略在当前区间没有多策略共振' : '所选策略在当前区间没有选股信号' }}
+          /> : null}
+          {analysisView === 'paper' ? <Table<DailyReviewSignal>
+            size="small" rowKey="id" loading={analysisLoading} dataSource={visibleAnalysisExecutionRows} columns={analysisExecutionColumns}
+            pagination={{ pageSize: 50, showSizeChanger: false, showTotal: (total) => `共 ${total} 条信号` }} scroll={{ x: 1150 }}
+            locale={{ emptyText: '当前区间没有模拟执行记录' }}
           /> : null}
         </Card>
       </div> : null}
@@ -563,7 +670,7 @@ export function DailyReviewWorkspace() {
             {view !== 'overview' ? <Table<DailyReviewStock>
               size="small" rowKey="symbol" loading={loading} dataSource={visibleStocks} columns={stockColumns}
               sortDirections={['ascend', 'descend']} pagination={{ pageSize: 50, showSizeChanger: false, showTotal: (total) => `共 ${total} 只` }} scroll={{ x: 1540 }}
-            expandable={{ expandedRowRender: (stock) => <div className="daily-review-signal-detail">{trackingDetail(stock.tracking)}{stock.signals.map((signal) => { const detail = parseJSON<{ rank?: number; strategy_score?: number; reasons?: string[]; rank_reason?: string }>(signal.detail_json, {}); return <Fragment key={signal.id}>{signalFact(signal)}<div><strong>{signal.strategy_name}</strong><span>第 {detail.rank || '--'} 名 · 统一分 {signal.score.toFixed(1)} · 策略分 {Number(detail.strategy_score || 0).toFixed(1)}</span><span>{detail.rank_reason || detail.reasons?.join('；') || '无附加说明'}</span></div></Fragment>; })}</div> }}
+            expandable={{ expandedRowRender: (stock) => <div className="daily-review-signal-detail">{trackingDetail(stock.tracking)}{stock.signals.map((signal) => { const detail = parseJSON<{ rank?: number; strategy_score?: number; reasons?: string[]; rank_reason?: string }>(signal.detail_json, {}); return <Fragment key={signal.id}>{signalFact(signal, loadSignalDetail)}{signalExecutionDetail(signalDetails[signal.id], signalDetailLoading === signal.id)}<div><strong>{signal.strategy_name}</strong><span>第 {detail.rank || '--'} 名 · 统一分 {signal.score.toFixed(1)} · 策略分 {Number(detail.strategy_score || 0).toFixed(1)}</span><span>{detail.rank_reason || detail.reasons?.join('；') || '无附加说明'}</span></div></Fragment>; })}</div> }}
               locale={{ emptyText: view === 'consensus' ? '当天没有多策略共振股票' : '当天没有选股信号' }}
             /> : null}
           </>}

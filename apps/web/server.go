@@ -120,7 +120,12 @@ func successResponse(w http.ResponseWriter, data interface{}) {
 
 // 返回错误响应
 func errorResponse(w http.ResponseWriter, message string) {
+	errorResponseWithStatus(w, http.StatusOK, message)
+}
+
+func errorResponseWithStatus(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(Response{
 		Code:    -1,
 		Message: message,
@@ -1019,6 +1024,7 @@ func registerWebRoutes() {
 	http.HandleFunc("/api/decision-notes/", handleDecisionNoteOperations)
 	http.HandleFunc("/api/daily-review", handleDailyReview)
 	http.HandleFunc("/api/daily-review/analysis", handleDailyReviewAnalysis)
+	http.HandleFunc("/api/daily-review/signals/", handleDailyReviewSignalDetail)
 	historicalBacktestHandler := proxyToService("SELECTION_WORKER_URL", selectionProxyOnly)
 	http.HandleFunc("/api/historical-backtests", historicalBacktestHandler)
 	http.HandleFunc("/api/historical-backtests/", historicalBacktestHandler)

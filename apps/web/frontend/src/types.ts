@@ -613,9 +613,67 @@ export interface DailyReviewSignal {
   snapshot_status?: string;
   strategy_version?: string;
   score: number;
+  execution_policy?: string;
+  execution_status?: string;
+  entry_price?: number;
+  execution_cost?: number;
+  failure_reason?: string;
   detail_json: string;
   tracking?: SelectionTracking;
   created_at: string;
+}
+
+export interface SignalExecutionSummary {
+  id: string;
+  selection_result_id: string;
+  policy_name: string;
+  policy_version: string;
+  execution_version: string;
+  status: string;
+  signal_at: string;
+  signal_price: number;
+  planned_at: string;
+  entry_at: string;
+  reference_price: number;
+  fill_price: number;
+  quantity: number;
+  slippage_bps: number;
+  gross_amount: number;
+  commission: number;
+  stamp_duty: number;
+  transfer_fee: number;
+  total_cost: number;
+  price_source: string;
+  failure_reason: string;
+  data_quality: string;
+  strategy_version: string;
+}
+
+export interface SignalPathPoint {
+  id: string;
+  execution_id: string;
+  trade_date: number;
+  symbol_day_index: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  signal_close_return: number;
+  trade_close_return: number;
+  data_status: string;
+}
+
+export interface SignalExecutionPath {
+  execution: SignalExecutionSummary;
+  observations: SignalPathPoint[];
+}
+
+export interface DailyReviewSignalDetail {
+  signal: DailyReviewSignal;
+  executions: SignalExecutionPath[];
+  signal_path: SignalPathPoint[];
+  calculation_version: string;
+  execution_version: string;
 }
 
 export interface DailyReviewStock {
@@ -698,6 +756,8 @@ export interface DailyStrategyAnalysisMetric {
   d10_average_return: number;
   d10_max_return: number;
   horizon_stats?: Record<string, DailyAnalysisHorizonStats>;
+  score_buckets?: Record<string, { count: number; average_return: number; positive_rate: number }>;
+  d5_ic?: number;
 }
 
 export interface DailyAnalysisHorizonStats {
@@ -712,6 +772,12 @@ export interface DailyAnalysisHorizonStats {
   average_mfe: number;
   average_mae: number;
   average_path_drawdown: number;
+  average_benchmark_return: number;
+  average_excess_return: number;
+  confidence_low: number;
+  confidence_high: number;
+  minimum_sample_size: number;
+  sample_sufficient: boolean;
   complete_rate?: number;
 }
 

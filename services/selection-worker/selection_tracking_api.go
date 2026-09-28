@@ -93,6 +93,8 @@ func toTrackingBars(rows []FormulaKline) []TrackingBar {
 			High:   row.High,
 			Low:    row.Low,
 			Close:  row.Close,
+			Volume: row.Vol,
+			Amount: row.Amount,
 		})
 	}
 	return bars

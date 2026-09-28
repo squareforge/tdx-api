@@ -81,6 +81,29 @@ func TestPatchIntradayNotWorkday(t *testing.T) {
 	}
 }
 
+func TestBuildIntradayKlineCarriesSnapshotMetadata(t *testing.T) {
+	quoteTime := time.Date(2026, 9, 15, 14, 45, 3, 0, time.Local)
+	quote := patchQuote("000001", protocol.ExchangeSZ, quoteTime, 10000, 10100, 10300, 10050, 10200, 800)
+	row, ok := buildIntradayKline([]FormulaKline{{Close: 10}}, quote)
+	if !ok {
+		t.Fatal("buildIntradayKline() returned false")
+	}
+	if row.SnapshotAt != quoteTime.Format(time.RFC3339) || row.SnapshotSource != "market-service.quote" {
+		t.Fatalf("snapshot metadata = %q/%q", row.SnapshotAt, row.SnapshotSource)
+	}
+}
+
+func TestApplyStrategySnapshotMarksHistoricalRowsAsInferred(t *testing.T) {
+	item := StrategySelectionItem{Symbol: "000001", Latest: 10}
+	applyStrategySnapshot(&item, []FormulaKline{{Date: 20260915, Close: 10}})
+	if item.SignalAt == "" || item.SignalPrice != 10 || item.SnapshotStatus != "inferred" {
+		t.Fatalf("historical snapshot = %+v", item)
+	}
+	if item.QuoteAt != "" || item.QuoteSource != "" {
+		t.Fatalf("historical row unexpectedly has quote evidence: %+v", item)
+	}
+}
+
 // 今日K已落库:不补,也不调快照接口
 func TestPatchIntradayAlreadyHasToday(t *testing.T) {
 	client, closeServer := newTestMarketClient(func(w http.ResponseWriter, r *http.Request) {

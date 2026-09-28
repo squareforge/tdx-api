@@ -96,15 +96,17 @@ func buildIntradayKline(rows []FormulaKline, quote *protocol.Quote) (FormulaKlin
 		yClose = rawLast * adj
 	}
 	return FormulaKline{
-		Date:   dateInt(k.Time),
-		Time:   timeInt(k.Time),
-		YClose: yClose,
-		Open:   k.Open.Float64() * adj,
-		High:   k.High.Float64() * adj,
-		Low:    k.Low.Float64() * adj,
-		Close:  k.Close.Float64() * adj,
-		Vol:    float64(k.Volume),
-		Amount: amountToYuan(k.Amount, k.Close.Float64(), float64(k.Volume)),
+		Date:           dateInt(k.Time),
+		Time:           timeInt(k.Time),
+		YClose:         yClose,
+		Open:           k.Open.Float64() * adj,
+		High:           k.High.Float64() * adj,
+		Low:            k.Low.Float64() * adj,
+		Close:          k.Close.Float64() * adj,
+		Vol:            float64(k.Volume),
+		Amount:         amountToYuan(k.Amount, k.Close.Float64(), float64(k.Volume)),
+		SnapshotAt:     k.Time.Format(time.RFC3339),
+		SnapshotSource: "market-service.quote",
 	}, true
 }
 

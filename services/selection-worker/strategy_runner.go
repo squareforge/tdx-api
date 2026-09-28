@@ -66,17 +66,24 @@ type StrategyRunResult struct {
 }
 
 type StrategySelectionItem struct {
-	Symbol        string                 `json:"symbol"`
-	Score         float64                `json:"score"`
-	StrategyScore float64                `json:"strategy_score"`
-	RankScore     float64                `json:"rank_score"`
-	Rank          int                    `json:"rank"`
-	RankFactors   StrategyRankFactors    `json:"rank_factors"`
-	RankReason    string                 `json:"rank_reason"`
-	Hit           bool                   `json:"hit"`
-	Latest        float64                `json:"latest"`
-	Reasons       []string               `json:"reasons"`
-	FactorResults []StrategyFactorResult `json:"factor_results"`
+	Symbol         string                 `json:"symbol"`
+	Score          float64                `json:"score"`
+	StrategyScore  float64                `json:"strategy_score"`
+	RankScore      float64                `json:"rank_score"`
+	Rank           int                    `json:"rank"`
+	RankFactors    StrategyRankFactors    `json:"rank_factors"`
+	RankReason     string                 `json:"rank_reason"`
+	Hit            bool                   `json:"hit"`
+	Latest         float64                `json:"latest"`
+	Reasons        []string               `json:"reasons"`
+	FactorResults  []StrategyFactorResult `json:"factor_results"`
+	SignalAt       string                 `json:"signal_at,omitempty"`
+	SignalPrice    float64                `json:"signal_price,omitempty"`
+	QuoteAt        string                 `json:"quote_at,omitempty"`
+	QuoteSource    string                 `json:"quote_source,omitempty"`
+	PriceType      string                 `json:"price_type,omitempty"`
+	QuoteAgeMS     int64                  `json:"quote_age_ms,omitempty"`
+	SnapshotStatus string                 `json:"snapshot_status,omitempty"`
 }
 
 type StrategyFactorResult struct {
@@ -112,6 +119,7 @@ func (r *AutomationRunner) runStrategySelection(ctx context.Context, task Automa
 	if err := r.store.SaveSelectionResults(run, Formula{ID: "strategy:" + strategy.ID, Name: strategy.Name}, items); err != nil {
 		return nil, nil, err
 	}
+	go r.resolveNextQuoteForRun(run.ID)
 	symbols := make([]string, 0, len(items))
 	for _, item := range items {
 		symbols = append(symbols, item.Symbol)
@@ -480,6 +488,7 @@ func (r *AutomationRunner) evaluateStrategySymbol(ctx context.Context, strategy 
 	}
 	if len(rows) > 0 {
 		item.Latest = rows[len(rows)-1].Close
+		applyStrategySnapshot(&item, rows)
 	}
 	for _, rule := range result.Config.Filters {
 		fr := r.evaluateFactor(result, symbol, rows, rule, true)
@@ -866,13 +875,44 @@ func strategyItemsToSelectionResults(items []StrategySelectionItem) []SelectionR
 	results := make([]SelectionResult, 0, len(items))
 	for _, item := range items {
 		results = append(results, SelectionResult{
-			Symbol:     item.Symbol,
-			Latest:     item.Latest,
-			DetailJSON: mustJSON(item),
-			CreatedAt:  nowText(),
+			Symbol:         item.Symbol,
+			Latest:         item.Latest,
+			SignalAt:       item.SignalAt,
+			SignalPrice:    item.SignalPrice,
+			QuoteAt:        item.QuoteAt,
+			QuoteSource:    item.QuoteSource,
+			PriceType:      item.PriceType,
+			QuoteAgeMS:     item.QuoteAgeMS,
+			SignalScore:    item.Score,
+			SnapshotStatus: item.SnapshotStatus,
+			DetailJSON:     mustJSON(item),
+			CreatedAt:      nowText(),
 		})
 	}
 	return results
+}
+
+func applyStrategySnapshot(item *StrategySelectionItem, rows []FormulaKline) {
+	if item == nil || item.Latest <= 0 {
+		return
+	}
+	item.SignalAt = nowText()
+	item.SignalPrice = item.Latest
+	item.PriceType = "latest"
+	item.SnapshotStatus = "inferred"
+	row := latest(rows)
+	if row.SnapshotAt == "" || row.Close <= 0 {
+		return
+	}
+	item.QuoteAt = row.SnapshotAt
+	item.QuoteSource = row.SnapshotSource
+	item.SnapshotStatus = "fresh"
+	if quotedAt, err := time.Parse(time.RFC3339, row.SnapshotAt); err == nil {
+		age := time.Since(quotedAt).Milliseconds()
+		if age > 0 {
+			item.QuoteAgeMS = age
+		}
+	}
 }
 
 func latest(rows []FormulaKline) FormulaKline {

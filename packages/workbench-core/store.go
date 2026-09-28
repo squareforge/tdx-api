@@ -109,20 +109,25 @@ type AutomationRun struct {
 }
 
 type SelectionResult struct {
-	ID                string             `json:"id"`
-	RunID             string             `json:"run_id"`
-	TaskID            string             `json:"task_id"`
-	TaskName          string             `json:"task_name"`
-	FormulaID         string             `json:"formula_id"`
-	FormulaName       string             `json:"formula_name"`
-	Symbol            string             `json:"symbol"`
-	Latest            float64            `json:"latest"`
-	SignalAt          string             `json:"signal_at,omitempty"`
-	SignalPrice       float64            `json:"signal_price,omitempty"`
-	QuoteAt           string             `json:"quote_at,omitempty"`
-	QuoteSource       string             `json:"quote_source,omitempty"`
-	PriceType         string             `json:"price_type,omitempty"`
-	QuoteAgeMS        int64              `json:"quote_age_ms,omitempty"`
+	ID          string  `json:"id"`
+	RunID       string  `json:"run_id"`
+	TaskID      string  `json:"task_id"`
+	TaskName    string  `json:"task_name"`
+	FormulaID   string  `json:"formula_id"`
+	FormulaName string  `json:"formula_name"`
+	Symbol      string  `json:"symbol"`
+	Latest      float64 `json:"latest"`
+	SignalAt    string  `json:"signal_at,omitempty"`
+	SignalPrice float64 `json:"signal_price,omitempty"`
+	QuoteAt     string  `json:"quote_at,omitempty"`
+	QuoteSource string  `json:"quote_source,omitempty"`
+	PriceType   string  `json:"price_type,omitempty"`
+	QuoteAgeMS  int64   `json:"quote_age_ms,omitempty"`
+	// NextQuote* are transient inputs for the follow-up paper execution
+	// capture. They are deliberately not persisted as signal evidence.
+	NextQuoteAt       string             `json:"-"`
+	NextQuotePrice    float64            `json:"-"`
+	NextQuoteSource   string             `json:"-"`
 	SignalScore       float64            `json:"signal_score,omitempty"`
 	StrategyVersion   string             `json:"strategy_version,omitempty"`
 	MarketContextJSON string             `json:"market_context_json,omitempty"`
@@ -413,6 +418,73 @@ func (s *AppStore) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_selection_results_symbol_created_at ON selection_results(symbol, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_selection_results_symbol ON selection_results(symbol)`,
 		`CREATE INDEX IF NOT EXISTS idx_selection_results_formula ON selection_results(formula_id)`,
+		`CREATE TABLE IF NOT EXISTS selection_signal_executions (
+			id TEXT PRIMARY KEY,
+			selection_result_id TEXT NOT NULL,
+			run_id TEXT NOT NULL DEFAULT '',
+			formula_id TEXT NOT NULL DEFAULT '',
+			symbol TEXT NOT NULL,
+			policy_name TEXT NOT NULL,
+			policy_version TEXT NOT NULL DEFAULT '1',
+			execution_version TEXT NOT NULL DEFAULT 'execution-v1',
+			side TEXT NOT NULL DEFAULT 'buy',
+			status TEXT NOT NULL DEFAULT 'planned',
+			signal_at TEXT NOT NULL DEFAULT '',
+			signal_price REAL NOT NULL DEFAULT 0,
+			planned_at TEXT NOT NULL DEFAULT '',
+			entry_at TEXT NOT NULL DEFAULT '',
+			reference_price REAL NOT NULL DEFAULT 0,
+			fill_price REAL NOT NULL DEFAULT 0,
+			quantity INTEGER NOT NULL DEFAULT 0,
+			slippage_bps REAL NOT NULL DEFAULT 0,
+			gross_amount REAL NOT NULL DEFAULT 0,
+			commission REAL NOT NULL DEFAULT 0,
+			stamp_duty REAL NOT NULL DEFAULT 0,
+			transfer_fee REAL NOT NULL DEFAULT 0,
+			total_cost REAL NOT NULL DEFAULT 0,
+			price_source TEXT NOT NULL DEFAULT '',
+			failure_reason TEXT NOT NULL DEFAULT '',
+			data_quality TEXT NOT NULL DEFAULT 'partial',
+			strategy_version TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			UNIQUE(selection_result_id, policy_name, policy_version)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_signal_executions_status ON selection_signal_executions(status, planned_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_signal_executions_result ON selection_signal_executions(selection_result_id, policy_name)`,
+		`CREATE TABLE IF NOT EXISTS selection_signal_observations (
+			id TEXT PRIMARY KEY,
+			selection_result_id TEXT NOT NULL,
+			execution_id TEXT NOT NULL DEFAULT '',
+			symbol TEXT NOT NULL,
+			trade_date INTEGER NOT NULL,
+			market_day_index INTEGER NOT NULL DEFAULT 0,
+			symbol_day_index INTEGER NOT NULL DEFAULT 0,
+			session_kind TEXT NOT NULL DEFAULT 'forward',
+			open REAL NOT NULL DEFAULT 0,
+			high REAL NOT NULL DEFAULT 0,
+			low REAL NOT NULL DEFAULT 0,
+			close REAL NOT NULL DEFAULT 0,
+			volume REAL NOT NULL DEFAULT 0,
+			amount REAL NOT NULL DEFAULT 0,
+			signal_open_return REAL NOT NULL DEFAULT 0,
+			signal_high_return REAL NOT NULL DEFAULT 0,
+			signal_low_return REAL NOT NULL DEFAULT 0,
+			signal_close_return REAL NOT NULL DEFAULT 0,
+			trade_open_return REAL NOT NULL DEFAULT 0,
+			trade_high_return REAL NOT NULL DEFAULT 0,
+			trade_low_return REAL NOT NULL DEFAULT 0,
+			trade_close_return REAL NOT NULL DEFAULT 0,
+			benchmark_symbol TEXT NOT NULL DEFAULT '',
+			benchmark_close_return REAL NOT NULL DEFAULT 0,
+			excess_close_return REAL NOT NULL DEFAULT 0,
+			adjustment_type TEXT NOT NULL DEFAULT '',
+			data_status TEXT NOT NULL DEFAULT 'valid',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			UNIQUE(selection_result_id, execution_id, trade_date, session_kind)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_signal_observations_result ON selection_signal_observations(selection_result_id, execution_id, symbol_day_index)`,
 		`CREATE TABLE IF NOT EXISTS selection_result_tracking (
 			id TEXT PRIMARY KEY,                         -- 主键，单条跟踪记录 ID
 			selection_result_id TEXT NOT NULL,           -- 对应 selection_results.id，一条选股结果
@@ -735,13 +807,27 @@ func (s *AppStore) migrate() error {
 	if _, err := s.db.Exec(`UPDATE selection_results SET
 		signal_at=CASE WHEN TRIM(signal_at)='' THEN created_at ELSE signal_at END,
 		signal_price=CASE WHEN signal_price<=0 THEN latest ELSE signal_price END,
-		quote_at=CASE WHEN TRIM(quote_at)='' THEN created_at ELSE quote_at END,
-		quote_source=CASE WHEN TRIM(quote_source)='' THEN 'legacy_selection' ELSE quote_source END,
 		price_type=CASE WHEN TRIM(price_type)='' THEN 'latest' ELSE price_type END,
 		strategy_version=CASE WHEN TRIM(strategy_version)='' THEN formula_id ELSE strategy_version END,
 		market_context_json=CASE WHEN TRIM(market_context_json)='' THEN '{}' ELSE market_context_json END,
-		snapshot_status=CASE WHEN (TRIM(snapshot_status)='' OR snapshot_status='missing') AND latest>0 THEN 'inferred' WHEN latest<=0 THEN 'missing' ELSE snapshot_status END
-		WHERE TRIM(signal_at)='' OR signal_price<=0 OR TRIM(quote_at)='' OR TRIM(quote_source)='' OR TRIM(price_type)='' OR TRIM(strategy_version)=''`); err != nil {
+		snapshot_status=CASE
+			WHEN latest<=0 THEN 'missing'
+			WHEN TRIM(quote_at)='' OR TRIM(quote_source)='' THEN 'inferred'
+			WHEN TRIM(snapshot_status)='' THEN 'inferred'
+			ELSE snapshot_status
+		END
+		WHERE TRIM(signal_at)='' OR signal_price<=0 OR TRIM(price_type)='' OR TRIM(strategy_version)='' OR TRIM(market_context_json)='' OR TRIM(snapshot_status)=''`); err != nil {
+		return err
+	}
+	// Older releases used these internal source labels while copying
+	// created_at into quote_at. Remove that synthetic evidence so legacy rows
+	// remain visibly inferred instead of looking like real-time snapshots.
+	if _, err := s.db.Exec(`UPDATE selection_results
+		SET quote_at='', quote_source='', snapshot_status=CASE WHEN latest>0 THEN 'inferred' ELSE 'missing' END
+		WHERE snapshot_status='inferred' AND quote_source IN ('legacy_selection','selection_result')`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_selection_results_business_key ON selection_results(run_id, formula_id, symbol, signal_at)`); err != nil {
 		return err
 	}
 	// Runs created before parent_run_id existed are linked to the enclosing
@@ -2317,21 +2403,24 @@ func (s *AppStore) FinishAutomationRun(runID, status, logText, resultJSON string
 }
 
 func (s *AppStore) SaveSelectionResults(run AutomationRun, formula Formula, items []SelectionResult) error {
-	if len(items) == 0 {
-		return nil
-	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-
-	if _, err := tx.Exec(`DELETE FROM selection_results WHERE run_id=?`, run.ID); err != nil {
+	// A run/formula is written atomically. Once it contains signals, a retry
+	// must preserve their original timestamps, IDs, executions, and observations.
+	var existing int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM selection_results WHERE run_id=? AND formula_id=?`, run.ID, formula.ID).Scan(&existing); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM selection_result_tracking WHERE run_id=?`, run.ID); err != nil {
-		return err
+	if existing > 0 {
+		return tx.Commit()
 	}
+	if len(items) == 0 {
+		return tx.Commit()
+	}
+	seenBusinessKeys := make(map[string]struct{}, len(items))
 	for _, item := range items {
 		if item.ID == "" {
 			item.ID = uuid.NewString()
@@ -2348,6 +2437,11 @@ func (s *AppStore) SaveSelectionResults(run AutomationRun, formula Formula, item
 			item.DetailJSON = "{}"
 		}
 		normalizeSelectionSnapshot(&item)
+		businessKey := strings.Join([]string{item.RunID, item.FormulaID, item.Symbol, item.SignalAt}, "\x00")
+		if _, exists := seenBusinessKeys[businessKey]; exists {
+			continue
+		}
+		seenBusinessKeys[businessKey] = struct{}{}
 		if _, err := tx.Exec(`INSERT INTO selection_results
 			(id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,
 			 signal_at,signal_price,quote_at,quote_source,price_type,quote_age_ms,signal_score,strategy_version,market_context_json,snapshot_status,
@@ -2363,8 +2457,178 @@ func (s *AppStore) SaveSelectionResults(run AutomationRun, formula Formula, item
 				return err
 			}
 		}
+		for _, execution := range BuildSelectionSignalExecutions(item, nil, time.Now()) {
+			if err := upsertSelectionSignalExecutionTx(tx, execution); err != nil {
+				return err
+			}
+		}
 	}
 	return tx.Commit()
+}
+
+func upsertSelectionSignalExecutionTx(tx *sql.Tx, item SelectionSignalExecution) error {
+	if item.ID == "" {
+		item.ID = uuid.NewString()
+	}
+	_, err := tx.Exec(`INSERT INTO selection_signal_executions
+		(id,selection_result_id,run_id,formula_id,symbol,policy_name,policy_version,execution_version,side,status,
+		 signal_at,signal_price,planned_at,entry_at,reference_price,fill_price,quantity,slippage_bps,gross_amount,commission,stamp_duty,transfer_fee,total_cost,
+		 price_source,failure_reason,data_quality,strategy_version,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(selection_result_id,policy_name,policy_version) DO UPDATE SET
+			run_id=COALESCE(NULLIF(excluded.run_id,''),selection_signal_executions.run_id),
+			formula_id=COALESCE(NULLIF(excluded.formula_id,''),selection_signal_executions.formula_id),
+			symbol=excluded.symbol,execution_version=excluded.execution_version,side=excluded.side,status=excluded.status,
+			signal_at=excluded.signal_at,signal_price=excluded.signal_price,planned_at=excluded.planned_at,entry_at=excluded.entry_at,reference_price=excluded.reference_price,fill_price=excluded.fill_price,
+			quantity=excluded.quantity,slippage_bps=excluded.slippage_bps,gross_amount=excluded.gross_amount,commission=excluded.commission,stamp_duty=excluded.stamp_duty,transfer_fee=excluded.transfer_fee,total_cost=excluded.total_cost,
+				price_source=excluded.price_source,failure_reason=excluded.failure_reason,data_quality=excluded.data_quality,strategy_version=excluded.strategy_version,updated_at=excluded.updated_at
+			WHERE selection_signal_executions.status NOT IN ('filled', 'rejected', 'unavailable')`,
+		item.ID, item.SelectionResultID, item.RunID, item.FormulaID, item.Symbol, item.PolicyName, item.PolicyVersion, item.ExecutionVersion, item.Side, item.Status,
+		item.SignalAt, item.SignalPrice, item.PlannedAt, item.EntryAt, item.ReferencePrice, item.FillPrice, item.Quantity, item.SlippageBPS, item.GrossAmount, item.Commission, item.StampDuty, item.TransferFee, item.TotalCost,
+		item.PriceSource, item.FailureReason, item.DataQuality, item.StrategyVersion, item.CreatedAt, item.UpdatedAt)
+	return err
+}
+
+// EnsureSelectionSignalExecutions resolves the two paper policies once the
+// worker has loaded forward daily bars. Re-running it is idempotent.
+func (s *AppStore) EnsureSelectionSignalExecutions(items []SelectionResult, bars map[string][]TrackingBar) error {
+	if len(items) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	now := time.Now()
+	for _, item := range items {
+		for _, execution := range BuildSelectionSignalExecutions(item, bars[strings.ToUpper(item.Symbol)], now) {
+			if err := upsertSelectionSignalExecutionTx(tx, execution); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *AppStore) ListSelectionSignalExecutions(selectionResultID, policy string) ([]SelectionSignalExecution, error) {
+	query := `SELECT id,selection_result_id,run_id,formula_id,symbol,policy_name,policy_version,execution_version,side,status,
+		signal_at,signal_price,planned_at,entry_at,reference_price,fill_price,quantity,slippage_bps,gross_amount,commission,stamp_duty,transfer_fee,total_cost,
+		price_source,failure_reason,data_quality,strategy_version,created_at,updated_at
+		FROM selection_signal_executions WHERE selection_result_id=?`
+	args := []interface{}{selectionResultID}
+	if strings.TrimSpace(policy) != "" {
+		query += " AND policy_name=?"
+		args = append(args, policy)
+	}
+	query += " ORDER BY policy_name"
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SelectionSignalExecution{}
+	for rows.Next() {
+		var item SelectionSignalExecution
+		if err := rows.Scan(&item.ID, &item.SelectionResultID, &item.RunID, &item.FormulaID, &item.Symbol, &item.PolicyName, &item.PolicyVersion, &item.ExecutionVersion, &item.Side, &item.Status,
+			&item.SignalAt, &item.SignalPrice, &item.PlannedAt, &item.EntryAt, &item.ReferencePrice, &item.FillPrice, &item.Quantity, &item.SlippageBPS, &item.GrossAmount, &item.Commission, &item.StampDuty, &item.TransferFee, &item.TotalCost,
+			&item.PriceSource, &item.FailureReason, &item.DataQuality, &item.StrategyVersion, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *AppStore) SaveSelectionSignalObservations(rows []SelectionSignalObservation) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, item := range rows {
+		if item.ID == "" {
+			item.ID = uuid.NewString()
+		}
+		if item.SessionKind == "" {
+			item.SessionKind = "forward"
+		}
+		if err := upsertSelectionSignalObservationTx(tx, item); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func upsertSelectionSignalObservationTx(tx *sql.Tx, item SelectionSignalObservation) error {
+	_, err := tx.Exec(`INSERT INTO selection_signal_observations
+		(id,selection_result_id,execution_id,symbol,trade_date,market_day_index,symbol_day_index,session_kind,open,high,low,close,volume,amount,
+		 signal_open_return,signal_high_return,signal_low_return,signal_close_return,trade_open_return,trade_high_return,trade_low_return,trade_close_return,
+		 benchmark_symbol,benchmark_close_return,excess_close_return,adjustment_type,data_status,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(selection_result_id,execution_id,trade_date,session_kind) DO UPDATE SET
+			symbol=excluded.symbol,market_day_index=excluded.market_day_index,symbol_day_index=excluded.symbol_day_index,open=excluded.open,high=excluded.high,low=excluded.low,close=excluded.close,volume=excluded.volume,amount=excluded.amount,
+			signal_open_return=excluded.signal_open_return,signal_high_return=excluded.signal_high_return,signal_low_return=excluded.signal_low_return,signal_close_return=excluded.signal_close_return,
+			trade_open_return=excluded.trade_open_return,trade_high_return=excluded.trade_high_return,trade_low_return=excluded.trade_low_return,trade_close_return=excluded.trade_close_return,
+			benchmark_symbol=excluded.benchmark_symbol,benchmark_close_return=excluded.benchmark_close_return,excess_close_return=excluded.excess_close_return,adjustment_type=excluded.adjustment_type,data_status=excluded.data_status,updated_at=excluded.updated_at`,
+		item.ID, item.SelectionResultID, item.ExecutionID, item.Symbol, item.TradeDate, item.MarketDayIndex, item.SymbolDayIndex, item.SessionKind, item.Open, item.High, item.Low, item.Close, item.Volume, item.Amount,
+		item.SignalOpenReturn, item.SignalHighReturn, item.SignalLowReturn, item.SignalCloseReturn, item.TradeOpenReturn, item.TradeHighReturn, item.TradeLowReturn, item.TradeCloseReturn,
+		item.BenchmarkSymbol, item.BenchmarkCloseReturn, item.ExcessCloseReturn, item.AdjustmentType, item.DataStatus, item.CreatedAt, item.UpdatedAt)
+	return err
+}
+
+func (s *AppStore) ListSelectionSignalObservations(selectionResultID, executionID string) ([]SelectionSignalObservation, error) {
+	query := `SELECT id,selection_result_id,execution_id,symbol,trade_date,market_day_index,symbol_day_index,session_kind,open,high,low,close,volume,amount,
+		signal_open_return,signal_high_return,signal_low_return,signal_close_return,trade_open_return,trade_high_return,trade_low_return,trade_close_return,
+		benchmark_symbol,benchmark_close_return,excess_close_return,adjustment_type,data_status,created_at,updated_at
+		FROM selection_signal_observations WHERE selection_result_id=?`
+	args := []interface{}{selectionResultID}
+	if strings.TrimSpace(executionID) != "" {
+		query += " AND execution_id=?"
+		args = append(args, executionID)
+	}
+	query += " ORDER BY trade_date,symbol_day_index"
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SelectionSignalObservation{}
+	for rows.Next() {
+		var item SelectionSignalObservation
+		if err := rows.Scan(&item.ID, &item.SelectionResultID, &item.ExecutionID, &item.Symbol, &item.TradeDate, &item.MarketDayIndex, &item.SymbolDayIndex, &item.SessionKind, &item.Open, &item.High, &item.Low, &item.Close, &item.Volume, &item.Amount,
+			&item.SignalOpenReturn, &item.SignalHighReturn, &item.SignalLowReturn, &item.SignalCloseReturn, &item.TradeOpenReturn, &item.TradeHighReturn, &item.TradeLowReturn, &item.TradeCloseReturn,
+			&item.BenchmarkSymbol, &item.BenchmarkCloseReturn, &item.ExcessCloseReturn, &item.AdjustmentType, &item.DataStatus, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *AppStore) ListSelectionSignalPath(selectionResultID string) ([]SelectionSignalObservation, error) {
+	rows, err := s.db.Query(`SELECT id,selection_result_id,execution_id,symbol,trade_date,market_day_index,symbol_day_index,session_kind,open,high,low,close,volume,amount,
+		signal_open_return,signal_high_return,signal_low_return,signal_close_return,trade_open_return,trade_high_return,trade_low_return,trade_close_return,
+		benchmark_symbol,benchmark_close_return,excess_close_return,adjustment_type,data_status,created_at,updated_at
+		FROM selection_signal_observations WHERE selection_result_id=? AND execution_id='' ORDER BY trade_date,symbol_day_index`, selectionResultID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SelectionSignalObservation{}
+	for rows.Next() {
+		var item SelectionSignalObservation
+		if err := rows.Scan(&item.ID, &item.SelectionResultID, &item.ExecutionID, &item.Symbol, &item.TradeDate, &item.MarketDayIndex, &item.SymbolDayIndex, &item.SessionKind, &item.Open, &item.High, &item.Low, &item.Close, &item.Volume, &item.Amount,
+			&item.SignalOpenReturn, &item.SignalHighReturn, &item.SignalLowReturn, &item.SignalCloseReturn, &item.TradeOpenReturn, &item.TradeHighReturn, &item.TradeLowReturn, &item.TradeCloseReturn,
+			&item.BenchmarkSymbol, &item.BenchmarkCloseReturn, &item.ExcessCloseReturn, &item.AdjustmentType, &item.DataStatus, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 // normalizeSelectionSnapshot preserves the original selection row while making
@@ -2375,12 +2639,6 @@ func normalizeSelectionSnapshot(item *SelectionResult) {
 	}
 	if item.SignalPrice <= 0 {
 		item.SignalPrice = item.Latest
-	}
-	if item.QuoteAt == "" {
-		item.QuoteAt = item.SignalAt
-	}
-	if item.QuoteSource == "" {
-		item.QuoteSource = "selection_result"
 	}
 	if item.PriceType == "" {
 		item.PriceType = "latest"
@@ -2395,7 +2653,15 @@ func normalizeSelectionSnapshot(item *SelectionResult) {
 		item.MarketContextJSON = "{}"
 	}
 	if item.SnapshotStatus == "" {
-		if item.SignalPrice > 0 && item.SignalAt != "" {
+		if item.SignalPrice > 0 {
+			item.SnapshotStatus = "inferred"
+		} else {
+			item.SnapshotStatus = "missing"
+		}
+	}
+	if (item.SnapshotStatus == "fresh" || item.SnapshotStatus == "valid" || item.SnapshotStatus == "stale") &&
+		(item.SignalPrice <= 0 || strings.TrimSpace(item.QuoteAt) == "" || strings.TrimSpace(item.QuoteSource) == "") {
+		if item.SignalPrice > 0 {
 			item.SnapshotStatus = "inferred"
 		} else {
 			item.SnapshotStatus = "missing"
@@ -2515,6 +2781,20 @@ func (s *AppStore) ListSelectionResults(taskID, formulaID, symbol string, onlyLa
 		return nil, err
 	}
 	return list, queryErr
+}
+
+func (s *AppStore) GetSelectionResult(id string) (SelectionResult, error) {
+	item, err := scanSelectionResultRow(s.db.QueryRow(`SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,
+		signal_at,signal_price,quote_at,quote_source,price_type,quote_age_ms,signal_score,strategy_version,market_context_json,snapshot_status,
+		detail_json,created_at FROM selection_results WHERE id=?`, id))
+	if err != nil {
+		return SelectionResult{}, err
+	}
+	items := []SelectionResult{item}
+	if err := s.hydrateSelectionResultsTracking(items); err != nil {
+		return SelectionResult{}, err
+	}
+	return items[0], nil
 }
 
 // ListIncompleteSelectionTrackingResults returns every selection result whose
@@ -2961,6 +3241,7 @@ func (s *AppStore) dropSelectionResultsTrackingJSONColumn() error {
 		`CREATE INDEX IF NOT EXISTS idx_selection_results_symbol ON selection_results(symbol)`,
 		`CREATE INDEX IF NOT EXISTS idx_selection_results_formula ON selection_results(formula_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_selection_results_signal_at ON selection_results(signal_at DESC)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_selection_results_business_key ON selection_results(run_id, formula_id, symbol, signal_at)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := tx.Exec(stmt); err != nil {

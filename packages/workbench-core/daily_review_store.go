@@ -3,6 +3,7 @@ package workbench
 import (
 	"database/sql"
 	"encoding/json"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -54,6 +55,11 @@ type DailyReviewSignal struct {
 	SnapshotStatus  string             `json:"snapshot_status,omitempty"`
 	StrategyVersion string             `json:"strategy_version,omitempty"`
 	Score           float64            `json:"score"`
+	ExecutionPolicy string             `json:"execution_policy,omitempty"`
+	ExecutionStatus string             `json:"execution_status,omitempty"`
+	EntryPrice      float64            `json:"entry_price,omitempty"`
+	ExecutionCost   float64            `json:"execution_cost,omitempty"`
+	FailureReason   string             `json:"failure_reason,omitempty"`
 	DetailJSON      string             `json:"detail_json"`
 	Tracking        *SelectionTracking `json:"tracking,omitempty"`
 	CreatedAt       string             `json:"created_at"`
@@ -141,21 +147,35 @@ type DailyStrategyAnalysisMetric struct {
 	D10AverageReturn    float64                              `json:"d10_average_return"`
 	D10MaxReturn        float64                              `json:"d10_max_return"`
 	HorizonStats        map[string]DailyAnalysisHorizonStats `json:"horizon_stats"`
+	ScoreBuckets        map[string]DailyScoreBucket          `json:"score_buckets"`
+	D5IC                float64                              `json:"d5_ic"`
+}
+
+type DailyScoreBucket struct {
+	Count         int     `json:"count"`
+	AverageReturn float64 `json:"average_return"`
+	PositiveRate  float64 `json:"positive_rate"`
 }
 
 type DailyAnalysisHorizonStats struct {
-	Completed           int     `json:"completed"`
-	PositiveCount       int     `json:"positive_count"`
-	PositiveRate        float64 `json:"positive_rate"`
-	AverageReturn       float64 `json:"average_return"`
-	MedianReturn        float64 `json:"median_return"`
-	P25Return           float64 `json:"p25_return"`
-	P75Return           float64 `json:"p75_return"`
-	MaxReturn           float64 `json:"max_return"`
-	AverageMFE          float64 `json:"average_mfe"`
-	AverageMAE          float64 `json:"average_mae"`
-	AveragePathDrawdown float64 `json:"average_path_drawdown"`
-	CompleteRate        float64 `json:"complete_rate"`
+	Completed              int     `json:"completed"`
+	PositiveCount          int     `json:"positive_count"`
+	PositiveRate           float64 `json:"positive_rate"`
+	AverageReturn          float64 `json:"average_return"`
+	MedianReturn           float64 `json:"median_return"`
+	P25Return              float64 `json:"p25_return"`
+	P75Return              float64 `json:"p75_return"`
+	MaxReturn              float64 `json:"max_return"`
+	AverageMFE             float64 `json:"average_mfe"`
+	AverageMAE             float64 `json:"average_mae"`
+	AveragePathDrawdown    float64 `json:"average_path_drawdown"`
+	AverageBenchmarkReturn float64 `json:"average_benchmark_return"`
+	AverageExcessReturn    float64 `json:"average_excess_return"`
+	ConfidenceLow          float64 `json:"confidence_low"`
+	ConfidenceHigh         float64 `json:"confidence_high"`
+	MinimumSampleSize      int     `json:"minimum_sample_size"`
+	SampleSufficient       bool    `json:"sample_sufficient"`
+	CompleteRate           float64 `json:"complete_rate"`
 }
 
 type DailyStrategyAnalysisData struct {
@@ -305,11 +325,13 @@ func (s *AppStore) BuildDailyReview(date, batchID string, limit int) (DailyRevie
 	for _, item := range results {
 		symbol := strings.ToUpper(item.Symbol)
 		selectionPrice := effectiveSelectionPrice(item)
+		executionPolicy, executionStatus, entryPrice, executionCost, failureReason := s.signalExecutionSummary(item, ExecutionPolicyNextDayOpen)
 		signal := DailyReviewSignal{
 			ID: item.ID, RunID: item.RunID, StrategyID: strategyIDsByRun[item.RunID], StrategyName: item.FormulaName,
 			SignalDate: selected.Date, Symbol: symbol, Latest: selectionPrice, SignalAt: item.SignalAt, SignalPrice: selectionPrice,
 			QuoteAt: item.QuoteAt, QuoteSource: item.QuoteSource, PriceType: item.PriceType, QuoteAgeMS: item.QuoteAgeMS,
 			SnapshotStatus: item.SnapshotStatus, StrategyVersion: item.StrategyVersion, Score: selectionResultScore(item.DetailJSON),
+			ExecutionPolicy: executionPolicy, ExecutionStatus: executionStatus, EntryPrice: entryPrice, ExecutionCost: executionCost, FailureReason: failureReason,
 			DetailJSON: item.DetailJSON, Tracking: item.Tracking, CreatedAt: item.CreatedAt,
 		}
 		signals = append(signals, signal)
@@ -397,6 +419,16 @@ func (s *AppStore) BuildDailyReview(date, batchID string, limit int) (DailyRevie
 }
 
 func (s *AppStore) BuildDailyStrategyAnalysis(startDate, endDate string, days, limit int) (DailyStrategyAnalysisData, error) {
+	return s.BuildDailyStrategyAnalysisWithOptions(startDate, endDate, days, limit, "signal", "")
+}
+
+func (s *AppStore) BuildDailyStrategyAnalysisWithOptions(startDate, endDate string, days, limit int, returnBasis, executionPolicy string) (DailyStrategyAnalysisData, error) {
+	if returnBasis != "trade" {
+		returnBasis = "signal"
+	}
+	if executionPolicy == "" {
+		executionPolicy = ExecutionPolicyNextDayOpen
+	}
 	if limit <= 0 || limit > 20000 {
 		limit = 20000
 	}
@@ -477,15 +509,21 @@ func (s *AppStore) BuildDailyStrategyAnalysis(startDate, endDate string, days, l
 			symbol := strings.ToUpper(item.Symbol)
 			selectionPrice := effectiveSelectionPrice(item)
 			score := selectionResultScore(item.DetailJSON)
+			tracking := item.Tracking
+			if returnBasis == "trade" {
+				tracking = s.selectionExecutionTracking(item, executionPolicy)
+			}
+			_, executionStatus, entryPrice, executionCost, failureReason := s.signalExecutionSummary(item, executionPolicy)
 			reviewSignal := DailyReviewSignal{
 				ID: item.ID, RunID: item.RunID, StrategyID: strategyID, StrategyName: strategyName,
 				SignalDate: batch.Date, Symbol: symbol, Latest: selectionPrice, SignalAt: item.SignalAt, SignalPrice: selectionPrice,
 				QuoteAt: item.QuoteAt, QuoteSource: item.QuoteSource, PriceType: item.PriceType, QuoteAgeMS: item.QuoteAgeMS,
 				SnapshotStatus: item.SnapshotStatus, StrategyVersion: item.StrategyVersion, Score: score,
-				DetailJSON: item.DetailJSON, Tracking: item.Tracking, CreatedAt: item.CreatedAt,
+				ExecutionPolicy: executionPolicy, ExecutionStatus: executionStatus, EntryPrice: entryPrice, ExecutionCost: executionCost, FailureReason: failureReason,
+				DetailJSON: item.DetailJSON, Tracking: tracking, CreatedAt: item.CreatedAt,
 			}
 			reviewSignals = append(reviewSignals, reviewSignal)
-			s := dailyAnalysisSignal{date: batch.Date, symbol: symbol, strategyID: strategyID, score: score, tracking: item.Tracking}
+			s := dailyAnalysisSignal{date: batch.Date, symbol: symbol, strategyID: strategyID, score: score, tracking: tracking}
 			strategySignals[strategyID] = append(strategySignals[strategyID], s)
 			daySignals[batch.Date] = append(daySignals[batch.Date], s)
 		}
@@ -511,7 +549,8 @@ func (s *AppStore) BuildDailyStrategyAnalysis(startDate, endDate string, days, l
 	var totalScore float64
 	for strategyID, strategyName := range strategyNames {
 		signals := strategySignals[strategyID]
-		metric := DailyStrategyAnalysisMetric{StrategyID: strategyID, StrategyName: strategyName, RunDays: len(strategyDays[strategyID]), SignalCount: len(signals), UniqueSymbols: 0, HorizonStats: map[string]DailyAnalysisHorizonStats{}}
+		metric := DailyStrategyAnalysisMetric{StrategyID: strategyID, StrategyName: strategyName, RunDays: len(strategyDays[strategyID]), SignalCount: len(signals), UniqueSymbols: 0, HorizonStats: map[string]DailyAnalysisHorizonStats{}, ScoreBuckets: aggregateScoreBuckets(signals, "d5")}
+		metric.D5IC = roundDailyFloat(scoreReturnIC(signals, "d5"))
 		symbols := map[string]bool{}
 		for _, item := range signals {
 			symbols[item.symbol] = true
@@ -569,12 +608,50 @@ func (s *AppStore) BuildDailyStrategyAnalysis(startDate, endDate string, days, l
 		}
 		return reviewSignals[i].SignalDate > reviewSignals[j].SignalDate
 	})
+	benchmark := "none"
+	for _, signal := range reviewSignals {
+		if signal.Tracking == nil {
+			continue
+		}
+		for _, horizon := range signal.Tracking.Horizons {
+			if horizon.BenchmarkCloseReturn != 0 || horizon.ExcessCloseReturn != 0 {
+				benchmark = "sh000001"
+				break
+			}
+		}
+		if benchmark != "none" {
+			break
+		}
+	}
 	return DailyStrategyAnalysisData{
 		StartDate: startDate, EndDate: endDate, TradingDays: len(selected), StrategyCount: len(metrics),
 		SignalCount: sumAnalysisSignals(daySignals), UniqueSymbols: len(allSymbols), ConsensusCount: consensus,
 		AverageScore: roundDailyFloat(totalScore / float64(maxInt(sumAnalysisSignals(daySignals), 1))), Strategies: metrics,
+		ReturnBasis: returnBasis, ExecutionPolicy: executionPolicy, Benchmark: benchmark,
 		Stocks: stocks, Signals: reviewSignals, Consensus: consensusStocks,
 	}, nil
+}
+
+func (s *AppStore) selectionExecutionTracking(item SelectionResult, policy string) *SelectionTracking {
+	executions, err := s.ListSelectionSignalExecutions(item.ID, policy)
+	if err != nil || len(executions) == 0 || executions[0].Status != "filled" {
+		return nil
+	}
+	observations, err := s.ListSelectionSignalObservations(item.ID, executions[0].ID)
+	if err != nil || len(observations) == 0 {
+		return nil
+	}
+	tracking := EvaluateSelectionExecutionTracking(item, executions[0], observations, []int{1, 3, 5, 10}, DefaultTrackingTargetReturn, DefaultTrackingDrawdownLimit, time.Now())
+	return &tracking
+}
+
+func (s *AppStore) signalExecutionSummary(item SelectionResult, policy string) (string, string, float64, float64, string) {
+	executions, err := s.ListSelectionSignalExecutions(item.ID, policy)
+	if err != nil || len(executions) == 0 {
+		return policy, "unavailable", 0, 0, "未生成模拟成交记录"
+	}
+	execution := executions[0]
+	return execution.PolicyName, execution.Status, execution.FillPrice, execution.TotalCost, execution.FailureReason
 }
 
 func buildDailyAnalysisStocks(signals []DailyReviewSignal, notes map[string]DecisionNote, watch, exclude map[string]bool) ([]DailyReviewStock, []DailyReviewStock) {
@@ -696,6 +773,8 @@ type dailyTrackingStats struct {
 	averageReturn, maxReturn                    float64
 	medianReturn, p25Return, p75Return          float64
 	averageMFE, averageMAE, averagePathDrawdown float64
+	averageBenchmarkReturn, averageExcessReturn float64
+	confidenceLow, confidenceHigh               float64
 }
 
 func aggregateTrackingStats(signals []dailyAnalysisSignal, key string) dailyTrackingStats {
@@ -703,6 +782,7 @@ func aggregateTrackingStats(signals []dailyAnalysisSignal, key string) dailyTrac
 	total := 0.0
 	returns := []float64{}
 	mfeTotal, maeTotal, pathDrawdownTotal := 0.0, 0.0, 0.0
+	benchmarkTotal, excessTotal, squareTotal := 0.0, 0.0, 0.0
 	hasCompleted := false
 	for _, item := range signals {
 		if item.tracking == nil {
@@ -714,6 +794,9 @@ func aggregateTrackingStats(signals []dailyAnalysisSignal, key string) dailyTrac
 		}
 		stats.completed++
 		total += horizon.CloseReturn
+		squareTotal += horizon.CloseReturn * horizon.CloseReturn
+		benchmarkTotal += horizon.BenchmarkCloseReturn
+		excessTotal += horizon.ExcessCloseReturn
 		returns = append(returns, horizon.CloseReturn)
 		mfeTotal += horizon.MFE
 		maeTotal += horizon.MAE
@@ -743,7 +826,91 @@ func aggregateTrackingStats(signals []dailyAnalysisSignal, key string) dailyTrac
 	stats.averageMFE = roundDailyFloat(mfeTotal / float64(stats.completed))
 	stats.averageMAE = roundDailyFloat(maeTotal / float64(stats.completed))
 	stats.averagePathDrawdown = roundDailyFloat(pathDrawdownTotal / float64(stats.completed))
+	stats.averageBenchmarkReturn = roundDailyFloat(benchmarkTotal / float64(stats.completed))
+	stats.averageExcessReturn = roundDailyFloat(excessTotal / float64(stats.completed))
+	variance := squareTotal/float64(stats.completed) - stats.averageReturn*stats.averageReturn
+	if variance < 0 {
+		variance = 0
+	}
+	margin := 1.96 * math.Sqrt(variance/float64(stats.completed))
+	stats.confidenceLow = roundDailyFloat(stats.averageReturn - margin)
+	stats.confidenceHigh = roundDailyFloat(stats.averageReturn + margin)
 	return stats
+}
+
+func aggregateScoreBuckets(signals []dailyAnalysisSignal, key string) map[string]DailyScoreBucket {
+	type accumulator struct {
+		count, positive int
+		total           float64
+	}
+	buckets := map[string]*accumulator{"low": {}, "middle": {}, "high": {}}
+	for _, signal := range signals {
+		if signal.tracking == nil {
+			continue
+		}
+		horizon, ok := signal.tracking.Horizons[key]
+		if !ok || horizon.Status != "complete" {
+			continue
+		}
+		bucket := "low"
+		switch {
+		case signal.score >= 66.67:
+			bucket = "high"
+		case signal.score >= 33.33:
+			bucket = "middle"
+		}
+		item := buckets[bucket]
+		item.count++
+		item.total += horizon.CloseReturn
+		if horizon.CloseReturn > 0 {
+			item.positive++
+		}
+	}
+	result := map[string]DailyScoreBucket{}
+	for name, item := range buckets {
+		if item.count == 0 {
+			result[name] = DailyScoreBucket{}
+			continue
+		}
+		result[name] = DailyScoreBucket{Count: item.count, AverageReturn: roundDailyFloat(item.total / float64(item.count)), PositiveRate: roundDailyFloat(float64(item.positive) / float64(item.count) * 100)}
+	}
+	return result
+}
+
+func scoreReturnIC(signals []dailyAnalysisSignal, key string) float64 {
+	scores, returns := []float64{}, []float64{}
+	for _, signal := range signals {
+		if signal.tracking == nil {
+			continue
+		}
+		horizon, ok := signal.tracking.Horizons[key]
+		if !ok || horizon.Status != "complete" {
+			continue
+		}
+		scores = append(scores, signal.score)
+		returns = append(returns, horizon.CloseReturn)
+	}
+	if len(scores) < 3 {
+		return 0
+	}
+	meanScore, meanReturn := 0.0, 0.0
+	for index := range scores {
+		meanScore += scores[index]
+		meanReturn += returns[index]
+	}
+	meanScore /= float64(len(scores))
+	meanReturn /= float64(len(returns))
+	numerator, scoreVariance, returnVariance := 0.0, 0.0, 0.0
+	for index := range scores {
+		scoreDelta, returnDelta := scores[index]-meanScore, returns[index]-meanReturn
+		numerator += scoreDelta * returnDelta
+		scoreVariance += scoreDelta * scoreDelta
+		returnVariance += returnDelta * returnDelta
+	}
+	if scoreVariance == 0 || returnVariance == 0 {
+		return 0
+	}
+	return numerator / math.Sqrt(scoreVariance*returnVariance)
 }
 
 func (stats dailyTrackingStats) toPublic() DailyAnalysisHorizonStats {
@@ -751,7 +918,10 @@ func (stats dailyTrackingStats) toPublic() DailyAnalysisHorizonStats {
 		Completed: stats.completed, PositiveCount: stats.positiveCount, PositiveRate: stats.positiveRate,
 		AverageReturn: stats.averageReturn, MedianReturn: stats.medianReturn, P25Return: stats.p25Return, P75Return: stats.p75Return,
 		MaxReturn: stats.maxReturn, AverageMFE: stats.averageMFE, AverageMAE: stats.averageMAE,
-		AveragePathDrawdown: stats.averagePathDrawdown,
+		AveragePathDrawdown:    stats.averagePathDrawdown,
+		AverageBenchmarkReturn: stats.averageBenchmarkReturn, AverageExcessReturn: stats.averageExcessReturn,
+		ConfidenceLow: stats.confidenceLow, ConfidenceHigh: stats.confidenceHigh,
+		MinimumSampleSize: 5, SampleSufficient: stats.completed >= 5,
 	}
 }
 

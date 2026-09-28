@@ -212,6 +212,10 @@ func (this *Workday) ensureSchema() error {
 	)`); err != nil {
 		return err
 	}
+	isTradeDayExists, err := this.columnExists("is_trade_day")
+	if err != nil {
+		return err
+	}
 	columns := map[string]string{
 		"market":       "TEXT NOT NULL DEFAULT ''",
 		"is_trade_day": "INTEGER NOT NULL DEFAULT 0",
@@ -234,6 +238,14 @@ func (this *Workday) ensureSchema() error {
 			if _, err := this.db.Exec(fmt.Sprintf("ALTER TABLE workday ADD COLUMN %s %s", name, definition)); err != nil {
 				return err
 			}
+		}
+	}
+	// The legacy table had no trade-day flag and its rows are historical
+	// trading sessions. Seed those rows as trading days only when the column is
+	// newly introduced; keep explicit 0 values in upgraded tables intact.
+	if !isTradeDayExists {
+		if _, err := this.db.Exec(`UPDATE workday SET is_trade_day=1 WHERE Date IS NOT NULL AND Date != ''`); err != nil {
+			return err
 		}
 	}
 	now := time.Now().Format(time.RFC3339)

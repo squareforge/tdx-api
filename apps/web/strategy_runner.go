@@ -55,12 +55,19 @@ type StrategyRunResult struct {
 }
 
 type StrategySelectionItem struct {
-	Symbol        string                 `json:"symbol"`
-	Score         float64                `json:"score"`
-	Hit           bool                   `json:"hit"`
-	Latest        float64                `json:"latest"`
-	Reasons       []string               `json:"reasons"`
-	FactorResults []StrategyFactorResult `json:"factor_results"`
+	Symbol         string                 `json:"symbol"`
+	Score          float64                `json:"score"`
+	Hit            bool                   `json:"hit"`
+	Latest         float64                `json:"latest"`
+	Reasons        []string               `json:"reasons"`
+	FactorResults  []StrategyFactorResult `json:"factor_results"`
+	SignalAt       string                 `json:"signal_at,omitempty"`
+	SignalPrice    float64                `json:"signal_price,omitempty"`
+	QuoteAt        string                 `json:"quote_at,omitempty"`
+	QuoteSource    string                 `json:"quote_source,omitempty"`
+	PriceType      string                 `json:"price_type,omitempty"`
+	QuoteAgeMS     int64                  `json:"quote_age_ms,omitempty"`
+	SnapshotStatus string                 `json:"snapshot_status,omitempty"`
 }
 
 type StrategyFactorResult struct {
@@ -342,6 +349,10 @@ func (r *AutomationRunner) evaluateStrategySymbol(ctx context.Context, strategy 
 	}
 	if len(rows) > 0 {
 		item.Latest = rows[len(rows)-1].Close
+		item.SignalAt = nowText()
+		item.SignalPrice = item.Latest
+		item.PriceType = "latest"
+		item.SnapshotStatus = "inferred"
 	}
 	for _, rule := range result.Config.Filters {
 		fr := r.evaluateFactor(result, symbol, rows, rule, true)
@@ -730,10 +741,18 @@ func strategyItemsToSelectionResults(items []StrategySelectionItem) []SelectionR
 	results := make([]SelectionResult, 0, len(items))
 	for _, item := range items {
 		results = append(results, SelectionResult{
-			Symbol:     item.Symbol,
-			Latest:     item.Latest,
-			DetailJSON: mustJSON(item),
-			CreatedAt:  nowText(),
+			Symbol:         item.Symbol,
+			Latest:         item.Latest,
+			SignalAt:       item.SignalAt,
+			SignalPrice:    item.SignalPrice,
+			QuoteAt:        item.QuoteAt,
+			QuoteSource:    item.QuoteSource,
+			PriceType:      item.PriceType,
+			QuoteAgeMS:     item.QuoteAgeMS,
+			SignalScore:    item.Score,
+			SnapshotStatus: item.SnapshotStatus,
+			DetailJSON:     mustJSON(item),
+			CreatedAt:      nowText(),
 		})
 	}
 	return results

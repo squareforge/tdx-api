@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/injoyai/tdx/protocol"
+	workbench "workbench-core"
 )
 
 var (
@@ -859,28 +861,123 @@ func handleDailyReviewAnalysis(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, "只支持GET请求")
 		return
 	}
+	basis := strings.TrimSpace(r.URL.Query().Get("basis"))
+	if basis == "" {
+		basis = "signal"
+	}
+	if basis != "signal" && basis != "trade" {
+		errorResponseWithStatus(w, http.StatusBadRequest, "basis 仅支持 signal 或 trade")
+		return
+	}
+	executionPolicy := strings.TrimSpace(r.URL.Query().Get("execution_policy"))
+	if executionPolicy == "" || executionPolicy == "none" {
+		executionPolicy = workbench.ExecutionPolicyNextDayOpen
+	}
+	if executionPolicy != workbench.ExecutionPolicyNextQuote && executionPolicy != workbench.ExecutionPolicyNextDayOpen {
+		errorResponseWithStatus(w, http.StatusBadRequest, "不支持的模拟成交模型")
+		return
+	}
+	benchmark := strings.TrimSpace(r.URL.Query().Get("benchmark"))
+	if benchmark != "" && benchmark != "sh000001" {
+		errorResponseWithStatus(w, http.StatusBadRequest, "当前仅支持 sh000001 基准")
+		return
+	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	days, _ := strconv.Atoi(r.URL.Query().Get("days"))
-	data, err := appStore.BuildDailyStrategyAnalysis(
+	data, err := appStore.BuildDailyStrategyAnalysisWithOptions(
 		strings.TrimSpace(r.URL.Query().Get("start_date")),
 		strings.TrimSpace(r.URL.Query().Get("end_date")),
 		days,
 		limit,
+		basis,
+		executionPolicy,
 	)
 	if err != nil {
 		errorResponse(w, err.Error())
 		return
 	}
-	data.ReturnBasis = strings.TrimSpace(r.URL.Query().Get("basis"))
-	if data.ReturnBasis != "trade" {
-		data.ReturnBasis = "signal"
+	data.ReturnBasis = basis
+	data.ExecutionPolicy = executionPolicy
+	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("format")), "csv") {
+		writeDailyAnalysisCSV(w, data)
+		return
 	}
-	data.ExecutionPolicy = strings.TrimSpace(r.URL.Query().Get("execution_policy"))
-	if data.ExecutionPolicy == "" {
-		data.ExecutionPolicy = "none"
-	}
-	data.Benchmark = strings.TrimSpace(r.URL.Query().Get("benchmark"))
 	successResponse(w, data)
+}
+
+func writeDailyAnalysisCSV(w http.ResponseWriter, data workbench.DailyStrategyAnalysisData) {
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="strategy-analysis.csv"`)
+	writer := csv.NewWriter(w)
+	_ = writer.Write([]string{"signal_id", "signal_date", "symbol", "strategy", "score", "return_basis", "execution_policy", "snapshot_status", "d1_close_return", "d3_close_return", "d5_close_return", "d10_close_return", "d5_mfe", "d5_mae", "d5_path_drawdown", "calculation_version", "data_quality"})
+	for _, signal := range data.Signals {
+		values := []string{signal.ID, signal.SignalDate, signal.Symbol, signal.StrategyName, fmt.Sprintf("%.4f", signal.Score), data.ReturnBasis, data.ExecutionPolicy, signal.SnapshotStatus}
+		for _, horizon := range []int{1, 3, 5, 10} {
+			metric := signal.Tracking
+			if metric == nil {
+				values = append(values, "")
+				continue
+			}
+			item, ok := metric.Horizons[fmt.Sprintf("d%d", horizon)]
+			if !ok || item.Status != "complete" {
+				values = append(values, "")
+				continue
+			}
+			values = append(values, fmt.Sprintf("%.4f", item.CloseReturn))
+		}
+		if metric := signal.Tracking; metric != nil {
+			item := metric.Horizons["d5"]
+			values = append(values, fmt.Sprintf("%.4f", item.MFE), fmt.Sprintf("%.4f", item.MAE), fmt.Sprintf("%.4f", item.MaxPathDrawdown), item.CalculationVersion, item.DataQuality)
+		} else {
+			values = append(values, "", "", "", "", "")
+		}
+		_ = writer.Write(values)
+	}
+	writer.Flush()
+}
+
+func handleDailyReviewSignalDetail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		errorResponse(w, "只支持GET请求")
+		return
+	}
+	id := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/api/daily-review/signals/"))
+	if id == "" || strings.Contains(id, "/") {
+		errorResponseWithStatus(w, http.StatusBadRequest, "信号ID不能为空")
+		return
+	}
+	item, err := appStore.GetSelectionResult(id)
+	if err == sql.ErrNoRows {
+		errorResponseWithStatus(w, http.StatusNotFound, "信号不存在")
+		return
+	}
+	if err != nil {
+		errorResponse(w, err.Error())
+		return
+	}
+	executions, err := appStore.ListSelectionSignalExecutions(id, "")
+	if err != nil {
+		errorResponse(w, err.Error())
+		return
+	}
+	paths := make([]map[string]interface{}, 0, len(executions))
+	for _, execution := range executions {
+		observations, observationErr := appStore.ListSelectionSignalObservations(id, execution.ID)
+		if observationErr != nil {
+			errorResponse(w, observationErr.Error())
+			return
+		}
+		paths = append(paths, map[string]interface{}{"execution": execution, "observations": observations})
+	}
+	signalPath, err := appStore.ListSelectionSignalPath(id)
+	if err != nil {
+		errorResponse(w, err.Error())
+		return
+	}
+	successResponse(w, map[string]interface{}{
+		"signal": item, "executions": paths, "signal_path": signalPath,
+		"calculation_version": "tracking-v3", "execution_version": "execution-v1",
+	})
 }
 
 func symbolSet(symbols []string) map[string]bool {

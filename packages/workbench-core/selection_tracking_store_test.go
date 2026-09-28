@@ -3,7 +3,85 @@ package workbench
 import (
 	"fmt"
 	"testing"
+	"time"
 )
+
+func TestSelectionSignalExecutionAndObservationPersistenceIsIdempotent(t *testing.T) {
+	store := newHistoricalBacktestTestStore(t)
+	run := AutomationRun{ID: "run-execution", TaskID: "task", TaskName: "task"}
+	item := SelectionResult{ID: "selection-execution", Symbol: "000001", Latest: 10, SignalAt: "2026-09-01T14:45:00+08:00", SignalPrice: 10, QuoteAt: "2026-09-01T14:45:05+08:00", QuoteSource: "test", SnapshotStatus: "fresh", DetailJSON: `{}`, CreatedAt: "2026-09-01T14:45:00+08:00"}
+	if err := store.SaveSelectionResults(run, Formula{ID: "formula", Name: "formula"}, []SelectionResult{item}); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM selection_signal_executions WHERE selection_result_id=?`, item.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("execution count = %d, want 2", count)
+	}
+	if err := store.EnsureSelectionSignalExecutions([]SelectionResult{item}, map[string][]TrackingBar{
+		"000001": {{Date: 20260902, YClose: 10, Open: 10.2, High: 10.4, Low: 10, Close: 10.3}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	executions, err := store.ListSelectionSignalExecutions(item.ID, "next_day_open")
+	if err != nil || len(executions) != 1 || executions[0].Status != "filled" {
+		t.Fatalf("next day execution = %#v, err=%v", executions, err)
+	}
+	rows := BuildSelectionObservations(item, executions[0], []TrackingBar{{Date: 20260902, Open: 10.2, High: 10.4, Low: 10, Close: 10.3}}, time.Now())
+	if err := store.SaveSelectionSignalObservations(rows); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.ListSelectionSignalObservations(item.ID, executions[0].ID)
+	if err != nil || len(loaded) != 1 {
+		t.Fatalf("observations = %#v, err=%v", loaded, err)
+	}
+	if err := store.SaveSelectionResults(run, Formula{ID: "formula", Name: "formula"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM selection_signal_executions WHERE run_id=?`, run.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("retry removed executions: got %d, want 2", count)
+	}
+	loaded, err = store.ListSelectionSignalObservations(item.ID, executions[0].ID)
+	if err != nil || len(loaded) != 1 {
+		t.Fatalf("retry removed observations: %#v, err=%v", loaded, err)
+	}
+}
+
+func TestSelectionSignalExecutionKeepsFilledNextQuoteImmutable(t *testing.T) {
+	store := newHistoricalBacktestTestStore(t)
+	run := AutomationRun{ID: "run-next-quote", TaskID: "task", TaskName: "task"}
+	signalAt := time.Now().In(time.FixedZone("CST", 8*3600)).AddDate(0, 0, 1)
+	signalAt = time.Date(signalAt.Year(), signalAt.Month(), signalAt.Day(), 14, 45, 0, 0, signalAt.Location())
+	item := SelectionResult{ID: "selection-next-quote", Symbol: "000001", Latest: 10, SignalAt: signalAt.Format(time.RFC3339), SignalPrice: 10, QuoteAt: signalAt.Format(time.RFC3339), QuoteSource: "test", SnapshotStatus: "fresh", DetailJSON: `{}`, CreatedAt: signalAt.Format(time.RFC3339)}
+	if err := store.SaveSelectionResults(run, Formula{ID: "formula", Name: "formula"}, []SelectionResult{item}); err != nil {
+		t.Fatal(err)
+	}
+	filled := item
+	filled.NextQuoteAt = signalAt.Add(5 * time.Second).Format(time.RFC3339)
+	filled.NextQuotePrice = 10.2
+	filled.NextQuoteSource = "test-follow-up"
+	if err := store.EnsureSelectionSignalExecutions([]SelectionResult{filled}, nil); err != nil {
+		t.Fatal(err)
+	}
+	changed := filled
+	changed.NextQuoteAt = signalAt.Add(10 * time.Second).Format(time.RFC3339)
+	changed.NextQuotePrice = 10.5
+	if err := store.EnsureSelectionSignalExecutions([]SelectionResult{changed}, nil); err != nil {
+		t.Fatal(err)
+	}
+	executions, err := store.ListSelectionSignalExecutions(item.ID, "next_quote")
+	if err != nil || len(executions) != 1 {
+		t.Fatalf("executions = %#v, err=%v", executions, err)
+	}
+	if executions[0].Status != "filled" || executions[0].ReferencePrice != 10.2 {
+		t.Fatalf("filled execution was overwritten: %#v", executions[0])
+	}
+}
 
 func TestListIncompleteSelectionTrackingResults(t *testing.T) {
 	store := newHistoricalBacktestTestStore(t)
@@ -51,6 +129,74 @@ func TestListIncompleteSelectionTrackingResults(t *testing.T) {
 		if items[index].ID != id {
 			t.Fatalf("items[%d].ID = %q, want %q", index, items[index].ID, id)
 		}
+	}
+}
+
+func TestSaveSelectionResultsPreservesSnapshotEvidenceAndIsIdempotent(t *testing.T) {
+	store := newHistoricalBacktestTestStore(t)
+	run := AutomationRun{ID: "run-snapshot", TaskID: "task", TaskName: "task"}
+	formula := Formula{ID: "formula", Name: "策略"}
+	items := []SelectionResult{
+		{ID: "inferred", Symbol: "000001", Latest: 10, DetailJSON: `{}`, CreatedAt: "2026-09-01T14:45:00+08:00"},
+		{ID: "inferred-duplicate", Symbol: "000001", Latest: 11, DetailJSON: `{}`, CreatedAt: "2026-09-01T14:45:00+08:00"},
+		{ID: "explicit", Symbol: "000002", Latest: 20, SignalAt: "2026-09-01T14:45:00+08:00", SignalPrice: 20.1, QuoteAt: "2026-09-01T14:44:59+08:00", QuoteSource: "tdx-realtime", SnapshotStatus: "fresh", DetailJSON: `{}`, CreatedAt: "2026-09-01T14:45:00+08:00"},
+	}
+	if err := store.SaveSelectionResults(run, formula, items); err != nil {
+		t.Fatal(err)
+	}
+
+	var quoteAt, quoteSource, snapshotStatus string
+	var signalPrice float64
+	if err := store.db.QueryRow(`SELECT signal_price,quote_at,quote_source,snapshot_status FROM selection_results WHERE id=?`, "inferred").Scan(&signalPrice, &quoteAt, &quoteSource, &snapshotStatus); err != nil {
+		t.Fatal(err)
+	}
+	if signalPrice != 10 || quoteAt != "" || quoteSource != "" || snapshotStatus != "inferred" {
+		t.Fatalf("legacy snapshot = price %v, quote_at %q, source %q, status %q", signalPrice, quoteAt, quoteSource, snapshotStatus)
+	}
+	if err := store.db.QueryRow(`SELECT quote_at,quote_source,snapshot_status FROM selection_results WHERE id=?`, "explicit").Scan(&quoteAt, &quoteSource, &snapshotStatus); err != nil {
+		t.Fatal(err)
+	}
+	if quoteAt != "2026-09-01T14:44:59+08:00" || quoteSource != "tdx-realtime" || snapshotStatus != "fresh" {
+		t.Fatalf("explicit snapshot = quote_at %q, source %q, status %q", quoteAt, quoteSource, snapshotStatus)
+	}
+
+	var count int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM selection_results WHERE run_id=?`, run.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("business-key dedup count = %d, want 2", count)
+	}
+	if err := store.SaveSelectionResults(run, formula, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM selection_results WHERE run_id=?`, run.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("empty retry changed %d selection results, want 2", count)
+	}
+}
+
+func TestSaveSelectionResultsRetryKeepsOriginalSignalIdentity(t *testing.T) {
+	store := newHistoricalBacktestTestStore(t)
+	run := AutomationRun{ID: "run-retry", TaskID: "task", TaskName: "task"}
+	formula := Formula{ID: "formula", Name: "formula"}
+	first := SelectionResult{ID: "original", Symbol: "000001", Latest: 10, SignalAt: "2026-09-01T14:45:00+08:00", SignalPrice: 10, CreatedAt: "2026-09-01T14:45:00+08:00"}
+	if err := store.SaveSelectionResults(run, formula, []SelectionResult{first}); err != nil {
+		t.Fatal(err)
+	}
+	retry := SelectionResult{ID: "replacement", Symbol: "000001", Latest: 11, SignalAt: "2026-09-01T14:46:00+08:00", SignalPrice: 11, CreatedAt: "2026-09-01T14:46:00+08:00"}
+	if err := store.SaveSelectionResults(run, formula, []SelectionResult{retry}); err != nil {
+		t.Fatal(err)
+	}
+	var id string
+	var count int
+	if err := store.db.QueryRow(`SELECT id,COUNT(*) FROM selection_results WHERE run_id=? AND formula_id=?`, run.ID, formula.ID).Scan(&id, &count); err != nil {
+		t.Fatal(err)
+	}
+	if id != first.ID || count != 1 {
+		t.Fatalf("retry changed original signal: id=%q count=%d", id, count)
 	}
 }
 

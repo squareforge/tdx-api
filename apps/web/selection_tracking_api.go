@@ -86,7 +86,7 @@ func parseTrackingHorizons(raw string) []int {
 func toTrackingBars(rows []FormulaKline) []TrackingBar {
 	bars := make([]TrackingBar, 0, len(rows))
 	for _, row := range rows {
-		bars = append(bars, TrackingBar{Date: row.Date, YClose: row.YClose, Open: row.Open, High: row.High, Low: row.Low, Close: row.Close})
+		bars = append(bars, TrackingBar{Date: row.Date, YClose: row.YClose, Open: row.Open, High: row.High, Low: row.Low, Close: row.Close, Volume: row.Vol, Amount: row.Amount})
 	}
 	return bars
 }

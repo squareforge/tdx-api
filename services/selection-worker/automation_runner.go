@@ -498,7 +498,7 @@ func (r *AutomationRunner) runSelectionTracking(ctx context.Context, task Automa
 	invalidDateItems := make([]SelectionResult, 0)
 	oldestDate := ""
 	for _, item := range items {
-		signalDate, signalDateInt, ok := selectionTrackingSignalDate(item.CreatedAt)
+		signalDate, signalDateInt, ok := selectionTrackingSignalDateForItem(item)
 		if !ok {
 			invalidDateItems = append(invalidDateItems, item)
 			continue
@@ -537,6 +537,9 @@ func (r *AutomationRunner) runSelectionTracking(ctx context.Context, task Automa
 	sort.Strings(symbols)
 	result.SymbolCount = len(symbols)
 	if len(symbols) > 0 {
+		// A tracking retry can resolve an intraday signal while its quote window
+		// is still open. Later runs only expire the unfilled execution.
+		nextQuoteItems := r.captureNextQuoteItems(ctx, items)
 		historyStart, dateErr := marketClient.PreviousTradingDate(ctx, oldestDate, payload.HistoryBuffer)
 		if dateErr != nil {
 			return result, len(tracked), fmt.Errorf("确定选股跟踪历史起点失败: %w", dateErr)
@@ -551,8 +554,17 @@ func (r *AutomationRunner) runSelectionTracking(ctx context.Context, task Automa
 		result.HistoryStart = historyStart
 		result.KlineCount = klineCount
 
-		klines, loadErrors := r.loadTrackingKlinesWithRetry(ctx, symbols, klineCount)
+		benchmarkSymbol := "sh000001"
+		trackingSymbols := append(append([]string{}, symbols...), benchmarkSymbol)
+		klines, loadErrors := r.loadTrackingKlinesWithRetry(ctx, trackingSymbols, klineCount)
+		benchmarkBars := toTrackingBars(klines[benchmarkSymbol])
 		for _, symbol := range symbols {
+			symbolItems := itemsBySymbol[symbol]
+			for index := range symbolItems {
+				if captured, ok := nextQuoteItems[symbolItems[index].ID]; ok {
+					symbolItems[index] = captured
+				}
+			}
 			rows, loaded := klines[symbol]
 			if loaded && !trackingRowsCoverDate(rows, signalDates[symbol]) && len(rows) >= klineCount {
 				rows, loadErrors[symbol] = r.expandTrackingKlineCoverage(ctx, symbol, signalDates[symbol], rows, klineCount)
@@ -567,8 +579,22 @@ func (r *AutomationRunner) runSelectionTracking(ctx context.Context, task Automa
 				}
 				continue
 			}
-			for _, item := range itemsBySymbol[symbol] {
-				tracking := workbench.EvaluateSelectionTracking(item, toTrackingBars(klines[symbol]), payload.Horizons, targetReturn, drawdownLimit, now)
+			trackingBars := toTrackingBars(klines[symbol])
+			if executionErr := r.store.EnsureSelectionSignalExecutions(symbolItems, map[string][]workbench.TrackingBar{symbol: trackingBars}); executionErr != nil {
+				for _, item := range symbolItems {
+					result.Errors[item.ID] = executionErr.Error()
+				}
+				continue
+			}
+			for _, item := range symbolItems {
+				tracking := workbench.EvaluateSelectionTracking(item, trackingBars, payload.Horizons, targetReturn, drawdownLimit, now)
+				if len(benchmarkBars) > 0 {
+					applyBenchmarkToTracking(&tracking, item, trackingBars, benchmarkBars)
+				}
+				if observationErr := r.saveSelectionObservations(item, trackingBars, benchmarkBars, now); observationErr != nil {
+					result.Errors[item.ID] = observationErr.Error()
+					continue
+				}
 				if updateErr := r.saveSelectionTracking(item, tracking); updateErr != nil {
 					result.Errors[item.ID] = updateErr.Error()
 					continue
@@ -584,6 +610,210 @@ func (r *AutomationRunner) runSelectionTracking(ctx context.Context, task Automa
 	result.FailedCount = len(result.Errors)
 	result.SkippedSymbols = len(result.SymbolErrors)
 	return result, len(tracked), nil
+}
+
+func (r *AutomationRunner) captureNextQuoteItems(ctx context.Context, items []SelectionResult) map[string]SelectionResult {
+	return r.captureNextQuoteItemsAt(ctx, items, time.Now())
+}
+
+func (r *AutomationRunner) captureNextQuoteItemsAt(ctx context.Context, items []SelectionResult, now time.Time) map[string]SelectionResult {
+	updated := map[string]SelectionResult{}
+	if marketClient == nil || !marketClient.Enabled() {
+		return updated
+	}
+	codes := make([]string, 0, len(items))
+	seen := map[string]bool{}
+	eligible := make([]SelectionResult, 0, len(items))
+	for _, item := range items {
+		if strings.TrimSpace(item.ID) == "" || strings.TrimSpace(item.Symbol) == "" {
+			continue
+		}
+		signalAt, err := time.Parse(time.RFC3339, strings.TrimSpace(item.SignalAt))
+		if err != nil || !workbench.PaperTradingSession(signalAt) || now.Before(signalAt) || now.Sub(signalAt) > workbench.NextQuoteCaptureWindow {
+			continue
+		}
+		eligible = append(eligible, item)
+		code := strings.TrimSpace(item.Symbol)
+		if !seen[code] {
+			seen[code] = true
+			codes = append(codes, code)
+		}
+	}
+	for _, batch := range chunkSymbols(codes, intradayQuoteBatchSize) {
+		quotes, err := marketClient.Quotes(ctx, batch)
+		if err != nil {
+			log.Printf("选股下一条行情获取失败(%d只): %v", len(batch), err)
+			continue
+		}
+		byCode := map[string]*protocol.Quote{}
+		for _, quote := range quotes {
+			if quote == nil || quote.Kline == nil ||
+				(quote.SellLevel[0].Price.Float64() <= 0 || quote.SellLevel[0].Number <= 0) &&
+					(quote.Kline.Close.Float64() <= 0 || quote.Intuition <= 0) {
+				continue
+			}
+			key := strategyNormalizeSymbol(quote.Code)
+			if key != "" {
+				byCode[key] = quote
+			}
+		}
+		for _, item := range eligible {
+			quote := byCode[strategyNormalizeSymbol(item.Symbol)]
+			if quote == nil {
+				continue
+			}
+			signalAt, err := time.Parse(time.RFC3339, strings.TrimSpace(item.SignalAt))
+			quoteAt, valid := executionQuoteMarketTime(quote.ServerTime, now)
+			if err != nil || !valid || !workbench.ValidNextQuoteWindow(signalAt, quoteAt) {
+				continue
+			}
+			captured := item
+			captured.NextQuotePrice = quote.SellLevel[0].Price.Float64()
+			captured.NextQuoteSource = "market-service.quote.ask1"
+			if captured.NextQuotePrice <= 0 || quote.SellLevel[0].Number <= 0 {
+				captured.NextQuotePrice = quote.Kline.Close.Float64()
+				captured.NextQuoteSource = "market-service.quote.last"
+			}
+			captured.NextQuoteAt = quoteAt.Format(time.RFC3339)
+			updated[captured.ID] = captured
+		}
+	}
+	return updated
+}
+
+func executionQuoteMarketTime(raw string, receivedAt time.Time) (time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	var quoteAt time.Time
+	if parsed, err := time.Parse(time.RFC3339, raw); err == nil {
+		quoteAt = parsed
+	} else {
+		for _, digit := range raw {
+			if digit < '0' || digit > '9' {
+				return time.Time{}, false
+			}
+		}
+		clock := raw
+		if len(clock) == 5 {
+			clock = "0" + clock
+		}
+		if len(clock) == 8 || len(clock) == 9 {
+			clock = clock[:6]
+		}
+		parsed, err := time.Parse("150405", clock)
+		if err != nil || len(clock) != 6 {
+			return time.Time{}, false
+		}
+		local := receivedAt.In(time.FixedZone("CST", 8*60*60))
+		quoteAt = time.Date(local.Year(), local.Month(), local.Day(), parsed.Hour(), parsed.Minute(), parsed.Second(), 0, local.Location())
+	}
+	age := receivedAt.Sub(quoteAt)
+	return quoteAt, age >= -2*time.Second && age <= 30*time.Second
+}
+
+func (r *AutomationRunner) resolveNextQuoteForRun(runID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), workbench.NextQuoteCaptureWindow+5*time.Second)
+	defer cancel()
+	items, err := r.store.ListSelectionResultsByRunIDs([]string{runID}, 20000)
+	if err != nil {
+		log.Printf("读取即时模拟成交信号失败(%s): %v", runID, err)
+		return
+	}
+	active := make(map[string]SelectionResult, len(items))
+	now := time.Now()
+	for _, item := range items {
+		signalAt, err := time.Parse(time.RFC3339, item.SignalAt)
+		if err == nil && workbench.PaperTradingSession(signalAt) && workbench.PaperTradingSession(now) &&
+			!now.Before(signalAt) && now.Sub(signalAt) < workbench.NextQuoteCaptureWindow {
+			active[item.ID] = item
+		}
+	}
+	if len(active) == 0 {
+		return
+	}
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for len(active) > 0 {
+		pending := make([]SelectionResult, 0, len(active))
+		for _, item := range active {
+			pending = append(pending, item)
+		}
+		captured := r.captureNextQuoteItems(ctx, pending)
+		if len(captured) > 0 {
+			filled := make([]SelectionResult, 0, len(captured))
+			for _, item := range captured {
+				filled = append(filled, item)
+			}
+			if err := r.store.EnsureSelectionSignalExecutions(filled, nil); err != nil {
+				log.Printf("保存即时模拟成交失败(%s): %v", runID, err)
+			} else {
+				for id := range captured {
+					delete(active, id)
+				}
+			}
+		}
+		now = time.Now()
+		for id, item := range active {
+			signalAt, _ := time.Parse(time.RFC3339, item.SignalAt)
+			if !workbench.PaperTradingSession(now) || now.Sub(signalAt) >= workbench.NextQuoteCaptureWindow {
+				delete(active, id)
+			}
+		}
+		if len(active) == 0 {
+			break
+		}
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			active = nil
+		}
+	}
+	if err := r.store.EnsureSelectionSignalExecutions(items, nil); err != nil {
+		log.Printf("更新即时模拟成交终态失败(%s): %v", runID, err)
+	}
+}
+
+func (r *AutomationRunner) saveSelectionObservations(item SelectionResult, bars, benchmarkBars []workbench.TrackingBar, now time.Time) error {
+	executions, err := r.store.ListSelectionSignalExecutions(item.ID, "")
+	if err != nil {
+		return err
+	}
+	rows := workbench.BuildSelectionObservations(item, workbench.SelectionSignalExecution{}, bars, now, benchmarkBars)
+	workbench.ApplyBenchmarkToObservations(item, rows, benchmarkBars, "sh000001")
+	for _, execution := range executions {
+		if execution.Status != "filled" {
+			continue
+		}
+		tradeRows := workbench.BuildSelectionObservations(item, execution, bars, now, benchmarkBars)
+		workbench.ApplyBenchmarkToObservations(item, tradeRows, benchmarkBars, "sh000001")
+		rows = append(rows, tradeRows...)
+	}
+	return r.store.SaveSelectionSignalObservations(rows)
+}
+
+func applyBenchmarkToTracking(tracking *workbench.SelectionTracking, item SelectionResult, bars, benchmarkBars []workbench.TrackingBar) {
+	if tracking == nil || len(benchmarkBars) == 0 {
+		return
+	}
+	observations := workbench.BuildSelectionObservations(item, workbench.SelectionSignalExecution{}, bars, time.Now())
+	workbench.ApplyBenchmarkToObservations(item, observations, benchmarkBars, "sh000001")
+	for key, horizon := range tracking.Horizons {
+		if horizon.Status != "complete" || horizon.HorizonDays <= 0 {
+			continue
+		}
+		var point *workbench.SelectionSignalObservation
+		for index := range observations {
+			if observations[index].SymbolDayIndex == horizon.HorizonDays {
+				point = &observations[index]
+				break
+			}
+		}
+		if point == nil {
+			continue
+		}
+		horizon.BenchmarkCloseReturn = point.BenchmarkCloseReturn
+		horizon.ExcessCloseReturn = point.ExcessCloseReturn
+		tracking.Horizons[key] = horizon
+	}
 }
 
 func selectionTrackingRunMessage(value interface{}, updated int) string {
@@ -609,6 +839,16 @@ func selectionTrackingSignalDate(raw string) (string, int, bool) {
 		}
 	}
 	return "", 0, false
+}
+
+func selectionTrackingSignalDateForItem(item SelectionResult) (string, int, bool) {
+	raw := strings.TrimSpace(item.SignalAt)
+	if raw != "" {
+		if result, numeric, ok := selectionTrackingSignalDate(raw); ok {
+			return result, numeric, true
+		}
+	}
+	return selectionTrackingSignalDate(item.CreatedAt)
 }
 
 func (r *AutomationRunner) saveSelectionTracking(item SelectionResult, tracking SelectionTracking) error {
@@ -803,6 +1043,7 @@ func (r *AutomationRunner) runStockSelection(ctx context.Context, task Automatio
 	if err := r.store.SaveSelectionResults(run, formula, items); err != nil {
 		return nil, nil, err
 	}
+	go r.resolveNextQuoteForRun(run.ID)
 	matchedSymbols := make([]string, 0, len(items))
 	for _, item := range items {
 		matchedSymbols = append(matchedSymbols, item.Symbol)
@@ -1588,11 +1829,16 @@ func extractSelectionResults(data interface{}) []SelectionResult {
 		if !hit {
 			continue
 		}
+		signalAt := nowText()
 		results = append(results, SelectionResult{
-			Symbol:     strings.ToUpper(symbol),
-			Latest:     latest,
-			DetailJSON: mustJSON(detail),
-			CreatedAt:  nowText(),
+			Symbol:         strings.ToUpper(symbol),
+			Latest:         latest,
+			SignalAt:       signalAt,
+			SignalPrice:    latest,
+			PriceType:      "latest",
+			SnapshotStatus: "inferred",
+			DetailJSON:     mustJSON(detail),
+			CreatedAt:      signalAt,
 		})
 	}
 	return results

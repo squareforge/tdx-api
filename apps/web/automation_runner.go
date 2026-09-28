@@ -951,11 +951,16 @@ func extractSelectionResults(data interface{}) []SelectionResult {
 		if !hit {
 			continue
 		}
+		signalAt := nowText()
 		results = append(results, SelectionResult{
-			Symbol:     strings.ToUpper(symbol),
-			Latest:     latest,
-			DetailJSON: mustJSON(detail),
-			CreatedAt:  nowText(),
+			Symbol:         strings.ToUpper(symbol),
+			Latest:         latest,
+			SignalAt:       signalAt,
+			SignalPrice:    latest,
+			PriceType:      "latest",
+			SnapshotStatus: "inferred",
+			DetailJSON:     mustJSON(detail),
+			CreatedAt:      signalAt,
 		})
 	}
 	return results
