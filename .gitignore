@@ -37,6 +37,8 @@ coverage.out
 !/apps/web/static-react/
 !/apps/web/static-react/assets/
 !/apps/web/static-react/assets/*
+# Unreferenced artifact left by an earlier frontend build.
+/apps/web/static-react/assets/index-Bh7mPZhx.js
 /services/ai-service/ai-service
 /services/market-service/market-service
 /services/selection-worker/selection-worker
