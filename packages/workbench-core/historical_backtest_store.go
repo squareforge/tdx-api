@@ -132,6 +132,10 @@ const historicalBacktestRunColumns = `id,status,start_date,end_date,strategy_ids
 	buy_base,buy_offset,sell_base,take_profit,trail_drawdown,stop_loss,max_hold_days,
 	total_dates,processed_dates,"current_date",candidate_symbols,signal_count,result_json,error,cancel_requested,created_at,started_at,finished_at,updated_at`
 
+const historicalBacktestRunSummaryColumns = `id,status,start_date,end_date,strategy_ids_json,'' AS strategy_snapshot_json,horizons_json,target_return,drawdown_limit,
+	buy_base,buy_offset,sell_base,take_profit,trail_drawdown,stop_loss,max_hold_days,
+	total_dates,processed_dates,"current_date",candidate_symbols,signal_count,'' AS result_json,error,cancel_requested,created_at,started_at,finished_at,updated_at`
+
 func (s *AppStore) GetHistoricalBacktestRun(id string) (HistoricalBacktestRun, error) {
 	return scanHistoricalBacktestRun(s.db.QueryRow(`SELECT `+historicalBacktestRunColumns+` FROM historical_backtest_runs WHERE id=?`, id))
 }
@@ -140,7 +144,7 @@ func (s *AppStore) ListHistoricalBacktestRuns(limit int) ([]HistoricalBacktestRu
 	if limit <= 0 || limit > 100 {
 		limit = 30
 	}
-	rows, err := s.db.Query(`SELECT `+historicalBacktestRunColumns+` FROM historical_backtest_runs ORDER BY created_at DESC LIMIT ?`, limit)
+	rows, err := s.db.Query(`SELECT `+historicalBacktestRunSummaryColumns+` FROM historical_backtest_runs ORDER BY created_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +155,6 @@ func (s *AppStore) ListHistoricalBacktestRuns(limit int) ([]HistoricalBacktestRu
 		if err != nil {
 			return nil, err
 		}
-		item.StrategySnapshotJSON = ""
 		items = append(items, item)
 	}
 	return items, rows.Err()
@@ -164,7 +167,8 @@ func (s *AppStore) UpdateHistoricalBacktestProgress(id string, totalDates, proce
 }
 
 func (s *AppStore) FinishHistoricalBacktestRun(id, status, resultJSON, errorText string) error {
-	if !json.Valid([]byte(resultJSON)) {
+	var result map[string]interface{}
+	if err := json.Unmarshal([]byte(resultJSON), &result); err != nil || result == nil {
 		resultJSON = "{}"
 	}
 	now := NowText()
@@ -187,6 +191,44 @@ func (s *AppStore) RequestHistoricalBacktestCancel(id string) error {
 func (s *AppStore) HistoricalBacktestCancelRequested(id string) bool {
 	var requested int
 	return s.db.QueryRow(`SELECT cancel_requested FROM historical_backtest_runs WHERE id=?`, id).Scan(&requested) == nil && requested != 0
+}
+
+func historicalBacktestSelectionResult(item HistoricalBacktestSignal) SelectionResult {
+	signalAt := strings.TrimSpace(item.SignalDate)
+	if signalAt != "" {
+		signalAt += "T16:00:00+08:00"
+	} else {
+		signalAt = item.CreatedAt
+	}
+	return SelectionResult{
+		ID: item.ID, RunID: item.RunID, TaskID: HistoricalBacktestTaskID, TaskName: HistoricalBacktestTaskName,
+		FormulaID: "strategy:" + item.StrategyID, FormulaName: item.StrategyName, Symbol: item.Symbol,
+		Latest: item.Latest, SignalAt: signalAt, SignalPrice: item.Latest, QuoteAt: signalAt,
+		QuoteSource: "historical-backtest", PriceType: "close", SignalScore: item.Score,
+		StrategyVersion: "strategy:" + item.StrategyID, MarketContextJSON: "{}", SnapshotStatus: "valid",
+		DetailJSON: item.DetailJSON, CreatedAt: item.CreatedAt,
+	}
+}
+
+func upsertHistoricalBacktestSelectionResultTx(tx *sql.Tx, selection SelectionResult) error {
+	_, err := tx.Exec(`INSERT INTO selection_results
+		(id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,
+		 signal_at,signal_price,quote_at,quote_source,price_type,signal_score,strategy_version,market_context_json,snapshot_status,
+		 detail_json,created_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET
+			run_id=excluded.run_id,task_id=excluded.task_id,task_name=excluded.task_name,
+			formula_id=excluded.formula_id,formula_name=excluded.formula_name,symbol=excluded.symbol,
+			latest=excluded.latest,signal_at=excluded.signal_at,signal_price=excluded.signal_price,
+			quote_at=excluded.quote_at,quote_source=excluded.quote_source,price_type=excluded.price_type,
+			signal_score=excluded.signal_score,strategy_version=excluded.strategy_version,
+			market_context_json=excluded.market_context_json,snapshot_status=excluded.snapshot_status,
+			detail_json=excluded.detail_json,created_at=excluded.created_at`,
+		selection.ID, selection.RunID, selection.TaskID, selection.TaskName, selection.FormulaID, selection.FormulaName,
+		selection.Symbol, selection.Latest, selection.SignalAt, selection.SignalPrice, selection.QuoteAt, selection.QuoteSource,
+		selection.PriceType, selection.SignalScore, selection.StrategyVersion, selection.MarketContextJSON, selection.SnapshotStatus,
+		selection.DetailJSON, selection.CreatedAt)
+	return err
 }
 
 func (s *AppStore) InsertHistoricalBacktestSignals(items []HistoricalBacktestSignal) error {
@@ -219,20 +261,8 @@ func (s *AppStore) InsertHistoricalBacktestSignals(items []HistoricalBacktestSig
 			item.Latest, item.Score, item.DetailJSON, item.CreatedAt); err != nil {
 			return err
 		}
-		selection := SelectionResult{
-			ID: item.ID, RunID: item.RunID, TaskID: HistoricalBacktestTaskID, TaskName: HistoricalBacktestTaskName,
-			FormulaID: "strategy:" + item.StrategyID, FormulaName: item.StrategyName, Symbol: item.Symbol,
-			Latest: item.Latest, DetailJSON: item.DetailJSON, CreatedAt: item.CreatedAt,
-		}
-		if _, err := tx.Exec(`INSERT INTO selection_results
-			(id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,created_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?)
-			ON CONFLICT(id) DO UPDATE SET
-				run_id=excluded.run_id,task_id=excluded.task_id,task_name=excluded.task_name,
-				formula_id=excluded.formula_id,formula_name=excluded.formula_name,symbol=excluded.symbol,
-				latest=excluded.latest,detail_json=excluded.detail_json,created_at=excluded.created_at`,
-			selection.ID, selection.RunID, selection.TaskID, selection.TaskName, selection.FormulaID, selection.FormulaName,
-			selection.Symbol, selection.Latest, selection.DetailJSON, selection.CreatedAt); err != nil {
+		selection := historicalBacktestSelectionResult(item)
+		if err := upsertHistoricalBacktestSelectionResultTx(tx, selection); err != nil {
 			return err
 		}
 		if item.Tracking != nil {
@@ -293,11 +323,7 @@ func (s *AppStore) ListHistoricalBacktestSignals(runID string, query HistoricalB
 	}
 	selectionItems := make([]SelectionResult, len(page.Items))
 	for index, item := range page.Items {
-		selectionItems[index] = SelectionResult{
-			ID: item.ID, RunID: item.RunID, TaskID: HistoricalBacktestTaskID, TaskName: HistoricalBacktestTaskName,
-			FormulaID: "strategy:" + item.StrategyID, FormulaName: item.StrategyName, Symbol: item.Symbol,
-			Latest: item.Latest, DetailJSON: item.DetailJSON, CreatedAt: item.CreatedAt,
-		}
+		selectionItems[index] = historicalBacktestSelectionResult(item)
 	}
 	if err := s.hydrateSelectionResultsTracking(selectionItems); err != nil {
 		return page, err
@@ -351,20 +377,8 @@ func (s *AppStore) migrateHistoricalBacktestTracking() error {
 	defer tx.Rollback()
 	for _, legacy := range items {
 		item := legacy.item
-		selection := SelectionResult{
-			ID: item.ID, RunID: item.RunID, TaskID: HistoricalBacktestTaskID, TaskName: HistoricalBacktestTaskName,
-			FormulaID: "strategy:" + item.StrategyID, FormulaName: item.StrategyName, Symbol: item.Symbol,
-			Latest: item.Latest, DetailJSON: item.DetailJSON, CreatedAt: item.CreatedAt,
-		}
-		if _, err := tx.Exec(`INSERT INTO selection_results
-			(id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,detail_json,created_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?)
-			ON CONFLICT(id) DO UPDATE SET
-				run_id=excluded.run_id,task_id=excluded.task_id,task_name=excluded.task_name,
-				formula_id=excluded.formula_id,formula_name=excluded.formula_name,symbol=excluded.symbol,
-				latest=excluded.latest,detail_json=excluded.detail_json,created_at=excluded.created_at`,
-			selection.ID, selection.RunID, selection.TaskID, selection.TaskName, selection.FormulaID, selection.FormulaName,
-			selection.Symbol, selection.Latest, selection.DetailJSON, selection.CreatedAt); err != nil {
+		selection := historicalBacktestSelectionResult(item)
+		if err := upsertHistoricalBacktestSelectionResultTx(tx, selection); err != nil {
 			return err
 		}
 		raw := strings.TrimSpace(legacy.trackingJSON)

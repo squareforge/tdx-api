@@ -24,7 +24,12 @@ interface StockDirectory { codes?: StockDirectoryItem[]; }
 interface StrategySelectionDetail { rank?: number; rank_score?: number; strategy_score?: number; }
 
 function parseJSON<T>(value?: string, fallback?: T): T {
-  try { return JSON.parse(value || '') as T; } catch { return fallback as T; }
+	try {
+		const parsed = JSON.parse(value || '') as T | null;
+		return parsed == null ? fallback as T : parsed;
+	} catch {
+		return fallback as T;
+	}
 }
 
 function statusMeta(status?: string) {
@@ -166,16 +171,35 @@ export function HistoricalBacktestWorkspace() {
   const initializedStrategies = useRef(false);
   const scanStrategyScrollRef = useRef<HTMLDivElement>(null);
 
-  const loadRuns = useCallback(async (preferID?: string) => {
-    const response = await apiFetch<{ items: HistoricalBacktestRun[] }>('/api/historical-backtests?limit=30');
-    const items = response.items || [];
-    setRuns(items);
-    setSelectedRun((current) => {
-      const targetID = preferID || current?.id;
-      return (targetID ? items.find((item) => item.id === targetID) : null) || items[0] || null;
-    });
-    return items;
-  }, []);
+	const loadRuns = useCallback(async (preferID?: string) => {
+		const response = await apiFetch<{ items: HistoricalBacktestRun[] }>('/api/historical-backtests?limit=30');
+		const items = response.items || [];
+		setRuns(items);
+		setSelectedRun((current) => {
+			const targetID = preferID || current?.id;
+			const target = (targetID ? items.find((item) => item.id === targetID) : null) || items[0] || null;
+			if (!target || current?.id !== target.id) return target;
+			return {
+				...target,
+				result_json: current.result_json || target.result_json,
+				strategy_snapshot_json: current.strategy_snapshot_json || target.strategy_snapshot_json
+			};
+		});
+		return items;
+	}, []);
+
+	useEffect(() => {
+		const runID = selectedRun?.id;
+		if (!runID) return;
+		let disposed = false;
+		apiFetch<HistoricalBacktestRun>(`/api/historical-backtests/${encodeURIComponent(runID)}`).then((detail) => {
+			if (disposed) return;
+			setSelectedRun((current) => current?.id === runID ? detail : current);
+		}).catch((error) => {
+			if (!disposed) message.error(error instanceof Error ? error.message : '回测详情加载失败');
+		});
+		return () => { disposed = true; };
+	}, [selectedRun?.id, selectedRun?.status]);
 
   const loadScanRuns = useCallback(async (preferID?: string) => {
     const response = await apiFetch<{ items: HistoricalScanRun[] }>('/api/historical-backtests/scan/runs?limit=30');
@@ -344,7 +368,7 @@ export function HistoricalBacktestWorkspace() {
     container.scrollBy({ left: direction * Math.max(240, container.clientWidth * 0.7), behavior: 'smooth' });
   }
 
-  const result = useMemo(() => parseJSON<HistoricalBacktestResult>(selectedRun?.result_json, {}), [selectedRun?.result_json]);
+	const result = useMemo(() => parseJSON<HistoricalBacktestResult>(selectedRun?.result_json, {}), [selectedRun?.result_json]) || {};
   const summaries = result.strategy_summaries || [];
   const consensus = result.consensus || [];
   const portfolio = result.portfolio;

@@ -305,6 +305,11 @@ func OpenAppStore() (*AppStore, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if _, err := db.Exec(`PRAGMA busy_timeout=10000`); err != nil {
+		db.Close()
+		return nil, err
+	}
 
 	store := &AppStore{db: db}
 	if err := store.migrate(); err != nil {
@@ -827,7 +832,7 @@ func (s *AppStore) migrate() error {
 		WHERE snapshot_status='inferred' AND quote_source IN ('legacy_selection','selection_result')`); err != nil {
 		return err
 	}
-	if _, err := s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_selection_results_business_key ON selection_results(run_id, formula_id, symbol, signal_at)`); err != nil {
+	if err := s.migrateSelectionResultBusinessKey(); err != nil {
 		return err
 	}
 	// Runs created before parent_run_id existed are linked to the enclosing
@@ -850,6 +855,203 @@ func (s *AppStore) migrate() error {
 		return err
 	}
 	return nil
+}
+
+// migrateSelectionResultBusinessKey makes the signal business key unique on
+// databases that already contain rows from the pre-constraint implementation.
+// A retry could previously write the same signal twice. Keep the earliest row
+// as the canonical signal and fold structured tracking/execution observations
+// into it before removing the duplicate row.
+func (s *AppStore) migrateSelectionResultBusinessKey() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.Query(`
+		SELECT sr.run_id,sr.formula_id,sr.symbol,sr.signal_at,
+			(SELECT canonical.id FROM selection_results AS canonical
+			 WHERE canonical.run_id=sr.run_id AND canonical.formula_id=sr.formula_id
+			   AND canonical.symbol=sr.symbol AND canonical.signal_at=sr.signal_at
+			 ORDER BY canonical.created_at,canonical.id LIMIT 1) AS canonical_id
+		FROM selection_results AS sr
+		GROUP BY sr.run_id,sr.formula_id,sr.symbol,sr.signal_at
+		HAVING COUNT(*)>1`)
+	if err != nil {
+		return err
+	}
+	type duplicateGroup struct {
+		runID, formulaID, symbol, signalAt, canonicalID string
+	}
+	groups := make([]duplicateGroup, 0)
+	for rows.Next() {
+		var group duplicateGroup
+		if err := rows.Scan(&group.runID, &group.formulaID, &group.symbol, &group.signalAt, &group.canonicalID); err != nil {
+			rows.Close()
+			return err
+		}
+		groups = append(groups, group)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+
+	for _, group := range groups {
+		var duplicateIDs []string
+		duplicateRows, err := tx.Query(`SELECT id FROM selection_results WHERE run_id=? AND formula_id=? AND symbol=? AND signal_at=? AND id<>? ORDER BY created_at,id`, group.runID, group.formulaID, group.symbol, group.signalAt, group.canonicalID)
+		if err != nil {
+			return err
+		}
+		for duplicateRows.Next() {
+			var id string
+			if err := duplicateRows.Scan(&id); err != nil {
+				duplicateRows.Close()
+				return err
+			}
+			duplicateIDs = append(duplicateIDs, id)
+		}
+		if err := duplicateRows.Err(); err != nil {
+			duplicateRows.Close()
+			return err
+		}
+		if err := duplicateRows.Close(); err != nil {
+			return err
+		}
+
+		for _, duplicateID := range duplicateIDs {
+			// Merge each horizon one at a time so duplicate rows for the same
+			// horizon cannot collide on selection_result_tracking's primary key.
+			var trackingRows []struct {
+				id      string
+				horizon int
+			}
+			rows, err := tx.Query(`SELECT id,horizon_days FROM selection_result_tracking WHERE selection_result_id=? ORDER BY horizon_days,id`, duplicateID)
+			if err != nil {
+				return err
+			}
+			for rows.Next() {
+				var row struct {
+					id      string
+					horizon int
+				}
+				if err := rows.Scan(&row.id, &row.horizon); err != nil {
+					rows.Close()
+					return err
+				}
+				trackingRows = append(trackingRows, row)
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return err
+			}
+			if err := rows.Close(); err != nil {
+				return err
+			}
+			for _, row := range trackingRows {
+				var kept int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM selection_result_tracking WHERE selection_result_id=? AND horizon_days=?`, group.canonicalID, row.horizon).Scan(&kept); err != nil {
+					return err
+				}
+				if kept > 0 {
+					if _, err := tx.Exec(`DELETE FROM selection_result_tracking WHERE id=?`, row.id); err != nil {
+						return err
+					}
+				} else if _, err := tx.Exec(`UPDATE selection_result_tracking SET selection_result_id=?,id=? WHERE id=?`, group.canonicalID, fmt.Sprintf("%s:d%d", group.canonicalID, row.horizon), row.id); err != nil {
+					return err
+				}
+			}
+
+			var executionRows []struct{ id, policy, version string }
+			rows, err = tx.Query(`SELECT id,policy_name,policy_version FROM selection_signal_executions WHERE selection_result_id=?`, duplicateID)
+			if err != nil {
+				return err
+			}
+			for rows.Next() {
+				var row struct{ id, policy, version string }
+				if err := rows.Scan(&row.id, &row.policy, &row.version); err != nil {
+					rows.Close()
+					return err
+				}
+				executionRows = append(executionRows, row)
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return err
+			}
+			if err := rows.Close(); err != nil {
+				return err
+			}
+			for _, row := range executionRows {
+				var kept int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM selection_signal_executions WHERE selection_result_id=? AND policy_name=? AND policy_version=?`, group.canonicalID, row.policy, row.version).Scan(&kept); err != nil {
+					return err
+				}
+				if kept > 0 {
+					if _, err := tx.Exec(`DELETE FROM selection_signal_executions WHERE id=?`, row.id); err != nil {
+						return err
+					}
+				} else if _, err := tx.Exec(`UPDATE selection_signal_executions SET selection_result_id=? WHERE id=?`, group.canonicalID, row.id); err != nil {
+					return err
+				}
+			}
+
+			var observationRows []struct {
+				id, executionID string
+				tradeDate       int
+				sessionKind     string
+			}
+			rows, err = tx.Query(`SELECT id,execution_id,trade_date,session_kind FROM selection_signal_observations WHERE selection_result_id=?`, duplicateID)
+			if err != nil {
+				return err
+			}
+			for rows.Next() {
+				var row struct {
+					id, executionID string
+					tradeDate       int
+					sessionKind     string
+				}
+				if err := rows.Scan(&row.id, &row.executionID, &row.tradeDate, &row.sessionKind); err != nil {
+					rows.Close()
+					return err
+				}
+				observationRows = append(observationRows, row)
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return err
+			}
+			if err := rows.Close(); err != nil {
+				return err
+			}
+			for _, row := range observationRows {
+				var kept int
+				if err := tx.QueryRow(`SELECT COUNT(*) FROM selection_signal_observations WHERE selection_result_id=? AND execution_id=? AND trade_date=? AND session_kind=?`, group.canonicalID, row.executionID, row.tradeDate, row.sessionKind).Scan(&kept); err != nil {
+					return err
+				}
+				if kept > 0 {
+					if _, err := tx.Exec(`DELETE FROM selection_signal_observations WHERE id=?`, row.id); err != nil {
+						return err
+					}
+				} else if _, err := tx.Exec(`UPDATE selection_signal_observations SET selection_result_id=? WHERE id=?`, group.canonicalID, row.id); err != nil {
+					return err
+				}
+			}
+
+			if _, err := tx.Exec(`DELETE FROM selection_results WHERE id=?`, duplicateID); err != nil {
+				return err
+			}
+		}
+	}
+
+	if _, err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_selection_results_business_key ON selection_results(run_id, formula_id, symbol, signal_at)`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *AppStore) ensureColumn(table, column, definition string) error {

@@ -19,6 +19,7 @@ import { AISelectionWorkspace } from './components/AISelectionWorkspace';
 import { FloatingResearchAssistant } from './components/FloatingResearchAssistant';
 import { AlertsWorkspace } from './components/AlertsWorkspace';
 import { WatchlistTable } from './components/WatchlistTable';
+import { WorkspaceErrorBoundary } from './components/WorkspaceErrorBoundary';
 import { apiFetch } from './lib/api';
 import type { PlatformConfig, ServiceStatusResult } from './types';
 
@@ -200,7 +201,11 @@ export default function App() {
   const selectionTabItems = selectionWorkspaces.map((workspace) => ({
     key: workspace.key,
     label: workspace.label,
-    children: <WorkspaceContent workspace={workspace.key} platformConfig={platformConfig} onPlatformConfigChange={setPlatformConfig} />
+    children: workspace.key === 'historicalBacktest' ? (
+      <WorkspaceErrorBoundary workspaceName="历史回测" onReset={() => setActiveSelectionWorkspace('dailyReview')}>
+        <WorkspaceContent workspace={workspace.key} platformConfig={platformConfig} onPlatformConfigChange={setPlatformConfig} />
+      </WorkspaceErrorBoundary>
+    ) : <WorkspaceContent workspace={workspace.key} platformConfig={platformConfig} onPlatformConfigChange={setPlatformConfig} />
   }));
 
   const tradingTabItems = tradingWorkspaces.map((workspace) => ({

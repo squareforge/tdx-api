@@ -108,6 +108,95 @@ func TestHistoricalBacktestSignalsPersistStructuredTracking(t *testing.T) {
 	}
 }
 
+func TestHistoricalBacktestSignalsUseSignalDateAsBusinessKey(t *testing.T) {
+	store := newHistoricalBacktestTestStore(t)
+	run, err := store.CreateHistoricalBacktestRun(HistoricalBacktestRun{
+		StartDate: "2026-06-01", EndDate: "2026-06-02", StrategyIDs: []string{"strategy-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, signalDate := range []string{"2026-06-01", "2026-06-02"} {
+		if err := store.InsertHistoricalBacktestSignals([]HistoricalBacktestSignal{{
+			RunID: run.ID, StrategyID: "strategy-1", StrategyName: "策略A", SignalDate: signalDate,
+			Symbol: "000001", Latest: 10, Score: 80, DetailJSON: `{}`,
+		}}); err != nil {
+			t.Fatalf("insert %s: %v", signalDate, err)
+		}
+	}
+	rows, err := store.db.Query(`SELECT signal_at,signal_price,quote_at,quote_source,price_type,signal_score,snapshot_status
+		FROM selection_results WHERE run_id=? ORDER BY signal_at`, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	wantDates := []string{"2026-06-01T16:00:00+08:00", "2026-06-02T16:00:00+08:00"}
+	index := 0
+	for rows.Next() {
+		var signalAt, quoteAt, quoteSource, priceType, snapshotStatus string
+		var signalPrice, signalScore float64
+		if err := rows.Scan(&signalAt, &signalPrice, &quoteAt, &quoteSource, &priceType, &signalScore, &snapshotStatus); err != nil {
+			t.Fatal(err)
+		}
+		if index >= len(wantDates) || signalAt != wantDates[index] || quoteAt != signalAt || signalPrice != 10 || signalScore != 80 ||
+			quoteSource != "historical-backtest" || priceType != "close" || snapshotStatus != "valid" {
+			t.Fatalf("selection row %d = at %q price %v quote %q/%q type %q score %v status %q", index, signalAt, signalPrice, quoteAt, quoteSource, priceType, signalScore, snapshotStatus)
+		}
+		index++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if index != len(wantDates) {
+		t.Fatalf("selection row count = %d, want %d", index, len(wantDates))
+	}
+}
+
+func TestHistoricalBacktestResultAlwaysStoresJSONObject(t *testing.T) {
+	store := newHistoricalBacktestTestStore(t)
+	run, err := store.CreateHistoricalBacktestRun(HistoricalBacktestRun{
+		StartDate: "2026-06-01", EndDate: "2026-06-02", StrategyIDs: []string{"strategy-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FinishHistoricalBacktestRun(run.ID, "failed", "null", "测试失败"); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.GetHistoricalBacktestRun(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ResultJSON != "{}" {
+		t.Fatalf("result json = %q, want object fallback", loaded.ResultJSON)
+	}
+}
+
+func TestHistoricalBacktestListOmitsLargeResult(t *testing.T) {
+	store := newHistoricalBacktestTestStore(t)
+	run, err := store.CreateHistoricalBacktestRun(HistoricalBacktestRun{
+		StartDate: "2026-06-01", EndDate: "2026-06-02", StrategyIDs: []string{"strategy-1"},
+		StrategySnapshotJSON: `[{"id":"strategy-1"}]`, ResultJSON: `{"strategy_summaries":[{"strategy_id":"strategy-1"}]}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := store.ListHistoricalBacktestRuns(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].ResultJSON != "" || items[0].StrategySnapshotJSON != "" {
+		t.Fatalf("list item unexpectedly contains detail payload: %+v", items)
+	}
+	detail, err := store.GetHistoricalBacktestRun(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.ResultJSON == "" || detail.StrategySnapshotJSON == "" {
+		t.Fatalf("detail payload was omitted: %+v", detail)
+	}
+}
+
 func TestMigrateHistoricalBacktestTrackingJSON(t *testing.T) {
 	store := newHistoricalBacktestTestStore(t)
 	legacyResult := `{"consensus":[{"signal_date":"2026-06-01","symbol":"000001","strategy_count":2,"strategies":["策略A","策略B"],"tracking_json":"{\"version\":\"2\",\"horizons\":{\"d3\":{\"horizon_days\":3,\"status\":\"complete\",\"close_return\":4}}}"}]}`

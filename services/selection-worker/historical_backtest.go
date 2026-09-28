@@ -322,6 +322,9 @@ func (r *AutomationRunner) startHistoricalBacktest(raw historicalBacktestRequest
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour)
 		defer cancel()
 		result, runErr := r.runHistoricalBacktest(ctx, run, req, strategies)
+		if result == nil {
+			result = map[string]interface{}{}
+		}
 		status, errorText := "success", ""
 		if runErr != nil {
 			status, errorText = "failed", runErr.Error()
