@@ -27,6 +27,9 @@ type MacroEvent struct {
 	AShareDate    string `json:"a_share_date"`
 	Source        string `json:"source"`
 	SourceURL     string `json:"source_url"`
+	SourceKind    string `json:"source_kind"`
+	ExternalID    string `json:"external_id,omitempty"`
+	LastSeenAt    string `json:"last_seen_at,omitempty"`
 	Description   string `json:"description"`
 	Status        string `json:"status"`
 	Acknowledged  bool   `json:"acknowledged"`
@@ -59,18 +62,19 @@ type MacroAlertSettings struct {
 	UpdatedAt           string `json:"updated_at"`
 }
 
-func defaultMacroEvents() []MacroEvent {
-	// Reference dates are intentionally editable. Official calendars can move.
-	return []MacroEvent{
-		{ID: "macro-20260904-nfp", Code: "NFP", Name: "非农就业报告", Category: "employment", Country: "US", Impact: "high", StartsAt: "2026-09-04T20:30:00+08:00", AShareDate: "2026-09-07", Source: "BLS", SourceURL: "https://www.bls.gov/schedule/news_release/empsit.htm", Description: "观察就业新增、失业率与平均时薪，判断美国经济冷热和通胀压力。"},
-		{ID: "macro-20260910-cpi", Code: "CPI", Name: "美国 CPI 通胀", Category: "inflation", Country: "US", Impact: "high", StartsAt: "2026-09-10T20:30:00+08:00", AShareDate: "2026-09-11", Source: "BLS", SourceURL: "https://www.bls.gov/schedule/news_release/cpi.htm", Description: "核心通胀是利率预期和风险资产定价的重要输入。"},
-		{ID: "macro-20260916-fomc", Code: "FOMC", Name: "美联储议息会议", Category: "central_bank", Country: "US", Impact: "critical", StartsAt: "2026-09-18T02:00:00+08:00", AShareDate: "2026-09-18", Source: "Federal Reserve", SourceURL: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm", Description: "关注利率决议、点阵图和主席发布会，事件窗口可能扩大跨市场波动。"},
-		{ID: "macro-20260930-pce", Code: "PCE", Name: "美国 PCE 物价指数", Category: "inflation", Country: "US", Impact: "high", StartsAt: "2026-09-30T20:30:00+08:00", AShareDate: "2026-10-01", Source: "BEA", SourceURL: "https://www.bea.gov/news/schedule", Description: "美联储偏好的通胀指标，结合核心 PCE 观察降息空间。"},
-		{ID: "macro-20261002-nfp", Code: "NFP", Name: "非农就业报告", Category: "employment", Country: "US", Impact: "high", StartsAt: "2026-10-02T20:30:00+08:00", AShareDate: "2026-10-05", Source: "BLS", SourceURL: "https://www.bls.gov/schedule/news_release/empsit.htm", Description: "观察就业新增、失业率与平均时薪，判断美国经济冷热和通胀压力。"},
-		{ID: "macro-20261013-cpi", Code: "CPI", Name: "美国 CPI 通胀", Category: "inflation", Country: "US", Impact: "high", StartsAt: "2026-10-13T20:30:00+08:00", AShareDate: "2026-10-14", Source: "BLS", SourceURL: "https://www.bls.gov/schedule/news_release/cpi.htm", Description: "核心通胀是利率预期和风险资产定价的重要输入。"},
-		{ID: "macro-20261028-fomc", Code: "FOMC", Name: "美联储议息会议", Category: "central_bank", Country: "US", Impact: "critical", StartsAt: "2026-10-30T02:00:00+08:00", AShareDate: "2026-10-30", Source: "Federal Reserve", SourceURL: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm", Description: "关注利率决议、点阵图和主席发布会，事件窗口可能扩大跨市场波动。"},
-		{ID: "macro-20261030-pce", Code: "PCE", Name: "美国 PCE 物价指数", Category: "inflation", Country: "US", Impact: "high", StartsAt: "2026-10-30T20:30:00+08:00", AShareDate: "2026-11-02", Source: "BEA", SourceURL: "https://www.bea.gov/news/schedule", Description: "美联储偏好的通胀指标，结合核心 PCE 观察降息空间。"},
-	}
+// These signatures identify reference rows created by older versions. They
+// are used only for migration; they are never inserted as calendar events.
+var legacyMacroEventSignatures = []struct {
+	id, code, name, category, impact, startsAt, aShareDate, source, sourceURL, description string
+}{
+	{"macro-20260904-nfp", "NFP", "非农就业报告", "employment", "high", "2026-09-04T20:30:00+08:00", "2026-09-07", "BLS", "https://www.bls.gov/schedule/news_release/empsit.htm", "观察就业新增、失业率与平均时薪，判断美国经济冷热和通胀压力。"},
+	{"macro-20260910-cpi", "CPI", "美国 CPI 通胀", "inflation", "high", "2026-09-10T20:30:00+08:00", "2026-09-11", "BLS", "https://www.bls.gov/schedule/news_release/cpi.htm", "核心通胀是利率预期和风险资产定价的重要输入。"},
+	{"macro-20260916-fomc", "FOMC", "美联储议息会议", "central_bank", "critical", "2026-09-18T02:00:00+08:00", "2026-09-18", "Federal Reserve", "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm", "关注利率决议、点阵图和主席发布会，事件窗口可能扩大跨市场波动。"},
+	{"macro-20260930-pce", "PCE", "美国 PCE 物价指数", "inflation", "high", "2026-09-30T20:30:00+08:00", "2026-10-01", "BEA", "https://www.bea.gov/news/schedule", "美联储偏好的通胀指标，结合核心 PCE 观察降息空间。"},
+	{"macro-20261002-nfp", "NFP", "非农就业报告", "employment", "high", "2026-10-02T20:30:00+08:00", "2026-10-05", "BLS", "https://www.bls.gov/schedule/news_release/empsit.htm", "观察就业新增、失业率与平均时薪，判断美国经济冷热和通胀压力。"},
+	{"macro-20261013-cpi", "CPI", "美国 CPI 通胀", "inflation", "high", "2026-10-13T20:30:00+08:00", "2026-10-14", "BLS", "https://www.bls.gov/schedule/news_release/cpi.htm", "核心通胀是利率预期和风险资产定价的重要输入。"},
+	{"macro-20261028-fomc", "FOMC", "美联储议息会议", "central_bank", "critical", "2026-10-30T02:00:00+08:00", "2026-10-30", "Federal Reserve", "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm", "关注利率决议、点阵图和主席发布会，事件窗口可能扩大跨市场波动。"},
+	{"macro-20261030-pce", "PCE", "美国 PCE 物价指数", "inflation", "high", "2026-10-30T20:30:00+08:00", "2026-11-02", "BEA", "https://www.bea.gov/news/schedule", "美联储偏好的通胀指标，结合核心 PCE 观察降息空间。"},
 }
 
 func normalizeMacroEvent(event MacroEvent) (MacroEvent, error) {
@@ -89,6 +93,9 @@ func normalizeMacroEvent(event MacroEvent) (MacroEvent, error) {
 	event.AShareDate = strings.TrimSpace(event.AShareDate)
 	event.Source = strings.TrimSpace(event.Source)
 	event.SourceURL = strings.TrimSpace(event.SourceURL)
+	event.SourceKind = strings.ToLower(strings.TrimSpace(event.SourceKind))
+	event.ExternalID = strings.TrimSpace(event.ExternalID)
+	event.LastSeenAt = strings.TrimSpace(event.LastSeenAt)
 	event.Description = strings.TrimSpace(event.Description)
 	if event.Code == "" || event.Name == "" || event.StartsAt == "" {
 		return event, errors.New("事件代码、名称和发布时间不能为空")
@@ -117,6 +124,14 @@ func normalizeMacroEvent(event MacroEvent) (MacroEvent, error) {
 	if event.Country == "" {
 		event.Country = "US"
 	}
+	if event.SourceKind == "" {
+		event.SourceKind = "manual"
+	}
+	switch event.SourceKind {
+	case "manual", "official":
+	default:
+		return event, errors.New("source_kind必须是manual或official")
+	}
 	if event.Status == "" {
 		event.Status = "scheduled"
 	}
@@ -133,14 +148,17 @@ func (s *AppStore) ensureMacroEvents() error {
 	if _, err := s.db.Exec(`UPDATE macro_events SET scheduled_at=starts_at WHERE scheduled_at=''`); err != nil {
 		return err
 	}
-	// Correct the initial FOMC examples once without overwriting user edits.
-	if _, err := s.db.Exec(`UPDATE macro_events SET starts_at=?, a_share_date=?, updated_at=? WHERE id=? AND starts_at=?`,
-		"2026-09-18T02:00:00+08:00", "2026-09-18", now, "macro-20260916-fomc", "2026-09-17T02:00:00+08:00"); err != nil {
-		return err
-	}
-	if _, err := s.db.Exec(`UPDATE macro_events SET starts_at=?, a_share_date=?, updated_at=? WHERE id=? AND starts_at=?`,
-		"2026-10-30T02:00:00+08:00", "2026-10-30", now, "macro-20261028-fomc", "2026-10-29T02:00:00+08:00"); err != nil {
-		return err
+	// Remove only rows that still match the old reference content. This also
+	// handles FOMC reference dates corrected by older startup migrations.
+	for _, ref := range legacyMacroEventSignatures {
+		if _, err := s.db.Exec(`DELETE FROM macro_events WHERE id=? AND source_kind='manual' AND code=? AND name=? AND category=? AND country='US'
+			AND impact=? AND starts_at=? AND scheduled_at=starts_at AND a_share_date=? AND source=? AND source_url=?
+			AND description=? AND status='scheduled' AND acknowledged=0 AND released_at=''
+			AND previous_value='' AND forecast_value='' AND actual_value='' AND revision=''
+			AND external_id='' AND last_seen_at=''`,
+			ref.id, ref.code, ref.name, ref.category, ref.impact, ref.startsAt, ref.aShareDate, ref.source, ref.sourceURL, ref.description); err != nil {
+			return err
+		}
 	}
 	for _, provider := range []string{"BLS", "Federal Reserve", "BEA"} {
 		id := "macro-sync-" + strings.ToLower(strings.ReplaceAll(provider, " ", "-"))
@@ -155,26 +173,11 @@ func (s *AppStore) ensureMacroEvents() error {
 		VALUES (?,?,?,?,?,?,?,?,?)`, "default", 1, 240, 240, 120, 0, 0, "[]", now); err != nil {
 		return err
 	}
-	for _, event := range defaultMacroEvents() {
-		event.CreatedAt = now
-		event.UpdatedAt = now
-		event.Status = "scheduled"
-		_, err := s.db.Exec(`INSERT OR IGNORE INTO macro_events
-			(id,code,name,category,country,impact,starts_at,scheduled_at,released_at,previous_value,forecast_value,actual_value,revision,a_share_date,source,source_url,description,status,acknowledged,created_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			event.ID, event.Code, event.Name, event.Category, event.Country, event.Impact,
-			event.StartsAt, event.ScheduledAt, event.ReleasedAt, event.PreviousValue, event.ForecastValue, event.ActualValue, event.Revision,
-			event.AShareDate, event.Source, event.SourceURL, event.Description,
-			event.Status, boolInt(event.Acknowledged), event.CreatedAt, event.UpdatedAt)
-		if err != nil {
-			return err
-		}
-	}
 	return nil
 }
 
 func (s *AppStore) ListMacroEvents(from, to, category, impact string) ([]MacroEvent, error) {
-	query := `SELECT id,code,name,category,country,impact,starts_at,scheduled_at,released_at,previous_value,forecast_value,actual_value,revision,a_share_date,source,source_url,description,status,acknowledged,created_at,updated_at FROM macro_events WHERE 1=1`
+	query := `SELECT id,code,name,category,country,impact,starts_at,scheduled_at,released_at,previous_value,forecast_value,actual_value,revision,a_share_date,source,source_url,source_kind,external_id,last_seen_at,description,status,acknowledged,created_at,updated_at FROM macro_events WHERE 1=1`
 	args := []interface{}{}
 	if strings.TrimSpace(from) != "" {
 		query += " AND starts_at >= ?"
@@ -202,7 +205,7 @@ func (s *AppStore) ListMacroEvents(from, to, category, impact string) ([]MacroEv
 	for rows.Next() {
 		var event MacroEvent
 		var acknowledged int
-		if err := rows.Scan(&event.ID, &event.Code, &event.Name, &event.Category, &event.Country, &event.Impact, &event.StartsAt, &event.ScheduledAt, &event.ReleasedAt, &event.PreviousValue, &event.ForecastValue, &event.ActualValue, &event.Revision, &event.AShareDate, &event.Source, &event.SourceURL, &event.Description, &event.Status, &acknowledged, &event.CreatedAt, &event.UpdatedAt); err != nil {
+		if err := rows.Scan(&event.ID, &event.Code, &event.Name, &event.Category, &event.Country, &event.Impact, &event.StartsAt, &event.ScheduledAt, &event.ReleasedAt, &event.PreviousValue, &event.ForecastValue, &event.ActualValue, &event.Revision, &event.AShareDate, &event.Source, &event.SourceURL, &event.SourceKind, &event.ExternalID, &event.LastSeenAt, &event.Description, &event.Status, &acknowledged, &event.CreatedAt, &event.UpdatedAt); err != nil {
 			return nil, err
 		}
 		event.Acknowledged = intBool(acknowledged)
@@ -214,8 +217,8 @@ func (s *AppStore) ListMacroEvents(from, to, category, impact string) ([]MacroEv
 func (s *AppStore) GetMacroEvent(id string) (MacroEvent, error) {
 	var event MacroEvent
 	var acknowledged int
-	err := s.db.QueryRow(`SELECT id,code,name,category,country,impact,starts_at,scheduled_at,released_at,previous_value,forecast_value,actual_value,revision,a_share_date,source,source_url,description,status,acknowledged,created_at,updated_at FROM macro_events WHERE id=?`, id).
-		Scan(&event.ID, &event.Code, &event.Name, &event.Category, &event.Country, &event.Impact, &event.StartsAt, &event.ScheduledAt, &event.ReleasedAt, &event.PreviousValue, &event.ForecastValue, &event.ActualValue, &event.Revision, &event.AShareDate, &event.Source, &event.SourceURL, &event.Description, &event.Status, &acknowledged, &event.CreatedAt, &event.UpdatedAt)
+	err := s.db.QueryRow(`SELECT id,code,name,category,country,impact,starts_at,scheduled_at,released_at,previous_value,forecast_value,actual_value,revision,a_share_date,source,source_url,source_kind,external_id,last_seen_at,description,status,acknowledged,created_at,updated_at FROM macro_events WHERE id=?`, id).
+		Scan(&event.ID, &event.Code, &event.Name, &event.Category, &event.Country, &event.Impact, &event.StartsAt, &event.ScheduledAt, &event.ReleasedAt, &event.PreviousValue, &event.ForecastValue, &event.ActualValue, &event.Revision, &event.AShareDate, &event.Source, &event.SourceURL, &event.SourceKind, &event.ExternalID, &event.LastSeenAt, &event.Description, &event.Status, &acknowledged, &event.CreatedAt, &event.UpdatedAt)
 	event.Acknowledged = intBool(acknowledged)
 	return event, err
 }
@@ -227,6 +230,15 @@ func (s *AppStore) UpsertMacroEvent(event MacroEvent) (MacroEvent, error) {
 		return event, err
 	}
 	now := NowText()
+	if event.SourceKind == "official" && event.ExternalID != "" {
+		var existingID string
+		err := s.db.QueryRow(`SELECT id FROM macro_events WHERE source_kind=? AND source=? AND external_id=? ORDER BY updated_at DESC LIMIT 1`, event.SourceKind, event.Source, event.ExternalID).Scan(&existingID)
+		if err == nil {
+			event.ID = existingID
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return event, err
+		}
+	}
 	if event.ID == "" {
 		event.ID = "macro-" + strings.ToLower(event.Code) + "-" + strings.ReplaceAll(event.StartsAt, ":", "")
 		event.CreatedAt = now
@@ -235,6 +247,38 @@ func (s *AppStore) UpsertMacroEvent(event MacroEvent) (MacroEvent, error) {
 		if getErr == nil {
 			if event.CreatedAt == "" {
 				event.CreatedAt = old.CreatedAt
+			}
+			if event.SourceKind == "official" && old.SourceKind == "official" {
+				if event.ReleasedAt == "" {
+					event.ReleasedAt = old.ReleasedAt
+				}
+				if event.PreviousValue == "" {
+					event.PreviousValue = old.PreviousValue
+				}
+				if event.ForecastValue == "" {
+					event.ForecastValue = old.ForecastValue
+				}
+				if event.ActualValue == "" {
+					event.ActualValue = old.ActualValue
+				}
+				if event.Revision == "" {
+					event.Revision = old.Revision
+				}
+				if event.Status == "scheduled" && old.Status != "scheduled" {
+					event.Status = old.Status
+				}
+			}
+			// Older clients do not send source metadata. Preserve it when an
+			// existing official event is edited so a normal form save cannot
+			// turn it into an unsynchronised manual row.
+			if event.SourceKind == "manual" && event.ExternalID == "" && event.LastSeenAt == "" && old.SourceKind == "official" {
+				event.SourceKind = old.SourceKind
+			}
+			if event.ExternalID == "" {
+				event.ExternalID = old.ExternalID
+			}
+			if event.LastSeenAt == "" {
+				event.LastSeenAt = old.LastSeenAt
 			}
 			// Acknowledgement is changed through the dedicated endpoint so an edit
 			// cannot silently move an already reviewed event back to pending.
@@ -247,14 +291,14 @@ func (s *AppStore) UpsertMacroEvent(event MacroEvent) (MacroEvent, error) {
 	}
 	event.UpdatedAt = now
 	_, err = s.db.Exec(`INSERT INTO macro_events
-		(id,code,name,category,country,impact,starts_at,scheduled_at,released_at,previous_value,forecast_value,actual_value,revision,a_share_date,source,source_url,description,status,acknowledged,created_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		(id,code,name,category,country,impact,starts_at,scheduled_at,released_at,previous_value,forecast_value,actual_value,revision,a_share_date,source,source_url,source_kind,external_id,last_seen_at,description,status,acknowledged,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 		code=excluded.code,name=excluded.name,category=excluded.category,country=excluded.country,impact=excluded.impact,
 		starts_at=excluded.starts_at,scheduled_at=excluded.scheduled_at,released_at=excluded.released_at,previous_value=excluded.previous_value,forecast_value=excluded.forecast_value,actual_value=excluded.actual_value,revision=excluded.revision,a_share_date=excluded.a_share_date,source=excluded.source,source_url=excluded.source_url,
-		description=excluded.description,status=excluded.status,acknowledged=excluded.acknowledged,updated_at=excluded.updated_at`,
+		source_kind=excluded.source_kind,external_id=excluded.external_id,last_seen_at=excluded.last_seen_at,description=excluded.description,status=excluded.status,acknowledged=excluded.acknowledged,updated_at=excluded.updated_at`,
 		event.ID, event.Code, event.Name, event.Category, event.Country, event.Impact, event.StartsAt, event.ScheduledAt, event.ReleasedAt, event.PreviousValue, event.ForecastValue, event.ActualValue, event.Revision, event.AShareDate,
-		event.Source, event.SourceURL, event.Description, event.Status, boolInt(event.Acknowledged), event.CreatedAt, event.UpdatedAt)
+		event.Source, event.SourceURL, event.SourceKind, event.ExternalID, event.LastSeenAt, event.Description, event.Status, boolInt(event.Acknowledged), event.CreatedAt, event.UpdatedAt)
 	return event, err
 }
 
@@ -280,13 +324,16 @@ func (s *AppStore) DeleteMacroEvent(id string) error {
 	return nil
 }
 
-// DeleteMacroEventsByPrefix removes only records owned by an official sync run.
-// The reserved prefix keeps manually entered events untouched during revisions.
-func (s *AppStore) DeleteMacroEventsByPrefix(prefix string) error {
-	if strings.TrimSpace(prefix) == "" {
-		return errors.New("事件前缀不能为空")
+// DeleteStaleOfficialMacroEvents removes official records for a provider that
+// were not seen in the latest successful parse. Manual events are untouched.
+func (s *AppStore) DeleteStaleOfficialMacroEvents(source, lastSeenAt string) error {
+	source = strings.TrimSpace(source)
+	lastSeenAt = strings.TrimSpace(lastSeenAt)
+	if source == "" || lastSeenAt == "" {
+		return errors.New("官方事件来源和同步时间不能为空")
 	}
-	_, err := s.db.Exec(`DELETE FROM macro_events WHERE id LIKE ?`, strings.TrimSpace(prefix)+"%")
+	_, err := s.db.Exec(`DELETE FROM macro_events
+		WHERE source_kind='official' AND source=? AND last_seen_at<>?`, source, lastSeenAt)
 	return err
 }
 

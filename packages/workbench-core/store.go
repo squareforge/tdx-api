@@ -718,6 +718,9 @@ func (s *AppStore) migrate() error {
 			a_share_date TEXT NOT NULL DEFAULT '',
 			source TEXT NOT NULL DEFAULT '',
 			source_url TEXT NOT NULL DEFAULT '',
+			source_kind TEXT NOT NULL DEFAULT 'manual',
+			external_id TEXT NOT NULL DEFAULT '',
+			last_seen_at TEXT NOT NULL DEFAULT '',
 			description TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'scheduled',
 			acknowledged INTEGER NOT NULL DEFAULT 0,
@@ -786,6 +789,8 @@ func (s *AppStore) migrate() error {
 			"scheduled_at": "TEXT NOT NULL DEFAULT ''", "released_at": "TEXT NOT NULL DEFAULT ''",
 			"previous_value": "TEXT NOT NULL DEFAULT ''", "forecast_value": "TEXT NOT NULL DEFAULT ''",
 			"actual_value": "TEXT NOT NULL DEFAULT ''", "revision": "TEXT NOT NULL DEFAULT ''",
+			"source_kind": "TEXT NOT NULL DEFAULT 'manual'", "external_id": "TEXT NOT NULL DEFAULT ''",
+			"last_seen_at": "TEXT NOT NULL DEFAULT ''",
 		},
 		"macro_alert_settings": {"notify_webhooks": "INTEGER NOT NULL DEFAULT 0", "webhook_ids": "TEXT NOT NULL DEFAULT '[]'"},
 		"automation_runs":      {"parent_run_id": "TEXT NOT NULL DEFAULT ''"},
@@ -803,10 +808,18 @@ func (s *AppStore) migrate() error {
 			}
 		}
 	}
+	if _, err := s.db.Exec(`UPDATE macro_events
+			SET source_kind='official', external_id=CASE WHEN TRIM(external_id)='' THEN id ELSE external_id END
+			WHERE id LIKE 'macro-official-%' AND (TRIM(source_kind)='' OR source_kind='manual')`); err != nil {
+		return err
+	}
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_automation_runs_parent_started_at ON automation_runs(parent_run_id, started_at)`); err != nil {
 		return err
 	}
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_selection_results_signal_at ON selection_results(signal_at DESC)`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_macro_events_source_external ON macro_events(source_kind, source, external_id)`); err != nil {
 		return err
 	}
 	if _, err := s.db.Exec(`UPDATE selection_results SET

@@ -29,6 +29,9 @@ export interface MacroEvent {
   a_share_date?: string;
   source?: string;
   source_url?: string;
+  source_kind?: 'manual' | 'official' | string;
+  external_id?: string;
+  last_seen_at?: string;
   description?: string;
   status?: string;
   acknowledged?: boolean;

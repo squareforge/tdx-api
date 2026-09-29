@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -109,10 +107,14 @@ func syncMacroCalendars(ctx context.Context) (macroCalendarSyncResult, error) {
 
 	client := &http.Client{Timeout: 20 * time.Second}
 	result := macroCalendarSyncResult{Status: "success"}
+	syncAt := time.Now().UTC().Format(time.RFC3339Nano)
 	providerEvents := map[string][]MacroEvent{}
 	providerMessages := map[string][]string{}
 	providerAttempts := map[string]string{}
+	providerFeedCounts := map[string]int{}
+	providerSuccessfulFeeds := map[string]int{}
 	for _, provider := range macroCalendarProviders {
+		providerFeedCounts[provider.name]++
 		providerAttempts[provider.name] = nowText()
 		data, err := fetchMacroCalendar(ctx, client, provider.url)
 		if err != nil {
@@ -124,6 +126,11 @@ func syncMacroCalendars(ctx context.Context) (macroCalendarSyncResult, error) {
 			providerMessages[provider.name] = append(providerMessages[provider.name], provider.url+": "+err.Error())
 			continue
 		}
+		if len(events) == 0 {
+			providerMessages[provider.name] = append(providerMessages[provider.name], provider.url+": 未解析到可用事件")
+			continue
+		}
+		providerSuccessfulFeeds[provider.name]++
 		providerEvents[provider.name] = append(providerEvents[provider.name], events...)
 	}
 
@@ -132,42 +139,34 @@ func syncMacroCalendars(ctx context.Context) (macroCalendarSyncResult, error) {
 			providerMessages[provider] = append(providerMessages[provider], "未解析到可用事件")
 			continue
 		}
-		for _, prefix := range macroOfficialPrefixes(provider) {
-			if err := appStore.DeleteMacroEventsByPrefix(prefix); err != nil {
-				providerMessages[provider] = append(providerMessages[provider], "清理旧同步记录失败: "+err.Error())
-				continue
-			}
-		}
+		// Upsert first, then remove official records not seen in this
+		// successful parse. This lets an unchanged event keep its row and
+		// acknowledgement while still removing cancelled or moved dates.
 		insertFailed := false
-		for _, event := range events {
+		for index := range events {
+			event := &events[index]
+			if event.SourceKind == "" {
+				event.SourceKind = "official"
+			}
+			if event.ExternalID == "" {
+				event.ExternalID = event.ID
+			}
+			event.LastSeenAt = syncAt
 			if event.ScheduledAt == "" {
 				event.ScheduledAt = event.StartsAt
 			}
 			if event.AShareDate == "" {
 				event.AShareDate = nextAShareTradingDate(event.StartsAt)
 			}
-			if _, err := appStore.UpsertMacroEvent(event); err != nil {
+			if _, err := appStore.UpsertMacroEvent(*event); err != nil {
 				providerMessages[provider] = append(providerMessages[provider], event.Code+": "+err.Error())
 				insertFailed = true
 			}
 		}
-		if !insertFailed {
-			for _, id := range referenceMacroEventIDs(provider) {
-				reference, getErr := appStore.GetMacroEvent(id)
-				if errors.Is(getErr, sql.ErrNoRows) {
-					continue
-				}
-				if getErr != nil {
-					providerMessages[provider] = append(providerMessages[provider], "读取参考事件失败: "+getErr.Error())
-					continue
-				}
-				// Keep a local reference when the official page omits one event type.
-				if !containsMacroEventOnDate(events, reference) {
-					continue
-				}
-				if err := appStore.DeleteMacroEvent(id); err != nil && !errors.Is(err, sql.ErrNoRows) {
-					providerMessages[provider] = append(providerMessages[provider], "清理参考记录失败: "+err.Error())
-				}
+		allFeedsSucceeded := providerFeedCounts[provider] > 0 && providerSuccessfulFeeds[provider] == providerFeedCounts[provider]
+		if !insertFailed && allFeedsSucceeded {
+			if err := appStore.DeleteStaleOfficialMacroEvents(provider, syncAt); err != nil {
+				providerMessages[provider] = append(providerMessages[provider], "清理过期官方记录失败: "+err.Error())
 			}
 		}
 	}
@@ -186,7 +185,6 @@ func syncMacroCalendars(ctx context.Context) (macroCalendarSyncResult, error) {
 			state.LastSuccessAt = state.LastAttemptAt
 		} else if len(providerEvents[provider]) > 0 {
 			state.Status = "partial"
-			state.LastSuccessAt = state.LastAttemptAt
 			result.Status = "partial"
 		} else {
 			state.Status = "failed"
@@ -207,22 +205,6 @@ func syncMacroCalendars(ctx context.Context) (macroCalendarSyncResult, error) {
 	}
 	result.States, _ = appStore.ListMacroEventSyncStates()
 	return result, nil
-}
-
-func containsMacroEventOnDate(events []MacroEvent, reference MacroEvent) bool {
-	referenceDate, err := time.Parse(time.RFC3339, reference.StartsAt)
-	if err != nil {
-		return false
-	}
-	for _, event := range events {
-		eventDate, parseErr := time.Parse(time.RFC3339, event.StartsAt)
-		if parseErr == nil &&
-			strings.EqualFold(strings.TrimSpace(event.Code), strings.TrimSpace(reference.Code)) &&
-			eventDate.Format("20060102") == referenceDate.Format("20060102") {
-			return true
-		}
-	}
-	return false
 }
 
 func nextAShareTradingDate(startsAt string) string {
@@ -311,6 +293,7 @@ func parseBLSReleasePage(data []byte, code, name, category, sourceURL, descripti
 		}
 		events = append(events, MacroEvent{
 			ID:          fmt.Sprintf("macro-official-%s-%s", strings.ToLower(code), date.Format("20060102")),
+			ExternalID:  fmt.Sprintf("%s-%s", strings.ToLower(code), date.Format("20060102")),
 			Code:        code,
 			Name:        name,
 			Category:    category,
@@ -319,6 +302,7 @@ func parseBLSReleasePage(data []byte, code, name, category, sourceURL, descripti
 			StartsAt:    releaseAtET(date, 8, 30),
 			Source:      "BLS",
 			SourceURL:   sourceURL,
+			SourceKind:  "official",
 			Description: description,
 			Status:      "scheduled",
 		})
@@ -353,6 +337,7 @@ func parseFOMCPage(data []byte) ([]MacroEvent, error) {
 				decisionDate := time.Date(*currentYear, month.Month(), lastDay, 0, 0, 0, 0, time.UTC)
 				events = append(events, MacroEvent{
 					ID:          fmt.Sprintf("macro-official-fomc-%s", meetingDate.Format("20060102")),
+					ExternalID:  fmt.Sprintf("fomc-%s", meetingDate.Format("20060102")),
 					Code:        "FOMC",
 					Name:        "美联储议息会议",
 					Category:    "central_bank",
@@ -361,6 +346,7 @@ func parseFOMCPage(data []byte) ([]MacroEvent, error) {
 					StartsAt:    releaseAtET(decisionDate, 14, 0),
 					Source:      "Federal Reserve",
 					SourceURL:   fedFOMCURL,
+					SourceKind:  "official",
 					Description: "关注利率决议、点阵图和主席发布会，事件窗口可能扩大跨市场波动。",
 					Status:      "scheduled",
 				})
@@ -412,6 +398,7 @@ func parseBEASchedulePage(data []byte) ([]MacroEvent, error) {
 		}
 		events = append(events, MacroEvent{
 			ID:          fmt.Sprintf("macro-official-pce-%s", date.Format("20060102")),
+			ExternalID:  fmt.Sprintf("pce-%s", date.Format("20060102")),
 			Code:        "PCE",
 			Name:        "美国 PCE 物价指数",
 			Category:    "inflation",
@@ -420,6 +407,7 @@ func parseBEASchedulePage(data []byte) ([]MacroEvent, error) {
 			StartsAt:    releaseAtET(date, 8, 30),
 			Source:      "BEA",
 			SourceURL:   beaScheduleURL,
+			SourceKind:  "official",
 			Description: "美联储偏好的通胀指标，结合核心 PCE 观察降息空间。",
 			Status:      "scheduled",
 		})
@@ -495,30 +483,4 @@ func normalizeHTMLText(value string) string {
 
 func macroSyncStateID(provider string) string {
 	return "macro-sync-" + strings.ToLower(strings.ReplaceAll(provider, " ", "-"))
-}
-
-func macroOfficialPrefixes(provider string) []string {
-	switch provider {
-	case "BLS":
-		return []string{"macro-official-nfp-", "macro-official-cpi-"}
-	case "Federal Reserve":
-		return []string{"macro-official-fomc-"}
-	case "BEA":
-		return []string{"macro-official-pce-"}
-	default:
-		return []string{"macro-official-"}
-	}
-}
-
-func referenceMacroEventIDs(provider string) []string {
-	switch provider {
-	case "BLS":
-		return []string{"macro-20260904-nfp", "macro-20261002-nfp", "macro-20260910-cpi", "macro-20261013-cpi"}
-	case "Federal Reserve":
-		return []string{"macro-20260916-fomc", "macro-20261028-fomc"}
-	case "BEA":
-		return []string{"macro-20260930-pce", "macro-20261030-pce"}
-	default:
-		return nil
-	}
 }
