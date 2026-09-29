@@ -82,6 +82,7 @@ func (g scanGrid) combinations() []scanParamSet {
 // generateStrategySignals 生成单个策略在日期区间内的所有信号,复用现有评估逻辑。
 func (r *AutomationRunner) generateStrategySignals(ctx context.Context, plan historicalStrategyPlan, klines map[string][]FormulaKline, dates []int) ([]historicalScanSignal, error) {
 	signals := make([]historicalScanSignal, 0)
+	evaluationWorkers := strategyEvaluationConcurrency()
 	for _, signalDate := range dates {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -112,17 +113,10 @@ func (r *AutomationRunner) generateStrategySignals(ctx context.Context, plan his
 			}
 			available = append(available, symbol)
 		}
-		if err := r.prepareStrategyFormulasWithKlines(ctx, strategyResult, available, strategyResult.KlineCache); err != nil {
+		matches, _, _, err := r.evaluateStrategyDay(ctx, plan.strategy, strategyResult, available, evaluationWorkers, nil)
+		if err != nil {
 			return nil, err
 		}
-		matches := make([]StrategySelectionItem, 0)
-		for _, symbol := range available {
-			item, ok := r.evaluateStrategySymbol(ctx, plan.strategy, strategyResult, symbol)
-			if ok {
-				matches = append(matches, item)
-			}
-		}
-		matches = rankHistoricalMatches(matches, plan.config.Pass.TopN)
 		for _, item := range matches {
 			signals = append(signals, historicalScanSignal{
 				SignalDate: signalDate, Symbol: item.Symbol, Score: item.Score, SignalClose: item.Latest, Execution: plan.config.Execution,

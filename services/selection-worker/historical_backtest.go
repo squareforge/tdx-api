@@ -338,12 +338,22 @@ func (r *AutomationRunner) startHistoricalBacktest(raw historicalBacktestRequest
 }
 
 func (r *AutomationRunner) runHistoricalBacktest(ctx context.Context, run HistoricalBacktestRun, req historicalBacktestRequest, strategies []Strategy) (map[string]interface{}, error) {
+	profile := openHistoricalBacktestProfile(run.ID)
+	profile.record("start", map[string]any{"start_date": req.StartDate, "end_date": req.EndDate, "strategies": len(strategies)})
+	result, err := r.runHistoricalBacktestWithProfile(ctx, run, req, strategies, profile)
+	profile.close(err)
+	return result, err
+}
+
+func (r *AutomationRunner) runHistoricalBacktestWithProfile(ctx context.Context, run HistoricalBacktestRun, req historicalBacktestRequest, strategies []Strategy, profile *historicalBacktestProfile) (map[string]interface{}, error) {
+	runStarted := time.Now()
 	_, start, end, err := normalizeHistoricalBacktestRequest(req)
 	if err != nil {
 		return nil, err
 	}
 	plans := make([]historicalStrategyPlan, 0, len(strategies))
 	allSymbols := map[string]bool{}
+	stageStarted := time.Now()
 	for _, strategy := range strategies {
 		var config StrategyConfig
 		if err := json.Unmarshal([]byte(strategy.ConfigJSON), &config); err != nil {
@@ -367,6 +377,7 @@ func (r *AutomationRunner) runHistoricalBacktest(ctx context.Context, run Histor
 		symbols = append(symbols, symbol)
 	}
 	sort.Strings(symbols)
+	profile.record("stage", map[string]any{"name": "strategy_universe", "elapsed_ms": profileMillis(time.Since(stageStarted)), "symbols": len(symbols)})
 	maxHorizon := req.Horizons[len(req.Horizons)-1]
 	historyCount := historicalHistoryCount(start, end, time.Now().In(time.Local), maxHorizon)
 	loadSymbols := append([]string{}, symbols...)
@@ -376,10 +387,16 @@ func (r *AutomationRunner) runHistoricalBacktest(ctx context.Context, run Histor
 			break
 		}
 	}
+	stageStarted = time.Now()
 	klines, loadErrors := r.loadSystemBatchKlines(ctx, loadSymbols, historyCount)
+	profile.record("stage", map[string]any{"name": "kline_load", "elapsed_ms": profileMillis(time.Since(stageStarted)), "symbols": len(loadSymbols), "history_count": historyCount})
 	if historicalPlansUseFundamentals(plans) {
+		stageStarted = time.Now()
 		rawKlines, _ := r.loadSystemBatchKlinesWithRecover(ctx, symbols, historyCount, "none")
+		profile.record("stage", map[string]any{"name": "raw_kline_load", "elapsed_ms": profileMillis(time.Since(stageStarted)), "symbols": len(symbols)})
+		stageStarted = time.Now()
 		fundamentalData, loadErr := loadStrategyFundamentalData(ctx, symbols, dateInt(start), dateInt(end))
+		profile.record("stage", map[string]any{"name": "fundamental_load", "elapsed_ms": profileMillis(time.Since(stageStarted)), "symbols": len(symbols)})
 		if loadErr != nil {
 			return nil, fmt.Errorf("点时基本面数据加载失败: %w", loadErr)
 		}
@@ -392,7 +409,9 @@ func (r *AutomationRunner) runHistoricalBacktest(ctx context.Context, run Histor
 	}
 	loadedCount := countLoadedStrategySymbols(symbols, klines)
 	failedCount := countFailedStrategySymbols(symbols, loadErrors)
+	stageStarted = time.Now()
 	dates := historicalTradingDates(klines, dateInt(start), dateInt(end))
+	profile.record("stage", map[string]any{"name": "trading_dates", "elapsed_ms": profileMillis(time.Since(stageStarted)), "dates": len(dates), "loaded": loadedCount, "failed": failedCount})
 	if len(dates) == 0 {
 		return nil, errors.New("所选日期区间没有可用交易日K线")
 	}
@@ -416,16 +435,25 @@ func (r *AutomationRunner) runHistoricalBacktest(ctx context.Context, run Histor
 		TakeProfit: req.TakeProfit, TrailDrawdown: req.TrailDrawdown, StopLoss: req.StopLoss, MaxHoldDays: req.MaxHoldDays,
 	})
 	pendingBuys := []portfolioPendingBuy{}
+	evaluationWorkers := strategyEvaluationConcurrency()
+	totalOpen, totalScan, totalInsert, totalClose, totalProgress := time.Duration(0), time.Duration(0), time.Duration(0), time.Duration(0), time.Duration(0)
 	for dateIndex, signalDate := range dates {
 		if ctx.Err() != nil || r.store.HistoricalBacktestCancelRequested(run.ID) {
 			return historicalBacktestResult(req, dates, summaries, consensus, len(symbols), loadedCount, failedCount, historyCount), context.Canceled
 		}
 		dateText := historicalDateText(signalDate)
+		dayStarted := time.Now()
 		// 当日开盘:先执行昨日收盘触发的卖出,再执行昨日信号的买入
 		sim.onDayOpen(signalDate, dateText, klines, pendingBuys)
+		openDuration := time.Since(dayStarted)
+		totalOpen += openDuration
 		pendingBuys = nil
 		daySignals := make([]HistoricalBacktestSignal, 0)
+		strategyTimings := make([]historicalStrategyTiming, 0, len(plans))
+		scanStarted := time.Now()
 		for _, plan := range plans {
+			strategyStarted := time.Now()
+			timing := historicalStrategyTiming{Name: plan.strategy.Name}
 			strategyResult := &StrategyRunResult{
 				Strategy: plan.strategy, Config: plan.config, Errors: map[string]string{}, KlineCache: map[string][]FormulaKline{},
 				PoolCache: map[string]map[string]bool{}, FormulaCache: map[string]map[string]bool{}, FormulaDetail: map[string]map[string]any{},
@@ -439,6 +467,8 @@ func (r *AutomationRunner) runHistoricalBacktest(ctx context.Context, run Histor
 				}
 			}
 			if !r.strategyMarketContextPasses(strategyResult) {
+				timing.PreparationMS = profileMillis(time.Since(strategyStarted))
+				strategyTimings = append(strategyTimings, timing)
 				continue
 			}
 			for _, symbol := range plan.symbols {
@@ -452,17 +482,16 @@ func (r *AutomationRunner) runHistoricalBacktest(ctx context.Context, run Histor
 				}
 				available = append(available, symbol)
 			}
-			if err := r.prepareStrategyFormulasWithKlines(ctx, strategyResult, available, strategyResult.KlineCache); err != nil {
+			timing.Available = len(available)
+			timing.PreparationMS = profileMillis(time.Since(strategyStarted))
+			matches, formulaDuration, evaluationDuration, err := r.evaluateStrategyDay(ctx, plan.strategy, strategyResult, available, evaluationWorkers, &timing.Formula)
+			if err != nil {
 				return historicalBacktestResult(req, dates, summaries, consensus, len(symbols), loadedCount, failedCount, historyCount), fmt.Errorf("策略 %s 在 %s 的公式计算失败: %w", plan.strategy.Name, dateText, err)
 			}
-			matches := make([]StrategySelectionItem, 0)
-			for _, symbol := range available {
-				item, ok := r.evaluateStrategySymbol(ctx, plan.strategy, strategyResult, symbol)
-				if ok {
-					matches = append(matches, item)
-				}
-			}
-			matches = rankHistoricalMatches(matches, plan.config.Pass.TopN)
+			timing.FormulaMS = profileMillis(formulaDuration)
+			timing.EvaluationMS = profileMillis(evaluationDuration)
+			timing.Matches = len(matches)
+			trackingStarted := time.Now()
 			for _, item := range matches {
 				selection := SelectionResult{Symbol: item.Symbol, Latest: item.Latest, CreatedAt: dateText + "T16:00:00+08:00"}
 				bars, ok := trackingBars[item.Symbol]
@@ -485,26 +514,55 @@ func (r *AutomationRunner) runHistoricalBacktest(ctx context.Context, run Histor
 				}
 				entry.strategies[plan.strategy.Name] = true
 			}
+			timing.TrackingMS = profileMillis(time.Since(trackingStarted))
+			strategyTimings = append(strategyTimings, timing)
 		}
+		scanDuration := time.Since(scanStarted)
+		totalScan += scanDuration
+		stageStarted = time.Now()
 		if err := r.store.InsertHistoricalBacktestSignals(daySignals); err != nil {
 			return nil, err
 		}
+		insertDuration := time.Since(stageStarted)
+		totalInsert += insertDuration
 		// 当日收盘:持仓退出条件判定与权益结算
+		stageStarted = time.Now()
 		sim.onDayClose(signalDate, dateText, klines)
+		closeDuration := time.Since(stageStarted)
+		totalClose += closeDuration
 		signalCount += len(daySignals)
+		stageStarted = time.Now()
 		if err := r.store.UpdateHistoricalBacktestProgress(run.ID, len(dates), dateIndex+1, dateText, len(symbols), signalCount); err != nil {
 			return nil, err
 		}
+		progressDuration := time.Since(stageStarted)
+		totalProgress += progressDuration
+		profile.record("day", map[string]any{
+			"date": dateText, "index": dateIndex + 1, "signals": len(daySignals),
+			"elapsed_ms": profileMillis(time.Since(dayStarted)), "open_ms": profileMillis(openDuration),
+			"scan_ms": profileMillis(scanDuration), "insert_ms": profileMillis(insertDuration),
+			"close_ms": profileMillis(closeDuration), "progress_ms": profileMillis(progressDuration),
+			"strategies": strategyTimings,
+		})
 	}
 	// 组合模拟收尾:未平仓转 open 记录并落库
+	stageStarted = time.Now()
 	trades := sim.finalize(run.ID)
 	if len(trades) > 0 {
 		if err := r.store.InsertHistoricalBacktestTrades(trades); err != nil {
 			return nil, fmt.Errorf("交易流水保存失败: %w", err)
 		}
 	}
+	profile.record("stage", map[string]any{"name": "trade_finalize", "elapsed_ms": profileMillis(time.Since(stageStarted)), "trades": len(trades)})
+	stageStarted = time.Now()
 	result := historicalBacktestResult(req, dates, summaries, consensus, len(symbols), loadedCount, failedCount, historyCount)
 	result["portfolio"] = sim.summary()
+	profile.record("summary", map[string]any{
+		"elapsed_ms": profileMillis(time.Since(runStarted)), "days": len(dates), "signals": signalCount,
+		"open_ms": profileMillis(totalOpen), "scan_ms": profileMillis(totalScan),
+		"insert_ms": profileMillis(totalInsert), "close_ms": profileMillis(totalClose),
+		"progress_ms": profileMillis(totalProgress), "result_ms": profileMillis(time.Since(stageStarted)),
+	})
 	return result, nil
 }
 

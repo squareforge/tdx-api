@@ -288,3 +288,36 @@ func TestLowThreeBullFirstBoardRejectsNonMainBoard(t *testing.T) {
 		}
 	}
 }
+
+func TestFiniteFormulaWindow(t *testing.T) {
+	window, ok := finiteFormulaWindow("MA(C,5)>REF(C,1);CROSS(LLV(L,10),HHV(H,20));")
+	if !ok {
+		t.Fatal("bounded formula should be recognized")
+	}
+	if window < 30 {
+		t.Fatalf("window = %d, want a conservative lookback", window)
+	}
+	if _, ok := finiteFormulaWindow("DIF:=EMA(C,12)-EMA(C,26);DIF>0;"); ok {
+		t.Fatal("recursive EMA formula must keep its full history")
+	}
+}
+
+func TestStrategyEvaluationConcurrencyPreservesInputOrder(t *testing.T) {
+	rows := workerFactorRows([]float64{10, 10.1, 10.2, 10.3, 10.4}, nil)
+	runner := &AutomationRunner{}
+	result := &StrategyRunResult{
+		Config:     StrategyConfig{Filters: []StrategyFactorRule{{Factor: "price_range", Params: map[string]interface{}{"min": 1, "max": 20}}}},
+		KlineCache: map[string][]FormulaKline{"000003": rows, "000001": rows, "000002": rows},
+		Errors:     map[string]string{}, PoolCache: map[string]map[string]bool{},
+	}
+	symbols := []string{"000003", "000001", "000002"}
+	items, err := runner.evaluateStrategySymbols(t.Context(), Strategy{}, result, symbols, 3, "filters")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, item := range items {
+		if !item.ok || item.item.Symbol != symbols[index] {
+			t.Fatalf("result[%d] = %+v, want symbol %s", index, item, symbols[index])
+		}
+	}
+}

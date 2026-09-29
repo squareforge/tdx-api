@@ -6,8 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
+	"regexp"
+	"runtime"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -184,24 +189,10 @@ func (r *AutomationRunner) executeStrategy(ctx context.Context, strategy Strateg
 		result.Errors = nil
 		return result, nil
 	}
-	if err := r.prepareStrategyFormulasWithKlines(ctx, &result, symbols, result.KlineCache); err != nil {
+	items, _, _, err := r.evaluateStrategyDay(ctx, strategy, &result, symbols, strategyEvaluationConcurrency(), nil)
+	if err != nil {
 		return StrategyRunResult{}, err
 	}
-
-	items := make([]StrategySelectionItem, 0)
-	for _, symbol := range symbols {
-		select {
-		case <-ctx.Done():
-			return result, ctx.Err()
-		default:
-		}
-		item, ok := r.evaluateStrategySymbol(ctx, strategy, &result, symbol)
-		if !ok {
-			continue
-		}
-		items = append(items, item)
-	}
-	items = rankStrategyMatches(items, result.Config.Pass.TopN)
 	result.Items = items
 	result.Matched = len(items)
 	if len(result.Errors) == 0 {
@@ -402,8 +393,16 @@ func (r *AutomationRunner) prepareStrategyFormulas(ctx context.Context, result *
 // in bounded batches. The daily system batch uses this to avoid a second K-line
 // fetch for formula factors.
 func (r *AutomationRunner) prepareStrategyFormulasWithKlines(ctx context.Context, result *StrategyRunResult, symbols []string, klines map[string][]FormulaKline) error {
+	return r.prepareStrategyFormulasWithKlinesProfile(ctx, result, symbols, klines, nil)
+}
+
+func (r *AutomationRunner) prepareStrategyFormulasWithKlinesProfile(ctx context.Context, result *StrategyRunResult, symbols []string, klines map[string][]FormulaKline, timing *historicalFormulaTiming) error {
 	rules := append([]StrategyFactorRule{}, result.Config.Filters...)
 	rules = append(rules, result.Config.Scores...)
+	return r.prepareStrategyFormulaRules(ctx, result, rules, symbols, klines, timing)
+}
+
+func (r *AutomationRunner) prepareStrategyFormulaRules(ctx context.Context, result *StrategyRunResult, rules []StrategyFactorRule, symbols []string, klines map[string][]FormulaKline, timing *historicalFormulaTiming) error {
 	for _, rule := range rules {
 		if rule.Factor != "formula" {
 			continue
@@ -418,8 +417,24 @@ func (r *AutomationRunner) prepareStrategyFormulasWithKlines(ctx context.Context
 			continue
 		}
 		allData := map[string]interface{}{}
+		window, finite := finiteFormulaWindow(formula.Script)
 		for _, batch := range chunkSymbols(symbols, result.Config.BatchSize) {
 			data := formulaKlineBatch(klines, batch)
+			if finite {
+				for symbol, rows := range data {
+					if len(rows) > window {
+						data[symbol] = rows[len(rows)-window:]
+					}
+				}
+			}
+			if timing != nil {
+				timing.Requests++
+				timing.Symbols += len(batch)
+				for _, rows := range data {
+					timing.Rows += len(rows)
+				}
+			}
+			requestStarted := time.Now()
 			resp, err := r.worker.Run(ctx, FormulaRunRequest{
 				Symbols:       batch,
 				Script:        formula.Script,
@@ -431,6 +446,10 @@ func (r *AutomationRunner) prepareStrategyFormulasWithKlines(ctx context.Context
 				ForceFallback: true,
 				Data:          data,
 			})
+			if timing != nil {
+				timing.RequestMS += profileMillis(time.Since(requestStarted))
+				timing.WorkerTickMS += resp.TickMS
+			}
 			if err != nil {
 				return err
 			}
@@ -478,6 +497,14 @@ func (r *AutomationRunner) strategyFormula(rule StrategyFactorRule) (Formula, er
 }
 
 func (r *AutomationRunner) evaluateStrategySymbol(ctx context.Context, strategy Strategy, result *StrategyRunResult, symbol string) (StrategySelectionItem, bool) {
+	item, ok := r.evaluateStrategyFilters(ctx, result, symbol)
+	if !ok {
+		return item, false
+	}
+	return r.evaluateStrategyScores(result, symbol, item)
+}
+
+func (r *AutomationRunner) evaluateStrategyFilters(ctx context.Context, result *StrategyRunResult, symbol string) (StrategySelectionItem, bool) {
 	item := StrategySelectionItem{Symbol: symbol, Hit: true}
 	rows, err := r.strategyKline(ctx, result, symbol)
 	if err != nil {
@@ -501,6 +528,11 @@ func (r *AutomationRunner) evaluateStrategySymbol(ctx context.Context, strategy 
 	if !item.Hit {
 		return item, false
 	}
+	return item, true
+}
+
+func (r *AutomationRunner) evaluateStrategyScores(result *StrategyRunResult, symbol string, item StrategySelectionItem) (StrategySelectionItem, bool) {
+	rows := result.KlineCache[symbol]
 	score := 0.0
 	for _, rule := range result.Config.Scores {
 		fr := r.evaluateFactor(result, symbol, rows, rule, false)
@@ -806,11 +838,20 @@ func (r *AutomationRunner) evaluateFactor(result *StrategyRunResult, symbol stri
 			fr.Score = strength
 		}
 	case "formula":
-		formula, err := r.strategyFormula(rule)
-		if err != nil {
-			fr.Hit = false
-			fr.Reason = err.Error()
-			break
+		formulaID := stringParam(rule.Params, "formula_id", "")
+		formulaName := stringParam(rule.Params, "formula_name", "")
+		formula, ok := result.FormulaByID[formulaID]
+		if !ok {
+			formula, ok = result.FormulaByName[formulaName]
+		}
+		if !ok {
+			var err error
+			formula, err = r.strategyFormula(rule)
+			if err != nil {
+				fr.Hit = false
+				fr.Reason = err.Error()
+				break
+			}
 		}
 		hits := result.FormulaCache[formula.ID]
 		fr.Hit = hits[strategyNormalizeSymbol(symbol)]
@@ -1189,4 +1230,235 @@ func strategyAverageVolumeAt(rows []FormulaKline, end, days int) float64 {
 
 func roundStrategyRank(value float64) float64 {
 	return math.Round(value*1000) / 1000
+}
+
+var formulaCalls = regexp.MustCompile(`(?i)\b([a-z_][a-z0-9_]*)\s*\(`)
+
+// finiteFormulaWindow returns a conservative upper bound for scripts built only
+// from bounded operations. EMA and SMA keep state from the first bar, so their
+// input must not be truncated without carrying that state forward.
+func finiteFormulaWindow(script string) (int, bool) {
+	if script == "" || strings.ContainsAny(script, `"'`) {
+		return 0, false
+	}
+	window := 1
+	for _, match := range formulaCalls.FindAllStringSubmatchIndex(script, -1) {
+		name := strings.ToUpper(script[match[2]:match[3]])
+		args, ok := formulaCallArguments(script, match[1])
+		if !ok {
+			return 0, false
+		}
+		switch name {
+		case "MA", "LLV", "HHV", "SUM", "STD", "REF":
+			period := 1
+			if len(args) == 2 {
+				var err error
+				period, err = strconv.Atoi(strings.TrimSpace(args[1]))
+				if err != nil || period <= 0 {
+					return 0, false
+				}
+			} else if len(args) != 1 || name != "REF" {
+				return 0, false
+			}
+			if name == "REF" {
+				window += period
+			} else {
+				window += period - 1
+			}
+		case "CROSS":
+			window++
+		case "ABS", "MAX", "MIN", "IF":
+			// These operate on the current elements of their input series.
+		default:
+			return 0, false
+		}
+		if window > 100000 {
+			return 0, false
+		}
+	}
+	return window, true
+}
+
+func formulaCallArguments(script string, start int) ([]string, bool) {
+	depth := 1
+	begin := start
+	args := []string{}
+	for i := start; i < len(script); i++ {
+		switch script[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				args = append(args, script[begin:i])
+				return args, true
+			}
+		case ',':
+			if depth == 1 {
+				args = append(args, script[begin:i])
+				begin = i + 1
+			}
+		}
+	}
+	return nil, false
+}
+
+func strategyEvaluationConcurrency() int {
+	if value, err := strconv.Atoi(os.Getenv("STRATEGY_EVALUATION_CONCURRENCY")); err == nil && value > 0 {
+		if value > 16 {
+			return 16
+		}
+		return value
+	}
+	workers := runtime.GOMAXPROCS(0)
+	if workers > 8 {
+		workers = 8
+	}
+	if workers < 1 {
+		workers = 1
+	}
+	return workers
+}
+
+type strategyEvaluationResult struct {
+	item StrategySelectionItem
+	ok   bool
+	err  string
+}
+
+// evaluateStrategySymbols keeps worker-owned mutable caches separate from the
+// shared, read-only daily K-lines and formula results. The result slice retains
+// the input order regardless of worker completion order.
+func (r *AutomationRunner) evaluateStrategySymbols(ctx context.Context, strategy Strategy, result *StrategyRunResult, symbols []string, workers int, phase string) ([]strategyEvaluationResult, error) {
+	results := make([]strategyEvaluationResult, len(symbols))
+	if len(symbols) == 0 {
+		return results, nil
+	}
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > len(symbols) {
+		workers = len(symbols)
+	}
+	jobs := make(chan int)
+	var group sync.WaitGroup
+	for worker := 0; worker < workers; worker++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			local := *result
+			local.Errors = map[string]string{}
+			for symbol, reason := range result.Errors {
+				local.Errors[symbol] = reason
+			}
+			local.PoolCache = map[string]map[string]bool{}
+			local.FundamentalRanks = map[string]map[string]float64{}
+			for index := range jobs {
+				if ctx.Err() != nil {
+					continue
+				}
+				symbol := symbols[index]
+				var item StrategySelectionItem
+				var ok bool
+				if phase == "filters" {
+					item, ok = r.evaluateStrategyFilters(ctx, &local, symbol)
+				} else {
+					item, ok = r.evaluateStrategySymbol(ctx, strategy, &local, symbol)
+				}
+				results[index] = strategyEvaluationResult{item: item, ok: ok, err: local.Errors[symbol]}
+			}
+		}()
+	}
+send:
+	for index := range symbols {
+		select {
+		case <-ctx.Done():
+			break send
+		case jobs <- index:
+		}
+	}
+	close(jobs)
+	group.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	for index, evaluation := range results {
+		if evaluation.err != "" {
+			result.Errors[symbols[index]] = evaluation.err
+		}
+	}
+	return results, nil
+}
+
+func hasFormulaScore(rules []StrategyFactorRule) bool {
+	for _, rule := range rules {
+		if rule.Factor == "formula" {
+			return true
+		}
+	}
+	return false
+}
+
+// evaluateStrategyDay runs bounded filters first when a formula is
+// used only for scoring, then calls the formula worker for surviving symbols.
+func (r *AutomationRunner) evaluateStrategyDay(ctx context.Context, strategy Strategy, result *StrategyRunResult, available []string, workers int, formulaTiming *historicalFormulaTiming) ([]StrategySelectionItem, time.Duration, time.Duration, error) {
+	if len(available) == 0 {
+		return nil, 0, 0, nil
+	}
+	var formulaDuration, evaluationDuration time.Duration
+	formulaStarted := time.Now()
+	if err := r.prepareStrategyFormulaRules(ctx, result, result.Config.Filters, available, result.KlineCache, formulaTiming); err != nil {
+		return nil, 0, 0, err
+	}
+	formulaDuration += time.Since(formulaStarted)
+	if !hasFormulaScore(result.Config.Scores) {
+		evaluationStarted := time.Now()
+		evaluations, err := r.evaluateStrategySymbols(ctx, strategy, result, available, workers, "full")
+		evaluationDuration += time.Since(evaluationStarted)
+		if err != nil {
+			return nil, formulaDuration, evaluationDuration, err
+		}
+		matches := make([]StrategySelectionItem, 0)
+		for _, evaluation := range evaluations {
+			if evaluation.ok {
+				matches = append(matches, evaluation.item)
+			}
+		}
+		return rankHistoricalMatches(matches, result.Config.Pass.TopN), formulaDuration, evaluationDuration, nil
+	}
+
+	evaluationStarted := time.Now()
+	filtered, err := r.evaluateStrategySymbols(ctx, strategy, result, available, workers, "filters")
+	evaluationDuration += time.Since(evaluationStarted)
+	if err != nil {
+		return nil, formulaDuration, evaluationDuration, err
+	}
+	candidates := make([]string, 0)
+	items := make([]StrategySelectionItem, 0)
+	for _, evaluation := range filtered {
+		if evaluation.ok {
+			candidates = append(candidates, evaluation.item.Symbol)
+			items = append(items, evaluation.item)
+		}
+	}
+	if len(candidates) == 0 {
+		return nil, formulaDuration, evaluationDuration, nil
+	}
+	formulaStarted = time.Now()
+	if err := r.prepareStrategyFormulaRules(ctx, result, result.Config.Scores, candidates, result.KlineCache, formulaTiming); err != nil {
+		return nil, formulaDuration, evaluationDuration, err
+	}
+	formulaDuration += time.Since(formulaStarted)
+	evaluationStarted = time.Now()
+	// Scoring reads the prepared formula maps. Its mutable factor caches are not
+	// used for the formula-only score path after filtering.
+	matches := make([]StrategySelectionItem, 0)
+	for index, item := range items {
+		item, ok := r.evaluateStrategyScores(result, candidates[index], item)
+		if ok {
+			matches = append(matches, item)
+		}
+	}
+	evaluationDuration += time.Since(evaluationStarted)
+	return rankHistoricalMatches(matches, result.Config.Pass.TopN), formulaDuration, evaluationDuration, nil
 }

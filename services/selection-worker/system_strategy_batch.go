@@ -361,22 +361,10 @@ func (r *AutomationRunner) executeSystemStrategyWithKlines(ctx context.Context, 
 		result.Items = []StrategySelectionItem{}
 		return result, nil
 	}
-	if err := r.prepareStrategyFormulasWithKlines(ctx, &result, available, klines); err != nil {
+	items, _, _, err := r.evaluateStrategyDay(ctx, plan.strategy, &result, available, strategyEvaluationConcurrency(), nil)
+	if err != nil {
 		return result, err
 	}
-	items := make([]StrategySelectionItem, 0)
-	for _, symbol := range available {
-		select {
-		case <-ctx.Done():
-			return result, ctx.Err()
-		default:
-		}
-		item, ok := r.evaluateStrategySymbol(ctx, plan.strategy, &result, symbol)
-		if ok {
-			items = append(items, item)
-		}
-	}
-	items = rankStrategyMatches(items, result.Config.Pass.TopN)
 	result.Items = items
 	result.Matched = len(items)
 	if len(result.Errors) == 0 {
