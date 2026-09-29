@@ -1,5 +1,7 @@
 # sz300464 日内 S6 校准结果
 
+本目录保留单标的 S6 参数校准记录。运行 `python docs/research/intraday-s6/optimize_symbol.py --show-test` 可在 Hikyuu 服务可用时重新计算；结果写入同目录的 `selected-symbol-strategy.json`。本研究不读取 `data/market/a_share_daily.db`，生产信号由 selection-worker 实现。
+
 数据范围：2024-09-09 至 2026-09-17，共 491 个完整交易日。数据源为 Hikyuu 5 分钟不复权行情。
 
 执行假设：信号后下一根 K 线开盘成交；单根同时触及止盈和止损时按止损优先；14:55 或最长持有 150 分钟强制回补；计入双边佣金、卖出印花税和双边滑点，往返成本合计 0.20%；每笔使用底仓三分之一。

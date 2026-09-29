@@ -27,6 +27,8 @@
 
 ## Decisions
 
+- Historical backtests write per-run JSONL timing profiles under `data/logs/historical-backtests/`, with stage, daily, strategy, and formula-request timings. The path is excluded from Git with `data/`.
+- Standalone manual scripts live in `scripts/manual/`; automated Go and Python tests stay beside their modules so the standard test runners can discover them.
 - Frontend quote consumers normalize the current `Kline` response and the legacy `K` response through shared helpers in `apps/web/frontend/src/lib/format.ts`.
 - Selection tracking treats signals created before 09:30 Asia/Shanghai as executable at the signal-day open and counts that session as D1. Later signals start their observation window on the next trading session.
 - Market data consumers use `market-service` as the only K-line entry point. It reads Hikyuu local history first and falls back to TDX when a symbol is absent; selection and historical backtests must not read legacy per-symbol SQLite files directly.

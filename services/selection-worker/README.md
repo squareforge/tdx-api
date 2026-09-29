@@ -10,6 +10,11 @@ Web 容器保留管理入口，Docker 部署下可以通过本服务独立执行
 
 宿主机默认映射端口为 `18082`。
 
+历史回测每次运行都会写一份计时日志到 `data/logs/historical-backtests/<回测ID>.jsonl`。
+日志按行记录加载阶段、每个交易日及每个策略的公式请求、股票评估、信号保存和组合模拟耗时；
+`formula.worker_tick_ms` 是公式服务报告的计算耗时，`formula.request_ms` 包含请求传输和等待。
+该目录位于已挂载的 `data/` 下，Docker 重启后仍可从宿主机读取。
+
 源码运行：
 
 ```bash

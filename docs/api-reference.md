@@ -1425,5 +1425,5 @@ curl -s http://localhost:8080/api/formula/run \
 
 ## 维护说明
 
-- API 测试可使用 Postman、cURL 或 `scripts/run_api_checks.py`。
+- API 测试可使用 Postman、cURL 或 `scripts/manual/run_api_checks.py`。
 - 旧的阶段性 API 总结和集成说明已合并到本文件，历史去向见 [文档历史](document-history.md)。
