@@ -15,6 +15,7 @@ type HistoricalBacktestRun struct {
 	StartDate            string   `json:"start_date"`
 	EndDate              string   `json:"end_date"`
 	StrategyIDs          []string `json:"strategy_ids"`
+	UniversePoolIDs      []string `json:"universe_pool_ids"`
 	StrategySnapshotJSON string   `json:"strategy_snapshot_json,omitempty"`
 	Horizons             []int    `json:"horizons"`
 	TargetReturn         float64  `json:"target_return"`
@@ -83,6 +84,7 @@ func (s *AppStore) CreateHistoricalBacktestRun(run HistoricalBacktestRun) (Histo
 		run.Horizons = []int{1, 3, 5, 10}
 	}
 	strategyIDsJSON, _ := json.Marshal(run.StrategyIDs)
+	universePoolIDsJSON, _ := json.Marshal(run.UniversePoolIDs)
 	horizonsJSON, _ := json.Marshal(run.Horizons)
 	if strings.TrimSpace(run.StrategySnapshotJSON) == "" {
 		run.StrategySnapshotJSON = "[]"
@@ -99,11 +101,11 @@ func (s *AppStore) CreateHistoricalBacktestRun(run HistoricalBacktestRun) (Histo
 	}
 	run.UpdatedAt = now
 	_, err := s.db.Exec(`INSERT INTO historical_backtest_runs
-		(id,status,start_date,end_date,strategy_ids_json,strategy_snapshot_json,horizons_json,target_return,drawdown_limit,
+		(id,status,start_date,end_date,strategy_ids_json,universe_pool_id,universe_pool_ids_json,strategy_snapshot_json,horizons_json,target_return,drawdown_limit,
 		buy_base,buy_offset,sell_base,take_profit,trail_drawdown,stop_loss,max_hold_days,
 		total_dates,processed_dates,current_date,candidate_symbols,signal_count,result_json,error,cancel_requested,created_at,started_at,finished_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		run.ID, run.Status, run.StartDate, run.EndDate, string(strategyIDsJSON), run.StrategySnapshotJSON, string(horizonsJSON),
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		run.ID, run.Status, run.StartDate, run.EndDate, string(strategyIDsJSON), "", string(universePoolIDsJSON), run.StrategySnapshotJSON, string(horizonsJSON),
 		run.TargetReturn, run.DrawdownLimit, run.BuyBase, run.BuyOffset, run.SellBase, run.TakeProfit, run.TrailDrawdown,
 		run.StopLoss, run.MaxHoldDays, run.TotalDates, run.ProcessedDates, run.CurrentDate, run.CandidateSymbols,
 		run.SignalCount, run.ResultJSON, run.Error, boolInt(run.CancelRequested), run.CreatedAt, run.StartedAt, run.FinishedAt, run.UpdatedAt)
@@ -112,9 +114,9 @@ func (s *AppStore) CreateHistoricalBacktestRun(run HistoricalBacktestRun) (Histo
 
 func scanHistoricalBacktestRun(scanner interface{ Scan(...interface{}) error }) (HistoricalBacktestRun, error) {
 	var run HistoricalBacktestRun
-	var strategyIDsJSON, horizonsJSON string
+	var strategyIDsJSON, universePoolID, universePoolIDsJSON, horizonsJSON string
 	var cancelRequested int
-	err := scanner.Scan(&run.ID, &run.Status, &run.StartDate, &run.EndDate, &strategyIDsJSON, &run.StrategySnapshotJSON,
+	err := scanner.Scan(&run.ID, &run.Status, &run.StartDate, &run.EndDate, &strategyIDsJSON, &universePoolID, &universePoolIDsJSON, &run.StrategySnapshotJSON,
 		&horizonsJSON, &run.TargetReturn, &run.DrawdownLimit, &run.BuyBase, &run.BuyOffset, &run.SellBase,
 		&run.TakeProfit, &run.TrailDrawdown, &run.StopLoss, &run.MaxHoldDays, &run.TotalDates, &run.ProcessedDates,
 		&run.CurrentDate, &run.CandidateSymbols, &run.SignalCount, &run.ResultJSON, &run.Error, &cancelRequested,
@@ -123,16 +125,20 @@ func scanHistoricalBacktestRun(scanner interface{ Scan(...interface{}) error }) 
 		return run, err
 	}
 	_ = json.Unmarshal([]byte(strategyIDsJSON), &run.StrategyIDs)
+	_ = json.Unmarshal([]byte(universePoolIDsJSON), &run.UniversePoolIDs)
+	if len(run.UniversePoolIDs) == 0 && strings.TrimSpace(universePoolID) != "" {
+		run.UniversePoolIDs = []string{strings.TrimSpace(universePoolID)}
+	}
 	_ = json.Unmarshal([]byte(horizonsJSON), &run.Horizons)
 	run.CancelRequested = intBool(cancelRequested)
 	return run, nil
 }
 
-const historicalBacktestRunColumns = `id,status,start_date,end_date,strategy_ids_json,strategy_snapshot_json,horizons_json,target_return,drawdown_limit,
+const historicalBacktestRunColumns = `id,status,start_date,end_date,strategy_ids_json,universe_pool_id,universe_pool_ids_json,strategy_snapshot_json,horizons_json,target_return,drawdown_limit,
 	buy_base,buy_offset,sell_base,take_profit,trail_drawdown,stop_loss,max_hold_days,
 	total_dates,processed_dates,"current_date",candidate_symbols,signal_count,result_json,error,cancel_requested,created_at,started_at,finished_at,updated_at`
 
-const historicalBacktestRunSummaryColumns = `id,status,start_date,end_date,strategy_ids_json,'' AS strategy_snapshot_json,horizons_json,target_return,drawdown_limit,
+const historicalBacktestRunSummaryColumns = `id,status,start_date,end_date,strategy_ids_json,universe_pool_id,universe_pool_ids_json,'' AS strategy_snapshot_json,horizons_json,target_return,drawdown_limit,
 	buy_base,buy_offset,sell_base,take_profit,trail_drawdown,stop_loss,max_hold_days,
 	total_dates,processed_dates,"current_date",candidate_symbols,signal_count,'' AS result_json,error,cancel_requested,created_at,started_at,finished_at,updated_at`
 

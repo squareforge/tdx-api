@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	workbench "workbench-core"
@@ -44,6 +45,62 @@ type scanGrid struct {
 	StopLosses     []float64
 	TrailDrawdowns []float64
 	MaxHoldDays    []int
+}
+
+type historicalScanScope struct {
+	PoolIDs []string
+	Name    string
+	Symbols []string
+}
+
+const maxHistoricalScanPools = 12
+
+func (r *AutomationRunner) historicalScanScopes(poolIDs []string) ([]historicalScanScope, error) {
+	poolIDs = normalizeIDList(poolIDs)
+	if len(poolIDs) == 0 {
+		return []historicalScanScope{{Name: "策略自带范围"}}, nil
+	}
+	if len(poolIDs) > maxHistoricalScanPools {
+		return nil, fmt.Errorf("参数扫描最多选择 %d 个股票池，当前选择了 %d 个", maxHistoricalScanPools, len(poolIDs))
+	}
+	pools := make([]StockPool, 0, len(poolIDs))
+	for _, poolID := range poolIDs {
+		pool, err := r.store.GetStockPool(poolID)
+		if err != nil {
+			return nil, fmt.Errorf("选股范围不存在: %s", poolID)
+		}
+		if len(normalizeSymbols(pool.Symbols)) == 0 {
+			return nil, fmt.Errorf("选股范围为空: %s", pool.Name)
+		}
+		pools = append(pools, pool)
+	}
+	return buildHistoricalScanScopes(pools)
+}
+
+func buildHistoricalScanScopes(pools []StockPool) ([]historicalScanScope, error) {
+	scopes := make([]historicalScanScope, 0, (1<<len(pools))-1)
+	for mask := 1; mask < (1 << len(pools)); mask++ {
+		ids := make([]string, 0, len(pools))
+		names := make([]string, 0, len(pools))
+		groups := make([][]string, 0, len(pools))
+		for index, pool := range pools {
+			if mask&(1<<index) == 0 {
+				continue
+			}
+			ids = append(ids, pool.ID)
+			names = append(names, pool.Name)
+			groups = append(groups, pool.Symbols)
+		}
+		symbols := mergeHistoricalSymbols(groups...)
+		if len(symbols) == 0 {
+			continue
+		}
+		scopes = append(scopes, historicalScanScope{PoolIDs: ids, Name: strings.Join(names, " + "), Symbols: symbols})
+	}
+	if len(scopes) == 0 {
+		return nil, errors.New("所选股票池组合合并后为空")
+	}
+	return scopes, nil
 }
 
 func defaultScanGrid() scanGrid {
@@ -158,6 +215,10 @@ func (r *AutomationRunner) runParameterScan(ctx context.Context, runID string, r
 	}
 	plans := make([]historicalStrategyPlan, 0, len(strategies))
 	allSymbols := map[string]bool{}
+	scopes, err := r.historicalScanScopes(req.UniversePoolIDs)
+	if err != nil {
+		return err
+	}
 	for _, strategy := range strategies {
 		var config StrategyConfig
 		if err := json.Unmarshal([]byte(strategy.ConfigJSON), &config); err != nil {
@@ -167,14 +228,16 @@ func (r *AutomationRunner) runParameterScan(ctx context.Context, runID string, r
 		if config.Period != "day" {
 			return fmt.Errorf("策略 %s 不是日线策略", strategy.Name)
 		}
-		symbols, err := r.strategyUniverse(config)
+		strategySymbols, err := r.strategyUniverse(config)
 		if err != nil {
 			return fmt.Errorf("策略 %s 候选范围失败: %w", strategy.Name, err)
 		}
-		for _, symbol := range symbols {
-			allSymbols[symbol] = true
+		for _, scope := range scopes {
+			for _, symbol := range intersectHistoricalSymbols(strategySymbols, scope.Symbols) {
+				allSymbols[symbol] = true
+			}
 		}
-		plans = append(plans, historicalStrategyPlan{strategy: strategy, config: config, symbols: symbols})
+		plans = append(plans, historicalStrategyPlan{strategy: strategy, config: config, symbols: strategySymbols})
 	}
 	if len(plans) == 0 {
 		return errors.New("没有可扫描的策略")
@@ -184,6 +247,9 @@ func (r *AutomationRunner) runParameterScan(ctx context.Context, runID string, r
 		symbols = append(symbols, symbol)
 	}
 	sort.Strings(symbols)
+	if len(symbols) == 0 {
+		return errors.New("选股范围与所选策略的候选范围没有交集")
+	}
 
 	maxHorizon := req.Horizons[len(req.Horizons)-1]
 	historyCount := historicalHistoryCount(start, end, time.Now().In(time.Local), maxHorizon)
@@ -215,47 +281,68 @@ func (r *AutomationRunner) runParameterScan(ctx context.Context, runID string, r
 
 	grid := defaultScanGrid()
 	combinations := grid.combinations()
-	if err := r.store.UpdateHistoricalScanProgress(runID, 0, len(plans), "", 0); err != nil {
+	totalWork := 0
+	for _, plan := range plans {
+		for _, scope := range scopes {
+			if len(intersectHistoricalSymbols(plan.symbols, scope.Symbols)) > 0 {
+				totalWork++
+			}
+		}
+	}
+	if totalWork == 0 {
+		return errors.New("选股范围与所选策略的候选范围没有交集")
+	}
+	if err := r.store.UpdateHistoricalScanProgress(runID, 0, totalWork, "", 0); err != nil {
 		return err
 	}
 	processed := 0
+	signalCount := 0
 	for _, plan := range plans {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		signals, err := r.generateStrategySignals(ctx, plan, klines, dates)
-		if err != nil {
-			return fmt.Errorf("策略 %s 信号生成失败: %w", plan.strategy.Name, err)
-		}
-		results := make([]workbench.HistoricalScanResult, 0, len(combinations))
-		for _, set := range combinations {
+		for _, scope := range scopes {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			cfg := portfolioSimConfig{
-				InitialCash: req.InitialCash, MaxPositions: req.MaxPositions, BuyCost: req.BuyCost, SellCost: req.SellCost,
-				BuyBase: set.BuyBase, BuyOffset: set.BuyOffset, SellBase: set.SellBase,
-				TakeProfit: set.TakeProfit, TrailDrawdown: set.TrailDrawdown, StopLoss: set.StopLoss, MaxHoldDays: set.MaxHoldDays,
+			effectivePlan := plan
+			effectivePlan.symbols = intersectHistoricalSymbols(plan.symbols, scope.Symbols)
+			if len(effectivePlan.symbols) == 0 {
+				continue
 			}
-			summary := replayHistoricalPortfolio(klines, dates, signals, cfg)
-			results = append(results, workbench.HistoricalScanResult{
-				StrategyID: plan.strategy.ID, StrategyName: plan.strategy.Name,
-				BuyBase: set.BuyBase, SellBase: set.SellBase, TakeProfit: set.TakeProfit,
-				TrailDrawdown: set.TrailDrawdown, StopLoss: set.StopLoss, MaxHoldDays: set.MaxHoldDays,
-				TotalReturn: scanSummaryFloat(summary, "total_return"),
-				MaxDrawdown: scanSummaryFloat(summary, "max_drawdown"),
-				WinRate:     scanSummaryFloat(summary, "win_rate"),
-				ClosedCount: scanSummaryInt(summary, "closed_count"),
-				OpenCount:   scanSummaryInt(summary, "open_count"),
-				FinalEquity: scanSummaryFloat(summary, "final_equity"),
-			})
-		}
-		if err := r.store.SaveHistoricalScanResults(runID, results); err != nil {
-			return err
-		}
-		processed++
-		if err := r.store.UpdateHistoricalScanProgress(runID, processed, len(plans), plan.strategy.Name, len(signals)); err != nil {
-			return err
+			signals, err := r.generateStrategySignals(ctx, effectivePlan, klines, dates)
+			if err != nil {
+				return fmt.Errorf("策略 %s / %s 信号生成失败: %w", plan.strategy.Name, scope.Name, err)
+			}
+			results := make([]workbench.HistoricalScanResult, 0, len(combinations))
+			for _, set := range combinations {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				cfg := portfolioSimConfig{
+					InitialCash: req.InitialCash, MaxPositions: req.MaxPositions, BuyCost: req.BuyCost, SellCost: req.SellCost,
+					BuyBase: set.BuyBase, BuyOffset: set.BuyOffset, SellBase: set.SellBase,
+					TakeProfit: set.TakeProfit, TrailDrawdown: set.TrailDrawdown, StopLoss: set.StopLoss, MaxHoldDays: set.MaxHoldDays,
+				}
+				summary := replayHistoricalPortfolio(klines, dates, signals, cfg)
+				results = append(results, workbench.HistoricalScanResult{
+					StrategyID: plan.strategy.ID, StrategyName: plan.strategy.Name,
+					UniversePoolIDs: scope.PoolIDs, UniverseName: scope.Name, UniverseSymbolCount: len(effectivePlan.symbols),
+					BuyBase: set.BuyBase, SellBase: set.SellBase, TakeProfit: set.TakeProfit,
+					TrailDrawdown: set.TrailDrawdown, StopLoss: set.StopLoss, MaxHoldDays: set.MaxHoldDays,
+					TotalReturn: scanSummaryFloat(summary, "total_return"),
+					MaxDrawdown: scanSummaryFloat(summary, "max_drawdown"),
+					WinRate:     scanSummaryFloat(summary, "win_rate"),
+					ClosedCount: scanSummaryInt(summary, "closed_count"),
+					OpenCount:   scanSummaryInt(summary, "open_count"),
+					FinalEquity: scanSummaryFloat(summary, "final_equity"),
+				})
+			}
+			if err := r.store.SaveHistoricalScanResults(runID, results); err != nil {
+				return err
+			}
+			processed++
+			signalCount += len(signals)
+			if err := r.store.UpdateHistoricalScanProgress(runID, processed, totalWork, fmt.Sprintf("%s · %s", plan.strategy.Name, scope.Name), signalCount); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -287,6 +374,9 @@ func (r *AutomationRunner) startParameterScan(req historicalBacktestRequest) (wo
 	if err != nil {
 		return workbench.HistoricalScanRun{}, err
 	}
+	if _, err := r.historicalScanScopes(normalized.UniversePoolIDs); err != nil {
+		return workbench.HistoricalScanRun{}, err
+	}
 	if !r.acquireRun(historicalScanRunLock) {
 		return workbench.HistoricalScanRun{}, errors.New("已有参数扫描正在执行")
 	}
@@ -296,7 +386,7 @@ func (r *AutomationRunner) startParameterScan(req historicalBacktestRequest) (wo
 	}
 	run, err := r.store.CreateHistoricalScanRun(workbench.HistoricalScanRun{
 		Status: "running", StartDate: normalized.StartDate, EndDate: normalized.EndDate,
-		StrategyIDs: strategyIDs, TotalStrategies: len(strategies),
+		StrategyIDs: strategyIDs, UniversePoolIDs: normalized.UniversePoolIDs, TotalStrategies: len(strategies),
 	})
 	if err != nil {
 		r.releaseRun(historicalScanRunLock)

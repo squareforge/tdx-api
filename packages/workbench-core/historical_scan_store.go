@@ -14,6 +14,7 @@ type HistoricalScanRun struct {
 	StartDate           string   `json:"start_date"`
 	EndDate             string   `json:"end_date"`
 	StrategyIDs         []string `json:"strategy_ids"`
+	UniversePoolIDs     []string `json:"universe_pool_ids"`
 	TotalStrategies     int      `json:"total_strategies"`
 	ProcessedStrategies int      `json:"processed_strategies"`
 	CurrentStrategy     string   `json:"current_strategy"`
@@ -26,23 +27,26 @@ type HistoricalScanRun struct {
 }
 
 type HistoricalScanResult struct {
-	ID            string  `json:"id"`
-	RunID         string  `json:"run_id"`
-	StrategyID    string  `json:"strategy_id"`
-	StrategyName  string  `json:"strategy_name"`
-	BuyBase       string  `json:"buy_base"`
-	SellBase      string  `json:"sell_base"`
-	TakeProfit    float64 `json:"take_profit"`
-	TrailDrawdown float64 `json:"trail_drawdown"`
-	StopLoss      float64 `json:"stop_loss"`
-	MaxHoldDays   int     `json:"max_hold_days"`
-	TotalReturn   float64 `json:"total_return"`
-	MaxDrawdown   float64 `json:"max_drawdown"`
-	WinRate       float64 `json:"win_rate"`
-	ClosedCount   int     `json:"closed_count"`
-	OpenCount     int     `json:"open_count"`
-	FinalEquity   float64 `json:"final_equity"`
-	CreatedAt     string  `json:"created_at"`
+	ID                  string   `json:"id"`
+	RunID               string   `json:"run_id"`
+	StrategyID          string   `json:"strategy_id"`
+	StrategyName        string   `json:"strategy_name"`
+	UniversePoolIDs     []string `json:"universe_pool_ids"`
+	UniverseName        string   `json:"universe_name"`
+	UniverseSymbolCount int      `json:"universe_symbol_count"`
+	BuyBase             string   `json:"buy_base"`
+	SellBase            string   `json:"sell_base"`
+	TakeProfit          float64  `json:"take_profit"`
+	TrailDrawdown       float64  `json:"trail_drawdown"`
+	StopLoss            float64  `json:"stop_loss"`
+	MaxHoldDays         int      `json:"max_hold_days"`
+	TotalReturn         float64  `json:"total_return"`
+	MaxDrawdown         float64  `json:"max_drawdown"`
+	WinRate             float64  `json:"win_rate"`
+	ClosedCount         int      `json:"closed_count"`
+	OpenCount           int      `json:"open_count"`
+	FinalEquity         float64  `json:"final_equity"`
+	CreatedAt           string   `json:"created_at"`
 }
 
 func (s *AppStore) CreateHistoricalScanRun(run HistoricalScanRun) (HistoricalScanRun, error) {
@@ -56,6 +60,7 @@ func (s *AppStore) CreateHistoricalScanRun(run HistoricalScanRun) (HistoricalSca
 		run.Status = "running"
 	}
 	strategyIDsJSON, _ := json.Marshal(run.StrategyIDs)
+	universePoolIDsJSON, _ := json.Marshal(run.UniversePoolIDs)
 	now := NowText()
 	if run.CreatedAt == "" {
 		run.CreatedAt = now
@@ -65,9 +70,9 @@ func (s *AppStore) CreateHistoricalScanRun(run HistoricalScanRun) (HistoricalSca
 	}
 	run.UpdatedAt = now
 	_, err := s.db.Exec(`INSERT INTO historical_scan_runs
-		(id,status,start_date,end_date,strategy_ids_json,total_strategies,processed_strategies,current_strategy,signal_count,error,created_at,started_at,finished_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		run.ID, run.Status, run.StartDate, run.EndDate, string(strategyIDsJSON), run.TotalStrategies,
+		(id,status,start_date,end_date,strategy_ids_json,universe_pool_id,universe_pool_ids_json,total_strategies,processed_strategies,current_strategy,signal_count,error,created_at,started_at,finished_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		run.ID, run.Status, run.StartDate, run.EndDate, string(strategyIDsJSON), "", string(universePoolIDsJSON), run.TotalStrategies,
 		run.ProcessedStrategies, run.CurrentStrategy, run.SignalCount, run.Error, run.CreatedAt, run.StartedAt, run.FinishedAt, run.UpdatedAt)
 	return run, err
 }
@@ -98,11 +103,12 @@ func (s *AppStore) SaveHistoricalScanResults(runID string, results []HistoricalS
 		item.ID = uuid.NewString()
 		item.RunID = runID
 		item.CreatedAt = now
+		universePoolIDsJSON, _ := json.Marshal(item.UniversePoolIDs)
 		if _, err := tx.Exec(`INSERT INTO historical_scan_results
-			(id,run_id,strategy_id,strategy_name,buy_base,sell_base,take_profit,trail_drawdown,stop_loss,max_hold_days,
+			(id,run_id,strategy_id,strategy_name,universe_pool_ids_json,universe_name,universe_symbol_count,buy_base,sell_base,take_profit,trail_drawdown,stop_loss,max_hold_days,
 			total_return,max_drawdown,win_rate,closed_count,open_count,final_equity,created_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			item.ID, item.RunID, item.StrategyID, item.StrategyName, item.BuyBase, item.SellBase, item.TakeProfit,
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			item.ID, item.RunID, item.StrategyID, item.StrategyName, string(universePoolIDsJSON), item.UniverseName, item.UniverseSymbolCount, item.BuyBase, item.SellBase, item.TakeProfit,
 			item.TrailDrawdown, item.StopLoss, item.MaxHoldDays, item.TotalReturn, item.MaxDrawdown, item.WinRate,
 			item.ClosedCount, item.OpenCount, item.FinalEquity, item.CreatedAt); err != nil {
 			return err
@@ -115,7 +121,7 @@ func (s *AppStore) ListHistoricalScanRuns(limit int) ([]HistoricalScanRun, error
 	if limit <= 0 || limit > 100 {
 		limit = 30
 	}
-	rows, err := s.db.Query(`SELECT id,status,start_date,end_date,strategy_ids_json,total_strategies,processed_strategies,current_strategy,signal_count,error,created_at,started_at,finished_at,updated_at
+	rows, err := s.db.Query(`SELECT id,status,start_date,end_date,strategy_ids_json,universe_pool_id,universe_pool_ids_json,total_strategies,processed_strategies,current_strategy,signal_count,error,created_at,started_at,finished_at,updated_at
 		FROM historical_scan_runs ORDER BY created_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -124,13 +130,17 @@ func (s *AppStore) ListHistoricalScanRuns(limit int) ([]HistoricalScanRun, error
 	items := make([]HistoricalScanRun, 0, limit)
 	for rows.Next() {
 		var run HistoricalScanRun
-		var strategyIDsJSON string
-		if err := rows.Scan(&run.ID, &run.Status, &run.StartDate, &run.EndDate, &strategyIDsJSON, &run.TotalStrategies,
+		var strategyIDsJSON, universePoolID, universePoolIDsJSON string
+		if err := rows.Scan(&run.ID, &run.Status, &run.StartDate, &run.EndDate, &strategyIDsJSON, &universePoolID, &universePoolIDsJSON, &run.TotalStrategies,
 			&run.ProcessedStrategies, &run.CurrentStrategy, &run.SignalCount, &run.Error, &run.CreatedAt,
 			&run.StartedAt, &run.FinishedAt, &run.UpdatedAt); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(strategyIDsJSON), &run.StrategyIDs)
+		_ = json.Unmarshal([]byte(universePoolIDsJSON), &run.UniversePoolIDs)
+		if len(run.UniversePoolIDs) == 0 && strings.TrimSpace(universePoolID) != "" {
+			run.UniversePoolIDs = []string{strings.TrimSpace(universePoolID)}
+		}
 		items = append(items, run)
 	}
 	return items, rows.Err()
@@ -138,21 +148,25 @@ func (s *AppStore) ListHistoricalScanRuns(limit int) ([]HistoricalScanRun, error
 
 func (s *AppStore) GetHistoricalScanRun(id string) (HistoricalScanRun, error) {
 	var run HistoricalScanRun
-	var strategyIDsJSON string
-	err := s.db.QueryRow(`SELECT id,status,start_date,end_date,strategy_ids_json,total_strategies,processed_strategies,current_strategy,signal_count,error,created_at,started_at,finished_at,updated_at
+	var strategyIDsJSON, universePoolID, universePoolIDsJSON string
+	err := s.db.QueryRow(`SELECT id,status,start_date,end_date,strategy_ids_json,universe_pool_id,universe_pool_ids_json,total_strategies,processed_strategies,current_strategy,signal_count,error,created_at,started_at,finished_at,updated_at
 		FROM historical_scan_runs WHERE id=?`, id).
-		Scan(&run.ID, &run.Status, &run.StartDate, &run.EndDate, &strategyIDsJSON, &run.TotalStrategies,
+		Scan(&run.ID, &run.Status, &run.StartDate, &run.EndDate, &strategyIDsJSON, &universePoolID, &universePoolIDsJSON, &run.TotalStrategies,
 			&run.ProcessedStrategies, &run.CurrentStrategy, &run.SignalCount, &run.Error, &run.CreatedAt,
 			&run.StartedAt, &run.FinishedAt, &run.UpdatedAt)
 	if err != nil {
 		return run, err
 	}
 	_ = json.Unmarshal([]byte(strategyIDsJSON), &run.StrategyIDs)
+	_ = json.Unmarshal([]byte(universePoolIDsJSON), &run.UniversePoolIDs)
+	if len(run.UniversePoolIDs) == 0 && strings.TrimSpace(universePoolID) != "" {
+		run.UniversePoolIDs = []string{strings.TrimSpace(universePoolID)}
+	}
 	return run, nil
 }
 
 func (s *AppStore) ListHistoricalScanResults(runID, strategyID string) ([]HistoricalScanResult, error) {
-	query := `SELECT id,run_id,strategy_id,strategy_name,buy_base,sell_base,take_profit,trail_drawdown,stop_loss,max_hold_days,
+	query := `SELECT id,run_id,strategy_id,strategy_name,universe_pool_ids_json,universe_name,universe_symbol_count,buy_base,sell_base,take_profit,trail_drawdown,stop_loss,max_hold_days,
 		total_return,max_drawdown,win_rate,closed_count,open_count,final_equity,created_at
 		FROM historical_scan_results`
 	args := []interface{}{}
@@ -177,11 +191,13 @@ func (s *AppStore) ListHistoricalScanResults(runID, strategyID string) ([]Histor
 	items := make([]HistoricalScanResult, 0, 128)
 	for rows.Next() {
 		var item HistoricalScanResult
-		if err := rows.Scan(&item.ID, &item.RunID, &item.StrategyID, &item.StrategyName, &item.BuyBase, &item.SellBase,
+		var universePoolIDsJSON string
+		if err := rows.Scan(&item.ID, &item.RunID, &item.StrategyID, &item.StrategyName, &universePoolIDsJSON, &item.UniverseName, &item.UniverseSymbolCount, &item.BuyBase, &item.SellBase,
 			&item.TakeProfit, &item.TrailDrawdown, &item.StopLoss, &item.MaxHoldDays, &item.TotalReturn,
 			&item.MaxDrawdown, &item.WinRate, &item.ClosedCount, &item.OpenCount, &item.FinalEquity, &item.CreatedAt); err != nil {
 			return nil, err
 		}
+		_ = json.Unmarshal([]byte(universePoolIDsJSON), &item.UniversePoolIDs)
 		items = append(items, item)
 	}
 	return items, rows.Err()

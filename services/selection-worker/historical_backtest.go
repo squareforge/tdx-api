@@ -17,23 +17,25 @@ import (
 const historicalBacktestRunLock = "historical-backtest"
 
 type historicalBacktestRequest struct {
-	StartDate     string   `json:"start_date"`
-	EndDate       string   `json:"end_date"`
-	StrategyIDs   []string `json:"strategy_ids"`
-	Horizons      []int    `json:"horizons"`
-	TargetReturn  float64  `json:"target_return"`
-	DrawdownLimit float64  `json:"drawdown_limit"`
-	InitialCash   float64  `json:"initial_cash"`
-	MaxPositions  int      `json:"max_positions"`
-	BuyCost       float64  `json:"buy_cost"`
-	SellCost      float64  `json:"sell_cost"`
-	BuyBase       string   `json:"buy_base"`
-	BuyOffset     float64  `json:"buy_offset"`
-	SellBase      string   `json:"sell_base"`
-	TakeProfit    float64  `json:"take_profit"`
-	TrailDrawdown float64  `json:"trail_drawdown"`
-	StopLoss      float64  `json:"stop_loss"`
-	MaxHoldDays   int      `json:"max_hold_days"`
+	StartDate       string   `json:"start_date"`
+	EndDate         string   `json:"end_date"`
+	StrategyIDs     []string `json:"strategy_ids"`
+	UniversePoolID  string   `json:"universe_pool_id,omitempty"`
+	UniversePoolIDs []string `json:"universe_pool_ids"`
+	Horizons        []int    `json:"horizons"`
+	TargetReturn    float64  `json:"target_return"`
+	DrawdownLimit   float64  `json:"drawdown_limit"`
+	InitialCash     float64  `json:"initial_cash"`
+	MaxPositions    int      `json:"max_positions"`
+	BuyCost         float64  `json:"buy_cost"`
+	SellCost        float64  `json:"sell_cost"`
+	BuyBase         string   `json:"buy_base"`
+	BuyOffset       float64  `json:"buy_offset"`
+	SellBase        string   `json:"sell_base"`
+	TakeProfit      float64  `json:"take_profit"`
+	TrailDrawdown   float64  `json:"trail_drawdown"`
+	StopLoss        float64  `json:"stop_loss"`
+	MaxHoldDays     int      `json:"max_hold_days"`
 }
 
 type historicalStrategyPlan struct {
@@ -244,7 +246,68 @@ func normalizeHistoricalBacktestRequest(req historicalBacktestRequest) (historic
 	req.TargetReturn = req.TakeProfit
 	req.DrawdownLimit = req.TrailDrawdown
 	req.StrategyIDs = normalizeIDList(req.StrategyIDs)
+	// universe_pool_id is kept as a compatibility input for callers created
+	// before the replay page supported selecting more than one stock pool.
+	req.UniversePoolIDs = normalizeIDList(append(req.UniversePoolIDs, req.UniversePoolID))
+	req.UniversePoolID = ""
 	return req, start, end, nil
+}
+
+func (r *AutomationRunner) historicalBacktestUniverse(poolIDs []string) ([]string, error) {
+	poolIDs = normalizeIDList(poolIDs)
+	if len(poolIDs) == 0 {
+		return nil, nil
+	}
+	// Multiple pools form one replay range by union. A set keyed by normalized
+	// stock code removes overlaps before the range is intersected with each
+	// strategy's own universe.
+	poolSymbols := make([][]string, 0, len(poolIDs))
+	for _, poolID := range poolIDs {
+		pool, err := r.store.GetStockPool(poolID)
+		if err != nil {
+			return nil, fmt.Errorf("选股范围不存在: %s", poolID)
+		}
+		poolSymbols = append(poolSymbols, pool.Symbols)
+	}
+	symbols := mergeHistoricalSymbols(poolSymbols...)
+	if len(symbols) == 0 {
+		return nil, errors.New("所选股票池合并后为空")
+	}
+	return symbols, nil
+}
+
+func mergeHistoricalSymbols(groups ...[]string) []string {
+	selected := map[string]bool{}
+	for _, group := range groups {
+		for _, rawSymbol := range group {
+			if symbol := strategyNormalizeSymbol(rawSymbol); symbol != "" {
+				selected[symbol] = true
+			}
+		}
+	}
+	symbols := make([]string, 0, len(selected))
+	for symbol := range selected {
+		symbols = append(symbols, symbol)
+	}
+	sort.Strings(symbols)
+	return symbols
+}
+
+func intersectHistoricalSymbols(strategySymbols, requestedSymbols []string) []string {
+	if len(requestedSymbols) == 0 {
+		return strategySymbols
+	}
+	requested := make(map[string]bool, len(requestedSymbols))
+	for _, symbol := range requestedSymbols {
+		requested[symbol] = true
+	}
+	result := make([]string, 0, len(strategySymbols))
+	for _, symbol := range strategySymbols {
+		if requested[symbol] {
+			result = append(result, symbol)
+		}
+	}
+	return result
 }
 
 func normalizeIDList(values []string) []string {
@@ -299,6 +362,9 @@ func (r *AutomationRunner) startHistoricalBacktest(raw historicalBacktestRequest
 	if err != nil {
 		return HistoricalBacktestRun{}, err
 	}
+	if _, err := r.historicalBacktestUniverse(req.UniversePoolIDs); err != nil {
+		return HistoricalBacktestRun{}, err
+	}
 	if !r.acquireRun(historicalBacktestRunLock) {
 		return HistoricalBacktestRun{}, errors.New("已有历史回测正在执行")
 	}
@@ -308,6 +374,7 @@ func (r *AutomationRunner) startHistoricalBacktest(raw historicalBacktestRequest
 	}
 	run, err := r.store.CreateHistoricalBacktestRun(HistoricalBacktestRun{
 		Status: "running", StartDate: req.StartDate, EndDate: req.EndDate, StrategyIDs: strategyIDs,
+		UniversePoolIDs:      req.UniversePoolIDs,
 		StrategySnapshotJSON: mustJSON(strategies), Horizons: req.Horizons,
 		TargetReturn: req.TargetReturn, DrawdownLimit: req.DrawdownLimit,
 		BuyBase: req.BuyBase, BuyOffset: req.BuyOffset, SellBase: req.SellBase,
@@ -354,6 +421,10 @@ func (r *AutomationRunner) runHistoricalBacktestWithProfile(ctx context.Context,
 	plans := make([]historicalStrategyPlan, 0, len(strategies))
 	allSymbols := map[string]bool{}
 	stageStarted := time.Now()
+	requestedUniverse, err := r.historicalBacktestUniverse(req.UniversePoolIDs)
+	if err != nil {
+		return nil, err
+	}
 	for _, strategy := range strategies {
 		var config StrategyConfig
 		if err := json.Unmarshal([]byte(strategy.ConfigJSON), &config); err != nil {
@@ -363,10 +434,11 @@ func (r *AutomationRunner) runHistoricalBacktestWithProfile(ctx context.Context,
 		if config.Period != "day" {
 			return nil, fmt.Errorf("策略 %s 不是日线策略", strategy.Name)
 		}
-		symbols, err := r.strategyUniverse(config)
+		strategySymbols, err := r.strategyUniverse(config)
 		if err != nil {
 			return nil, fmt.Errorf("策略 %s 候选范围失败: %w", strategy.Name, err)
 		}
+		symbols := intersectHistoricalSymbols(strategySymbols, requestedUniverse)
 		for _, symbol := range symbols {
 			allSymbols[symbol] = true
 		}
@@ -377,6 +449,9 @@ func (r *AutomationRunner) runHistoricalBacktestWithProfile(ctx context.Context,
 		symbols = append(symbols, symbol)
 	}
 	sort.Strings(symbols)
+	if len(symbols) == 0 {
+		return nil, errors.New("选股范围与所选策略的候选范围没有交集")
+	}
 	profile.record("stage", map[string]any{"name": "strategy_universe", "elapsed_ms": profileMillis(time.Since(stageStarted)), "symbols": len(symbols)})
 	maxHorizon := req.Horizons[len(req.Horizons)-1]
 	historyCount := historicalHistoryCount(start, end, time.Now().In(time.Local), maxHorizon)
@@ -704,7 +779,7 @@ func historicalBacktestResult(req historicalBacktestRequest, dates []int, summar
 		"strategy_summaries": strategyRows, "consensus": consensusRows, "signal_count": totalSignals,
 		"strategy_count": len(strategyRows), "trading_days": len(dates), "candidate_symbols": candidates,
 		"kline_loaded": loaded, "kline_failed": failed, "history_count": historyCount,
-		"policy":   map[string]interface{}{"horizons": req.Horizons, "target_return": req.TargetReturn, "drawdown_limit": req.DrawdownLimit, "entry": "signal_day_close"},
+		"policy":   map[string]interface{}{"horizons": req.Horizons, "target_return": req.TargetReturn, "drawdown_limit": req.DrawdownLimit, "entry": "signal_day_close", "universe_pool_ids": req.UniversePoolIDs},
 		"warnings": []string{"候选范围使用当前股票列表，历史退市股票可能未被包含", "信号按当日收盘生成，D1/D3/D5/D10均按后续交易日计算"},
 	}
 }

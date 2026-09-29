@@ -45,6 +45,71 @@ func TestHistoricalBacktestRunReadsStoredCurrentDate(t *testing.T) {
 	}
 }
 
+func TestHistoricalBacktestRunPersistsUniversePools(t *testing.T) {
+	store := newHistoricalBacktestTestStore(t)
+	run, err := store.CreateHistoricalBacktestRun(HistoricalBacktestRun{
+		StartDate: "2026-06-01", EndDate: "2026-06-02", StrategyIDs: []string{"strategy-1"},
+		UniversePoolIDs: []string{"market-gem", "market-sz-main"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.GetHistoricalBacktestRun(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.UniversePoolIDs) != 2 || loaded.UniversePoolIDs[0] != "market-gem" || loaded.UniversePoolIDs[1] != "market-sz-main" {
+		t.Fatalf("universe pools = %v, want persisted pool ids", loaded.UniversePoolIDs)
+	}
+}
+
+func TestHistoricalScanRunPersistsUniversePools(t *testing.T) {
+	store := newHistoricalBacktestTestStore(t)
+	run, err := store.CreateHistoricalScanRun(HistoricalScanRun{
+		StartDate: "2026-06-01", EndDate: "2026-06-02", StrategyIDs: []string{"strategy-1"},
+		UniversePoolIDs: []string{"market-gem", "market-sz-main"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.GetHistoricalScanRun(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.UniversePoolIDs) != 2 || loaded.UniversePoolIDs[0] != "market-gem" || loaded.UniversePoolIDs[1] != "market-sz-main" {
+		t.Fatalf("scan universe pools = %v, want persisted pool ids", loaded.UniversePoolIDs)
+	}
+}
+
+func TestHistoricalScanResultPersistsUniverseCombination(t *testing.T) {
+	store := newHistoricalBacktestTestStore(t)
+	run, err := store.CreateHistoricalScanRun(HistoricalScanRun{
+		StartDate: "2026-06-01", EndDate: "2026-06-02", StrategyIDs: []string{"strategy-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = store.SaveHistoricalScanResults(run.ID, []HistoricalScanResult{{
+		StrategyID: "strategy-1", StrategyName: "策略A",
+		UniversePoolIDs: []string{"pool-a", "pool-b"}, UniverseName: "A + B", UniverseSymbolCount: 3,
+		BuyBase: "open", SellBase: "next_open", TakeProfit: 5, TrailDrawdown: 5, StopLoss: 3, MaxHoldDays: 10,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := store.ListHistoricalScanResults(run.ID, "strategy-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("scan results = %d, want 1", len(items))
+	}
+	item := items[0]
+	if item.UniverseName != "A + B" || item.UniverseSymbolCount != 3 || len(item.UniversePoolIDs) != 2 {
+		t.Fatalf("scan universe = %+v, want persisted A + B combination", item)
+	}
+}
+
 func TestHistoricalBacktestSignalsOrderByStrategyRankScore(t *testing.T) {
 	store := newHistoricalBacktestTestStore(t)
 	run, err := store.CreateHistoricalBacktestRun(HistoricalBacktestRun{

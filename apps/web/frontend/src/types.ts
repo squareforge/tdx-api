@@ -808,6 +808,7 @@ export interface HistoricalBacktestRun {
   start_date: string;
   end_date: string;
   strategy_ids: string[];
+  universe_pool_ids?: string[];
   strategy_snapshot_json?: string;
   horizons: number[];
   target_return: number;
@@ -839,6 +840,7 @@ export interface HistoricalScanRun {
   start_date: string;
   end_date: string;
   strategy_ids: string[];
+  universe_pool_ids?: string[];
   total_strategies: number;
   processed_strategies: number;
   current_strategy?: string;
@@ -855,6 +857,9 @@ export interface HistoricalScanResult {
   run_id: string;
   strategy_id: string;
   strategy_name: string;
+  universe_pool_ids?: string[];
+  universe_name?: string;
+  universe_symbol_count?: number;
   buy_base: string;
   sell_base: string;
   take_profit: number;
@@ -905,7 +910,7 @@ export interface HistoricalBacktestResult {
   kline_loaded?: number;
   kline_failed?: number;
   history_count?: number;
-  policy?: { horizons?: number[]; target_return?: number; drawdown_limit?: number; entry?: string };
+  policy?: { horizons?: number[]; target_return?: number; drawdown_limit?: number; entry?: string; universe_pool_ids?: string[] };
   warnings?: string[];
   portfolio?: HistoricalPortfolioSummary;
 }

@@ -60,6 +60,47 @@ func TestNormalizeHistoricalBacktestRequestDefaults(t *testing.T) {
 	}
 }
 
+func TestNormalizeHistoricalBacktestRequestNormalizesUniversePools(t *testing.T) {
+	req, _, _, err := normalizeHistoricalBacktestRequest(historicalBacktestRequest{
+		StartDate: "2026-01-01", EndDate: "2026-02-01", UniversePoolID: "  market-gem  ",
+		UniversePoolIDs: []string{"market-sz-main", "market-gem", " "},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.UniversePoolIDs) != 2 || req.UniversePoolIDs[0] != "market-sz-main" || req.UniversePoolIDs[1] != "market-gem" {
+		t.Fatalf("universe pools = %v, want normalized unique pool ids", req.UniversePoolIDs)
+	}
+}
+
+func TestHistoricalBacktestUniverseMergesAndDeduplicatesPools(t *testing.T) {
+	symbols := mergeHistoricalSymbols(
+		[]string{"000001", "000002"},
+		[]string{"000002", "600000"},
+		[]string{"sz000001"},
+	)
+	want := []string{"000001", "000002", "600000"}
+	if len(symbols) != len(want) {
+		t.Fatalf("merged symbols = %v, want %v", symbols, want)
+	}
+	for index := range want {
+		if symbols[index] != want[index] {
+			t.Fatalf("merged symbols = %v, want %v", symbols, want)
+		}
+	}
+}
+
+func TestIntersectHistoricalSymbols(t *testing.T) {
+	strategySymbols := []string{"000001", "300001", "688001"}
+	if got := intersectHistoricalSymbols(strategySymbols, nil); len(got) != len(strategySymbols) {
+		t.Fatalf("no limit returned %v, want original strategy range", got)
+	}
+	got := intersectHistoricalSymbols(strategySymbols, []string{"300001", "600000"})
+	if len(got) != 1 || got[0] != "300001" {
+		t.Fatalf("intersection = %v, want [300001]", got)
+	}
+}
+
 func TestDefaultScanGridIncludesShortSwingExits(t *testing.T) {
 	grid := defaultScanGrid()
 	if len(grid.combinations()) != 320 {
@@ -70,6 +111,47 @@ func TestDefaultScanGridIncludesShortSwingExits(t *testing.T) {
 	}
 	if !containsScanInt(grid.MaxHoldDays, 5) || !containsScanInt(grid.MaxHoldDays, 15) {
 		t.Fatalf("max hold days = %v, want 5-day and 15-day candidates", grid.MaxHoldDays)
+	}
+}
+
+func TestHistoricalScanScopesBuildEveryNonEmptyPoolCombination(t *testing.T) {
+	scopes, err := buildHistoricalScanScopes([]StockPool{
+		{ID: "a", Name: "A", Symbols: []string{"SZ000001", "000002"}},
+		{ID: "b", Name: "B", Symbols: []string{"000001.SZ", "600000"}},
+		{ID: "c", Name: "C", Symbols: []string{"300001"}},
+		{ID: "d", Name: "D", Symbols: []string{"688001"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scopes) != 15 {
+		t.Fatalf("scope combinations = %d, want 15", len(scopes))
+	}
+	wantNames := map[string]bool{
+		"A": true, "B": true, "C": true, "D": true,
+		"A + B": true, "A + C": true, "A + D": true, "B + C": true, "B + D": true, "C + D": true,
+		"A + B + C": true, "A + B + D": true, "A + C + D": true, "B + C + D": true,
+		"A + B + C + D": true,
+	}
+	for _, scope := range scopes {
+		delete(wantNames, scope.Name)
+		if scope.Name == "A + B" {
+			wantSymbols := []string{"000001", "000002", "600000"}
+			if len(scope.Symbols) != len(wantSymbols) {
+				t.Fatalf("A + B symbols = %v, want deduplicated %v", scope.Symbols, wantSymbols)
+			}
+			for index := range wantSymbols {
+				if scope.Symbols[index] != wantSymbols[index] {
+					t.Fatalf("A + B symbols = %v, want deduplicated %v", scope.Symbols, wantSymbols)
+				}
+			}
+		}
+	}
+	if len(wantNames) != 0 {
+		t.Fatalf("missing scope combinations: %v", wantNames)
+	}
+	if got := len(scopes) * len(defaultScanGrid().combinations()); got != 4800 {
+		t.Fatalf("four-pool scan combinations = %d, want 4800 per strategy", got)
 	}
 }
 

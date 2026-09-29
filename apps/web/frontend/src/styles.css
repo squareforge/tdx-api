@@ -10387,7 +10387,7 @@ textarea::placeholder {
 }
 
 .historical-form-fields-scope {
-  grid-template-columns: 170px 170px minmax(260px, 1fr);
+  grid-template-columns: 160px 160px minmax(260px, 1.1fr) minmax(200px, 0.7fr);
 }
 
 .historical-form-fields-risk {
@@ -11367,6 +11367,7 @@ textarea::placeholder {
 
 @media (max-width: 1150px) {
   .historical-form-fields-scope { grid-template-columns: 150px 150px minmax(220px, 1fr); }
+  .historical-universe-picker { grid-column: 1 / -1; }
   .historical-form-fields-risk { grid-template-columns: repeat(3, minmax(120px, 1fr)); }
   .historical-form-fields-execution { grid-template-columns: repeat(4, minmax(120px, 1fr)); }
   .historical-start-button { grid-column: 1 / -1; justify-self: end; }
@@ -11392,6 +11393,7 @@ textarea::placeholder {
   .historical-form-fields-risk,
   .historical-form-fields-execution { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .historical-strategy-picker,
+  .historical-universe-picker,
   .historical-cash-field { grid-column: 1 / -1; }
   .historical-start-button { grid-column: 1 / -1; width: 100%; }
   .historical-progress-head,
@@ -11451,6 +11453,7 @@ textarea::placeholder {
   .historical-form-fields-risk,
   .historical-form-fields-execution { grid-template-columns: 1fr; }
   .historical-strategy-picker,
+  .historical-universe-picker,
   .historical-cash-field,
   .historical-start-button { grid-column: auto; }
   .daily-analysis-filter-field,

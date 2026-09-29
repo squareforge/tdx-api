@@ -11,7 +11,7 @@ import { normalizeSymbol } from '../lib/format';
 import type {
   HistoricalBacktestResult, HistoricalBacktestRun, HistoricalBacktestSignal, HistoricalBacktestSignalPage,
   HistoricalBacktestTrade, HistoricalBacktestTradePage,
-  HistoricalConsensusSummary, HistoricalHorizonSummary, HistoricalStrategySummary, SelectionTracking, Strategy,
+  HistoricalConsensusSummary, HistoricalHorizonSummary, HistoricalStrategySummary, SelectionTracking, StockPool, Strategy,
   HistoricalScanRun, HistoricalScanResult
 } from '../types';
 import { StockQuoteModal, type StockQuoteTarget } from './StockQuoteModal';
@@ -57,6 +57,15 @@ function scanParamText(item: HistoricalScanResult) {
   return `${item.buy_base === 'open' ? '开盘' : '收盘'}买 · ${item.sell_base === 'next_open' ? '次日开' : '当日收'}卖 · 止${item.take_profit}% 回${item.trail_drawdown}% 损${item.stop_loss}% ${item.max_hold_days}天`;
 }
 
+function scanScopeName(item: HistoricalScanResult) {
+  return item.universe_name || '策略自带范围';
+}
+
+function scanScopeCount(poolIDs?: string[]) {
+  const count = poolIDs?.length || 0;
+  return count > 0 ? (2 ** count) - 1 : 1;
+}
+
 function compareScanReturnDesc(a: HistoricalScanResult, b: HistoricalScanResult) {
   return b.total_return - a.total_return;
 }
@@ -77,6 +86,8 @@ function compareScanBest(a: HistoricalScanResult, b: HistoricalScanResult) {
 
 const scanSummaryColumns = [
   { title: '策略', dataIndex: 'strategy_name', width: 180, render: (value: string) => <strong>{value}</strong> },
+  { title: '股票池组合', key: 'universe_name', width: 220, render: (_: unknown, row: HistoricalScanResult) => scanScopeName(row) },
+  { title: '候选数', dataIndex: 'universe_symbol_count', width: 80, render: (value?: number) => value || '--' },
   { title: '最优参数', key: 'params', render: (_: unknown, row: HistoricalScanResult) => <span>{scanParamText(row)}</span> },
   { title: '总收益', dataIndex: 'total_return', width: 100, sorter: (a: HistoricalScanResult, b: HistoricalScanResult) => a.total_return - b.total_return, render: (value: number) => <strong className={scanReturnColor(value)}>{pct(value)}</strong> },
   { title: '最大回撤', dataIndex: 'max_drawdown', width: 100, sorter: (a: HistoricalScanResult, b: HistoricalScanResult) => a.max_drawdown - b.max_drawdown, render: (value: number) => <span className="trading-negative">-{Number(value || 0).toFixed(2)}%</span> },
@@ -85,6 +96,8 @@ const scanSummaryColumns = [
 ];
 
 const scanDetailColumns = [
+  { title: '股票池组合', key: 'universe_name', width: 220, render: (_: unknown, row: HistoricalScanResult) => scanScopeName(row) },
+  { title: '候选数', dataIndex: 'universe_symbol_count', width: 80, render: (value?: number) => value || '--' },
   { title: '买入', dataIndex: 'buy_base', width: 70, render: (value: string) => value === 'open' ? '开盘' : '收盘' },
   { title: '卖出', dataIndex: 'sell_base', width: 90, render: (value: string) => value === 'next_open' ? '次日开盘' : '当日收盘' },
   { title: '止盈', dataIndex: 'take_profit', width: 70, render: (value: number) => `${value}%` },
@@ -137,11 +150,13 @@ function horizonReturn(raw: SelectionTracking | string | undefined, horizon: num
 
 export function HistoricalBacktestWorkspace() {
   const [strategies, setStrategies] = useState<Strategy[]>([]);
+  const [stockPools, setStockPools] = useState<StockPool[]>([]);
   const [runs, setRuns] = useState<HistoricalBacktestRun[]>([]);
   const [selectedRun, setSelectedRun] = useState<HistoricalBacktestRun | null>(null);
   const [startDate, setStartDate] = useState<Dayjs | null>(dayjs().startOf('year'));
   const [endDate, setEndDate] = useState<Dayjs | null>(dayjs());
   const [strategyIDs, setStrategyIDs] = useState<string[]>([]);
+  const [universePoolIDs, setUniversePoolIDs] = useState<string[]>([]);
   const [initialCash, setInitialCash] = useState(100000);
   const [maxPositions, setMaxPositions] = useState(5);
   const [buyBase, setBuyBase] = useState<'open' | 'close'>('open');
@@ -225,12 +240,14 @@ export function HistoricalBacktestWorkspace() {
   const loadInitial = useCallback(async () => {
     setLoading(true);
     try {
-      const [strategyList, directory] = await Promise.all([
+      const [strategyList, directory, poolList] = await Promise.all([
         apiFetch<Strategy[]>('/api/strategies'),
-        apiFetch<StockDirectory>('/api/codes').catch(() => ({ codes: [] }))
+        apiFetch<StockDirectory>('/api/codes').catch(() => ({ codes: [] })),
+        apiFetch<StockPool[]>('/api/stock-pools')
       ]);
       const available = (strategyList || []).filter((item) => item.enabled);
       setStrategies(available);
+      setStockPools(poolList || []);
       if (!initializedStrategies.current) {
         const systemIDs = available.filter((item) => item.readonly).map((item) => item.id);
         setStrategyIDs(systemIDs.length ? systemIDs : available.map((item) => item.id));
@@ -299,6 +316,7 @@ export function HistoricalBacktestWorkspace() {
         method: 'POST',
         body: JSON.stringify({
           start_date: startDate.format('YYYY-MM-DD'), end_date: endDate.format('YYYY-MM-DD'), strategy_ids: strategyIDs,
+          universe_pool_ids: universePoolIDs,
           horizons: [1, 3, 5, 10], initial_cash: initialCash, max_positions: maxPositions,
           buy_base: buyBase, buy_offset: buyOffset, sell_base: sellBase,
           take_profit: takeProfit, trail_drawdown: trailDrawdown, stop_loss: stopLoss, max_hold_days: maxHoldDays
@@ -324,6 +342,7 @@ export function HistoricalBacktestWorkspace() {
         method: 'POST',
         body: JSON.stringify({
           start_date: startDate.format('YYYY-MM-DD'), end_date: endDate.format('YYYY-MM-DD'), strategy_ids: strategyIDs,
+          universe_pool_ids: universePoolIDs,
           horizons: [1, 3, 5, 10], initial_cash: initialCash, max_positions: maxPositions
         })
       });
@@ -361,6 +380,11 @@ export function HistoricalBacktestWorkspace() {
   }
 
   function stockName(symbol: string) { return stockNames[normalizeSymbol(symbol)] || ''; }
+  function universeName(poolIDs?: string[]) {
+    if (!poolIDs?.length) return '策略自带范围';
+    const names = poolIDs.map((poolID) => stockPools.find((item) => item.id === poolID)?.name || poolID);
+    return names.length <= 2 ? names.join(' + ') : `${names.slice(0, 2).join(' + ')} 等 ${names.length} 个范围`;
+  }
   function openQuote(symbol: string) { setQuoteTarget({ code: symbol, name: stockName(symbol) || undefined }); }
   function scrollScanStrategies(direction: -1 | 1) {
     const container = scanStrategyScrollRef.current;
@@ -377,14 +401,15 @@ export function HistoricalBacktestWorkspace() {
   const isScanView = listView === 'scan';
 
   const scanSummary = useMemo(() => {
-    const byStrategy = new Map<string, HistoricalScanResult[]>();
+    const byStrategyAndScope = new Map<string, HistoricalScanResult[]>();
     for (const item of scanResults) {
-      const list = byStrategy.get(item.strategy_id) || [];
+      const key = `${item.strategy_id}:${item.universe_pool_ids?.join(',') || scanScopeName(item)}`;
+      const list = byStrategyAndScope.get(key) || [];
       list.push(item);
-      byStrategy.set(item.strategy_id, list);
+      byStrategyAndScope.set(key, list);
     }
     const summary: HistoricalScanResult[] = [];
-    for (const list of byStrategy.values()) {
+    for (const list of byStrategyAndScope.values()) {
       const best = [...list].sort(compareScanBest)[0];
       if (best) summary.push(best);
     }
@@ -471,11 +496,12 @@ export function HistoricalBacktestWorkspace() {
       <Card className="work-card historical-backtest-launch" title={<div className="historical-backtest-title"><div><span>历史选股回放</span><Text type="secondary">按交易日重放策略并验证后续表现</Text></div><small>POINT-IN-TIME REPLAY</small></div>} extra={<Button aria-label="刷新历史回测" icon={<ReloadOutlined />} loading={loading} onClick={() => void loadInitial()} />}>
         <div className="historical-backtest-form">
           <section className="historical-form-section historical-form-section-scope">
-            <div className="historical-form-section-head"><div><strong>回放范围</strong><span>选择验证区间与策略</span></div><small>01 / SCOPE</small></div>
+            <div className="historical-form-section-head"><div><strong>回放范围</strong><span>选择验证区间、策略与额外限定</span></div><small>01 / SCOPE</small></div>
             <div className="historical-form-fields historical-form-fields-scope">
               <label><span>开始日期</span><DatePicker value={startDate} onChange={setStartDate} allowClear={false} /></label>
               <label><span>结束日期</span><DatePicker value={endDate} onChange={setEndDate} allowClear={false} disabledDate={(date) => Boolean(startDate && date.isBefore(startDate, 'day'))} /></label>
               <label className="historical-strategy-picker"><span>执行策略</span><Select mode="multiple" maxTagCount="responsive" value={strategyIDs} onChange={setStrategyIDs} options={strategies.map((item) => ({ value: item.id, label: item.name }))} /></label>
+              <label className="historical-universe-picker"><span>选股范围（多选合并、自动去重）</span><Select mode="multiple" maxTagCount="responsive" placeholder="跟随策略 · 不额外限定" value={universePoolIDs} onChange={setUniversePoolIDs} options={stockPools.filter((item) => item.id !== 'exclude').map((item) => ({ value: item.id, label: `${item.name} · ${item.symbols?.length || 0}只` }))} /></label>
             </div>
           </section>
           <section className="historical-form-section historical-form-section-risk">
@@ -505,15 +531,15 @@ export function HistoricalBacktestWorkspace() {
       <div className="historical-backtest-main">
         <Card className="work-card historical-run-list" title={<div className="historical-backtest-title"><div><span>批次列表</span><Text type="secondary">{listView === 'runs' ? `${runs.length} 条回测` : `${scanRuns.length} 条扫描`}</Text></div><small>RUNS</small></div>} extra={<Segmented size="small" value={listView} onChange={changeListView} options={[{ value: 'runs', label: '回测' }, { value: 'scan', label: '扫描' }]} />}>
           {listView === 'runs'
-            ? (runs.length ? <div className="historical-run-stack">{runs.map((run) => { const meta = statusMeta(run.status); return <button type="button" key={run.id} className={run.id === selectedRun?.id ? 'is-active' : ''} onClick={() => { setSelectedRun(run); setPage(1); setTradePage(1); }}><span>{run.start_date} → {run.end_date}</span><strong>{run.strategy_ids.length} 个策略 · {run.signal_count} 条信号</strong><small><Tag color={meta.color}>{meta.label}</Tag>{run.processed_dates}/{run.total_dates || '--'} 交易日</small></button>; })}</div> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无历史回测" />)
-            : (scanRuns.length ? <div className="historical-run-stack">{scanRuns.map((run) => { const meta = statusMeta(run.status); return <button type="button" key={run.id} className={run.id === selectedScanRun?.id ? 'is-active' : ''} onClick={() => selectScanRun(run)}><span>{run.start_date} → {run.end_date}</span><strong>{run.strategy_ids.length} 个策略 · 320 组合</strong><small><Tag color={meta.color}>{meta.label}</Tag>{run.processed_strategies}/{run.total_strategies || '--'} 策略</small></button>; })}</div> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无参数扫描" />)}
+            ? (runs.length ? <div className="historical-run-stack">{runs.map((run) => { const meta = statusMeta(run.status); return <button type="button" key={run.id} className={run.id === selectedRun?.id ? 'is-active' : ''} onClick={() => { setSelectedRun(run); setPage(1); setTradePage(1); }}><span>{run.start_date} → {run.end_date}</span><strong>{run.strategy_ids.length} 个策略 · {run.signal_count} 条信号 · {universeName(run.universe_pool_ids)}</strong><small><Tag color={meta.color}>{meta.label}</Tag>{run.processed_dates}/{run.total_dates || '--'} 交易日</small></button>; })}</div> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无历史回测" />)
+            : (scanRuns.length ? <div className="historical-run-stack">{scanRuns.map((run) => { const meta = statusMeta(run.status); const scopeCount = scanScopeCount(run.universe_pool_ids); return <button type="button" key={run.id} className={run.id === selectedScanRun?.id ? 'is-active' : ''} onClick={() => selectScanRun(run)}><span>{run.start_date} → {run.end_date}</span><strong>{run.strategy_ids.length} 个策略 · {scopeCount} 范围 × 320 参数 · {universeName(run.universe_pool_ids)}</strong><small><Tag color={meta.color}>{meta.label}</Tag>{run.processed_strategies}/{run.total_strategies || '--'} 组合</small></button>; })}</div> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无参数扫描" />)}
         </Card>
 
         <Card className="work-card historical-result-card" title={<div className="historical-backtest-title"><div><span>{isScanView ? '参数扫描结果' : '回测结果'}</span><Text type="secondary">{isScanView ? (selectedScanRun ? `${selectedScanRun.start_date} 至 ${selectedScanRun.end_date}` : '等待任务') : selectedRun ? `${selectedRun.start_date} 至 ${selectedRun.end_date}` : '等待任务'}</Text></div><small>{isScanView ? 'SCAN RESULT' : 'RESULT'}</small></div>} extra={!isScanView && selectedRun?.status === 'running' ? <Button danger icon={<StopOutlined />} onClick={() => void cancelRun()}>取消</Button> : null}>
           {isScanView ? !selectedScanRun ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="创建参数扫描后查看结果" /> : <>
             <div className="historical-facts">
-              <div><span>策略进度</span><strong>{selectedScanRun.processed_strategies}/{selectedScanRun.total_strategies || '--'}</strong></div>
-              <div><span>当前策略</span><strong>{selectedScanRun.current_strategy || '--'}</strong></div>
+              <div><span>组合进度</span><strong>{selectedScanRun.processed_strategies}/{selectedScanRun.total_strategies || '--'}</strong></div>
+              <div><span>当前组合</span><strong>{selectedScanRun.current_strategy || '--'}</strong></div>
               <div><span>累计信号</span><strong>{selectedScanRun.signal_count}</strong></div>
             </div>
             {selectedScanRun.status === 'running' ? <Progress percent={Math.round(selectedScanRun.processed_strategies * 100 / (selectedScanRun.total_strategies || 1))} status="active" /> : null}
@@ -528,8 +554,8 @@ export function HistoricalBacktestWorkspace() {
               </div>
             </div>
             {scanStrategy === 'all'
-              ? <Table<HistoricalScanResult> size="small" rowKey="id" dataSource={scanSummary} columns={scanSummaryColumns} pagination={false} scroll={{ x: 900 }} locale={{ emptyText: selectedScanRun.status === 'running' ? '扫描中...' : '暂无扫描结果' }} />
-              : <Table<HistoricalScanResult> size="small" rowKey="id" dataSource={scanDetailResults} columns={scanDetailColumns} pagination={{ pageSize: 50, showSizeChanger: false }} scroll={{ x: 900 }} locale={{ emptyText: '暂无该策略的扫描结果' }} />}
+              ? <Table<HistoricalScanResult> size="small" rowKey="id" dataSource={scanSummary} columns={scanSummaryColumns} pagination={false} scroll={{ x: 1250 }} locale={{ emptyText: selectedScanRun.status === 'running' ? '扫描中...' : '暂无扫描结果' }} />
+              : <Table<HistoricalScanResult> size="small" rowKey="id" dataSource={scanDetailResults} columns={scanDetailColumns} pagination={{ pageSize: 50, showSizeChanger: false }} scroll={{ x: 1250 }} locale={{ emptyText: '暂无该策略的扫描结果' }} />}
           </> : !selectedRun ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="创建回测后查看结果" /> : <>
             <div className="historical-progress-head">
               <div><ClockCircleOutlined /><span>当前交易日</span><strong>{selectedRun.current_date || '正在加载K线'}</strong></div>
