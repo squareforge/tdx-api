@@ -27,6 +27,7 @@ coverage.out
 *.so
 *.dylib
 *.log
+/quote-core-service
 /apps/web/web
 /apps/web/frontend/node_modules/
 /apps/web/frontend/*.tsbuildinfo
