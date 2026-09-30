@@ -962,6 +962,48 @@ export interface HistoricalBacktestTradePage {
   offset: number;
 }
 
+export interface HistoricalComparison {
+  id: string;
+  run_id: string;
+  strategy_id?: string;
+  mode: string;
+  status: string;
+  config_json: string;
+  seed: number;
+  algorithm_version: string;
+  total_events: number;
+  processed_events: number;
+  current_date?: string;
+  summary_json: string;
+  error?: string;
+  cancel_requested?: boolean;
+  created_at: string;
+  started_at?: string;
+  finished_at?: string;
+  updated_at?: string;
+}
+
+export interface HistoricalComparisonEvent {
+  id: string;
+  comparison_id: string;
+  signal_date: string;
+  signal_symbol: string;
+  strategy_ids?: string[];
+  signal_ids?: string[];
+  control_count: number;
+  status: string;
+  reason?: string;
+  result_json: string;
+  created_at: string;
+}
+
+export interface HistoricalComparisonEventPage {
+  items: HistoricalComparisonEvent[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface HistoricalPortfolioSummary {
   initial_cash?: number;
   max_positions?: number;

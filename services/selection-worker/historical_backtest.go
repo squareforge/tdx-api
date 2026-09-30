@@ -119,6 +119,10 @@ func handleHistoricalBacktestOperations(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	id := parts[0]
+	if len(parts) >= 2 && parts[1] == "comparisons" {
+		handleHistoricalComparisonOperations(w, r, id, parts[2:])
+		return
+	}
 	if len(parts) == 2 && parts[1] == "signals" {
 		if r.Method != http.MethodGet {
 			errorResponse(w, "只支持GET请求")

@@ -16,9 +16,10 @@ import type {
 } from '../types';
 import { StockQuoteModal, type StockQuoteTarget } from './StockQuoteModal';
 import { TrackingHorizonCell } from './TrackingHorizonCell';
+import { HistoricalComparisonPanel } from './HistoricalComparisonPanel';
 
 const { Text } = Typography;
-type ResultView = 'ranking' | 'signals' | 'consensus' | 'trades';
+type ResultView = 'ranking' | 'signals' | 'consensus' | 'trades' | 'comparisons';
 interface StockDirectoryItem { code?: string; name?: string; }
 interface StockDirectory { codes?: StockDirectoryItem[]; }
 interface StrategySelectionDetail { rank?: number; rank_score?: number; strategy_score?: number; }
@@ -574,7 +575,8 @@ export function HistoricalBacktestWorkspace() {
                 { value: 'ranking', label: '策略排行', icon: <BarChartOutlined /> },
                 { value: 'signals', label: '信号明细', icon: <ExperimentOutlined /> },
                 { value: 'consensus', label: '多策略共振', icon: <TeamOutlined /> },
-                { value: 'trades', label: '交易记录', icon: <SwapOutlined /> }
+                { value: 'trades', label: '交易记录', icon: <SwapOutlined /> },
+                { value: 'comparisons', label: '对照分析', icon: <ExperimentOutlined /> }
               ]} />
               {view === 'signals' ? <Space wrap><Select value={signalStrategy} onChange={(value) => { setSignalStrategy(value); setPage(1); }} options={[{ value: 'all', label: '全部策略' }, ...runStrategyOptions]} /><Input allowClear placeholder="股票代码" value={signalKeyword} onChange={(event) => { setSignalKeyword(event.target.value); setPage(1); }} /></Space> : null}
             </div>
@@ -593,6 +595,7 @@ export function HistoricalBacktestWorkspace() {
               </div> : null}
               <Table<HistoricalBacktestTrade> size="small" rowKey="id" dataSource={trades.items} columns={tradeColumns} scroll={{ x: 1560 }} pagination={{ current: tradePage, pageSize: 100, total: trades.total, showSizeChanger: false, onChange: (next) => setTradePage(next) }} locale={{ emptyText: selectedRun.status === 'running' ? '完成后生成交易流水' : '暂无交易记录' }} />
             </> : null}
+            {view === 'comparisons' ? <HistoricalComparisonPanel run={selectedRun} /> : null}
           </>}
         </Card>
       </div>

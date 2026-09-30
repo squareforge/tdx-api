@@ -27,6 +27,9 @@ func initAutomationServices() error {
 		return err
 	}
 	appStore = store
+	if err := appStore.InterruptHistoricalComparisons(); err != nil {
+		return err
+	}
 	formulaWorker = NewFormulaWorkerClient()
 	automationRunner = NewAutomationRunner(appStore, formulaWorker)
 	quoteMonitor = NewQuoteMonitor(appStore, marketClient)
