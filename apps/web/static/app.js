@@ -1,11 +1,6 @@
 // 全局变量
 let currentStock = '';
-let watchlistRows = [
-    { code: '601899', name: '紫金矿业' },
-    { code: '603171', name: '税友股份' },
-    { code: '002202', name: '金风科技' },
-    { code: '000630', name: '铜陵有色' }
-];
+let watchlistRows = [];
 let watchlistDragBound = false;
 let watchlistClickBound = false;
 let watchlistQuoteRequestID = 0;
@@ -97,26 +92,7 @@ const defaultTradingState = {
         minCommission: 5
     },
     filter: 'all',
-    trades: [
-        {
-            id: 'serveyou-2026-08-26',
-            stockName: '税友股份',
-            stockCode: '603171',
-            status: 'active',
-            entryDate: '2026-08-26',
-            entryPrice: 40.80,
-            currentPrice: 40.29,
-            shares: 300,
-            invalidPrice: 39.60,
-            positionLabel: '试错仓',
-            targetOne: '40.80 / 42.60-43.30',
-            targetTwo: '45-46',
-            tradeMode: '强势股回调到关键支撑附近，轻仓试错，博短线止跌修复。',
-            buyReason: '1. 前期从 34.42 附近启动，最高冲到 52.10，说明曾经有明显资金推动。\n2. 从 8月6日高点 52.10 回落到 40 元附近，跌幅较大，短线存在修复可能。\n3. 当前价格接近 7月31日加速段低点 39.60 附近，属于重要短线观察区。\n4. 买入价 40.80 距离 39.60 风控位不远，单股风险约 1.20 元，亏损比例约 2.94%，风险可控。',
-            exitRules: '技术无效点：有效跌破 39.60 元。\n\n有效跌破定义：\n1. 放量跌破 39.60，并且 15-30 分钟内不能快速收回；\n2. 或者当天收盘价低于 39.60；\n3. 或者跌破后反抽到 39.60-40.00 区间明显受压，再次回落。\n\n操作计划：\n1. 如果明天跌破 39.60 且收不回，先卖出 50% 或全部离场，保护本金。\n2. 如果盘中跌破 39.60 后快速拉回 40 元上方，先不急着卖完，观察是否是假破。\n3. 如果重新站稳 40.80 成本价，说明短线压力减轻，继续观察。\n4. 如果站上 42.60-43.30 区间，说明短线企稳增强，可考虑是否加确认仓。\n5. 如果反弹到 45-46 区间但放量滞涨，考虑止盈或减仓。\n6. 如果跌破 39.60 后反抽不过 40 元，不接回，不补仓。\n\n加仓条件：守住 39.60；重新站稳 40.80；放量站上 42.60-43.30。\n\n不加仓条件：跌破 39.60 后没有收回；反弹无量；冲高回落；大盘明显走弱；只是因为怕踏空而想追。\n\n止盈计划：快速反弹到 42.60-43.30 但量能不足，可先减一部分；放量突破 43.30 继续持有观察；到 45-46 附近冲不动，优先锁定利润；反弹途中跌回 40.80 下方，减仓。',
-            review: '盘后复盘：\n1. 今天有没有按计划执行？\n2. 买入理由是否仍然成立？\n3. 39.60 是否守住？\n4. 成交量是放大还是缩小？\n5. 反弹时有没有主动买盘？\n6. 我的操作是按规则，还是按情绪？\n7. 这笔交易下次哪里可以改进？'
-        }
-    ]
+    trades: []
 };
 const tradingStoreKey = 'tdx-personal-trading-system-v1';
 const tradingRefreshIntervalMS = 3 * 60 * 1000;
@@ -1925,7 +1901,11 @@ async function deleteFormula(id) {
 }
 
 async function quickTestFormula(id) {
-    const symbol = currentStock || document.getElementById('hqSymbol').value || '000001';
+    const symbol = currentStock || document.getElementById('hqSymbol').value || '';
+    if (!symbol.trim()) {
+        alert('请输入股票代码');
+        return;
+    }
     await runFormulaTest(id, symbol);
     switchWorkspace('proChart', document.querySelectorAll('.workspace-tab')[1]);
 }
@@ -2193,7 +2173,11 @@ function closeFormulaDialog() {
 
 async function testSelectedFormula() {
     const id = document.getElementById('hqFormulaSelect').value;
-    const symbol = document.getElementById('hqSymbol').value || currentStock || '000001';
+    const symbol = document.getElementById('hqSymbol').value || currentStock || '';
+    if (!symbol.trim()) {
+        alert('请输入股票代码');
+        return;
+    }
     await runFormulaTest(id, symbol);
 }
 
@@ -2535,7 +2519,7 @@ function renderStrategyVisualEditor(cfg = {}) {
                     <select id="strategyMarketPoolID" onchange="updateStrategyPoolPreviews()">${marketPoolOptionsHTML(poolID)}</select>
                 </label>
             </div>
-            <textarea id="strategySymbolsInput" rows="3" placeholder="手动输入股票代码，例如 000001, 600000">${escapeHTML((cfg.symbols || []).join('\n'))}</textarea>
+            <textarea id="strategySymbolsInput" rows="3" placeholder="手动输入股票代码，多个代码分行填写">${escapeHTML((cfg.symbols || []).join('\n'))}</textarea>
             <div id="strategyUniversePreview">${poolPreviewHTML(poolID)}</div>
         </div>
 
@@ -5216,7 +5200,7 @@ async function loadETFDirectory() {
 }
 
 function syncDataStockInputs() {
-    const code = document.getElementById('dataStockCode')?.value || currentStock || '000001';
+    const code = document.getElementById('dataStockCode')?.value || currentStock || '';
     const historyCode = document.getElementById('historyCode');
     if (historyCode && !historyCode.value.trim()) historyCode.value = code;
     return code.trim();
@@ -5226,6 +5210,7 @@ async function loadStockProfile() {
     setLoadingText('stockProfileOutput');
     try {
         const code = syncDataStockInputs();
+        if (!code) throw new Error('请输入股票代码');
         const [finance, categories, gbbq, auction] = await Promise.allSettled([
             apiFetch(`/api/finance?code=${encodeURIComponent(code)}`),
             apiFetch(`/api/company/categories?code=${encodeURIComponent(code)}`),
@@ -5251,6 +5236,7 @@ async function loadIncomeReport() {
     setLoadingText('stockProfileOutput');
     try {
         const code = syncDataStockInputs();
+        if (!code) throw new Error('请输入股票代码');
         const startDate = document.getElementById('incomeStartDate')?.value || '';
         const days = document.getElementById('incomeDays')?.value || '';
         const data = await apiFetch(`/api/income?code=${encodeURIComponent(code)}&start_date=${encodeURIComponent(startDate)}&days=${encodeURIComponent(days)}`);
@@ -5263,7 +5249,8 @@ async function loadIncomeReport() {
 async function loadHistoryData(mode) {
     setLoadingText('historyOutput');
     try {
-        const code = document.getElementById('historyCode')?.value || document.getElementById('dataStockCode')?.value || '000001';
+        const code = document.getElementById('historyCode')?.value || document.getElementById('dataStockCode')?.value || '';
+        if (!code.trim()) throw new Error('请输入股票代码');
         const type = document.getElementById('historyType')?.value || 'day';
         const limit = document.getElementById('historyLimit')?.value || '120';
         const date = document.getElementById('historyDate')?.value || '';
@@ -5375,7 +5362,11 @@ async function loadIndustryData(kind) {
 
 async function loadHQChart() {
     try {
-        const symbol = document.getElementById('hqSymbol').value || '000001';
+        const symbol = document.getElementById('hqSymbol').value || '';
+        if (!symbol.trim()) {
+            updateHQOverlayStatus('请输入股票代码后加载图表');
+            return;
+        }
         const period = document.getElementById('hqPeriod').value;
         currentHQOverlay = null;
         updateHQOverlayStatus('未叠加公式');
@@ -5440,7 +5431,7 @@ function buildHQFormulaIndexInfo(formula) {
 }
 
 function currentHQSymbolPeriod() {
-    const symbol = document.getElementById('hqSymbol').value || '000001';
+    const symbol = document.getElementById('hqSymbol').value || '';
     const period = document.getElementById('hqPeriod').value;
     return { symbol, period };
 }
@@ -5454,6 +5445,7 @@ async function applySelectedFormulaToHQChart() {
     try {
         updateHQOverlayStatus('正在应用 HQChart 公式...');
         const { symbol, period } = currentHQSymbolPeriod();
+        if (!symbol.trim()) throw new Error('请输入股票代码');
         let chart = getHQChartInstance();
         if (!chart) {
             renderHQKLine('hqChart', symbol, period, { count: 800, pageSize: 80 });
@@ -5525,6 +5517,10 @@ async function overlaySelectedFormulaOnHQChart() {
 function clearHQFormulaOverlay() {
     currentHQOverlay = null;
     const { symbol, period } = currentHQSymbolPeriod();
+    if (!symbol.trim()) {
+        updateHQOverlayStatus('请输入股票代码后加载图表');
+        return;
+    }
     renderHQKLine('hqChart', symbol, period, { count: 800, pageSize: 80 });
     updateHQOverlayStatus('未叠加公式');
 }

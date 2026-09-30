@@ -19,12 +19,7 @@ import type { Quote, WatchlistRow } from '../types';
 
 const { Text } = Typography;
 
-const initialRows: WatchlistRow[] = [
-  { key: '601899', code: '601899', name: '紫金矿业' },
-  { key: '603171', code: '603171', name: '税友股份' },
-  { key: '002202', code: '002202', name: '金风科技' },
-  { key: '000630', code: '000630', name: '铜陵有色' }
-];
+const initialRows: WatchlistRow[] = [];
 
 function changeClassName(value?: string) {
   const number = Number.parseFloat(String(value || '').replace('%', ''));

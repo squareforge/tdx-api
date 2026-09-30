@@ -42,10 +42,10 @@ export function DataCenterWorkspace() {
   const [directoryLoading, setDirectoryLoading] = useState(false);
   const [exchange, setExchange] = useState('all');
   const [limit, setLimit] = useState(80);
-  const [profileCode, setProfileCode] = useState('000001');
+  const [profileCode, setProfileCode] = useState('');
   const [profileOutput, setProfileOutput] = useState<unknown>('尚未查询');
   const [historyOutput, setHistoryOutput] = useState<unknown>('尚未查询');
-  const [historyCode, setHistoryCode] = useState('000001');
+  const [historyCode, setHistoryCode] = useState('');
   const [historyType, setHistoryType] = useState('day');
   const [historyLimit, setHistoryLimit] = useState(120);
   const [blockOutput, setBlockOutput] = useState<unknown>('尚未查询');
@@ -123,6 +123,10 @@ export function DataCenterWorkspace() {
   }, [loadTradeCalendar]);
 
   async function loadProfile() {
+    if (!profileCode.trim()) {
+      message.warning('请输入股票代码');
+      return;
+    }
     try {
       const [info, finance] = await Promise.allSettled([
         apiFetch(`/api/stock-info?code=${encodeURIComponent(profileCode)}`),
@@ -135,6 +139,10 @@ export function DataCenterWorkspace() {
   }
 
   async function loadHistory(mode: 'tdx' | 'ths' | 'history' | 'trade' | 'minuteTrade') {
+    if (!historyCode.trim()) {
+      message.warning('请输入股票代码');
+      return;
+    }
     try {
       const query = `code=${encodeURIComponent(historyCode)}&type=${encodeURIComponent(historyType)}&limit=${encodeURIComponent(historyLimit)}`;
       const path =
@@ -250,10 +258,13 @@ export function DataCenterWorkspace() {
 
   const loadHikyuuResearch = useCallback(async () => {
     try {
+      const qualityRequest = historyCode.trim()
+        ? apiFetch<Record<string, unknown>>(`/api/hikyuu/quality?code=${encodeURIComponent(historyCode)}&period=${encodeURIComponent(historyType)}`)
+        : Promise.resolve<Record<string, unknown>>({});
       const [health, metadata, quality] = await Promise.all([
         apiFetch<Record<string, unknown>>('/api/hikyuu/health'),
         apiFetch<Record<string, unknown>>('/api/hikyuu/metadata'),
-        apiFetch<Record<string, unknown>>(`/api/hikyuu/quality?code=${encodeURIComponent(historyCode)}&period=${encodeURIComponent(historyType)}`)
+        qualityRequest
       ]);
       setHikyuuStatus(health);
       setHikyuuMetadata(metadata);

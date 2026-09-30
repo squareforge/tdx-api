@@ -559,7 +559,7 @@ GET /api/index?code=sh000001&type=day
   "data": {
     "status": "running",
     "connected": true,
-    "version": "0.1.1",
+    "version": "0.1.2",
     "uptime": "unknown"
   }
 }

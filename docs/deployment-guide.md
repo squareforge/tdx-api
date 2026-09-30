@@ -11,7 +11,7 @@ docker compose logs -f
 
 访问 `http://localhost:8080`。
 
-当前发布版本为 `0.1.1`，可通过 `GET /api/server-status` 查看 Web 服务版本；版本来源记录在仓库根目录 `VERSION`。
+当前发布版本为 `0.1.2`，可通过 `GET /api/server-status` 查看 Web 服务版本；版本来源记录在仓库根目录 `VERSION`。
 
 当前 Docker 是多服务形态：Web、行情服务、公式引擎和指标选股服务分别运行在独立容器里。Web 对外暴露 `8080`，其他服务也保留宿主机调试端口。
 

@@ -1205,20 +1205,6 @@ func (s *AppStore) seedDefaults() error {
 		}
 	}
 
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM stock_pools`).Scan(&count); err != nil {
-		return err
-	}
-	if count == 0 {
-		pool := StockPool{
-			Name:        "示例股票池",
-			Symbols:     []string{"000001", "600000", "000858", "002202"},
-			Description: "第一版内置的小股票池，可在页面里改成你的自选列表。",
-		}
-		if _, err := s.UpsertStockPool(pool); err != nil {
-			return err
-		}
-	}
-
 	if err := s.ensureDecisionPools(); err != nil {
 		return err
 	}
@@ -1265,54 +1251,6 @@ func defaultStrategyTemplates() []Strategy {
 			Readonly:    true,
 		},
 		{
-			ID:          "template-macd-broad-regime",
-			Name:        "MACD宽市况精选",
-			Description: "短波段趋势：在上证指数20日涨幅达到2%后扩大候选日期，再用趋势、涨幅、波动和40分质量门槛精选。",
-			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":180000000}},{"id":"price_range","factor":"price_range","params":{"min":3,"max":120}},{"id":"ma_trend_filter","factor":"ma_trend","params":{"short":5,"mid":20,"long":60}},{"id":"ma_slope_filter","factor":"ma_slope","params":{"period":20,"lookback":5,"min":0.3,"max":5}},{"id":"macd_trigger","factor":"macd_golden_cross","params":{"fast":12,"slow":26,"signal":9}},{"id":"change_guard","factor":"change_range","params":{"min":0,"max":4}},{"id":"close_quality","factor":"close_strength","params":{"min_position":0.65,"max_upper_shadow":2.3}},{"id":"market_regime","factor":"market_momentum","params":{"days":20,"min":2,"max":100}},{"id":"gain_guard","factor":"gain_days","params":{"days":20,"min":6,"max":30}},{"id":"amplitude_guard","factor":"max_amplitude","params":{"days":5,"max":6}}],"scores":[{"id":"volume_up","factor":"volume_up","weight":35,"params":{"days":5,"ratio":1.2}},{"id":"break_high","factor":"break_high","weight":30,"params":{"days":20}},{"id":"gain_quality","factor":"gain_days","weight":20,"params":{"days":20,"min":3,"max":25}},{"id":"slope_quality","factor":"ma_slope","weight":15,"params":{"period":20,"lookback":5,"min":0.2,"max":7}}],"pass":{"min_score":40,"top_n":8}}`,
-			Enabled:     true,
-			Readonly:    true,
-		},
-		{
-			ID:          "template-pullback",
-			Name:        "强势股回调低吸",
-			Description: "中线回调：只在中期上行股票完成7%至12%回撤并出现KDJ止跌金叉时入选，排除高波动弱修复。",
-			ConfigJSON:  `{"universe":{"include":[{"pool":"market-all-a"}],"exclude":[{"pool":"exclude"}]},"calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":180000000}},{"id":"price_range","factor":"price_range","params":{"min":3,"max":120}},{"id":"max_amplitude","factor":"max_amplitude","params":{"days":5,"max":7.5}},{"id":"long_slope","factor":"ma_slope","params":{"period":60,"lookback":10,"min":0,"max":12}},{"id":"prior_strength","factor":"gain_days","params":{"days":20,"min":8,"max":35}},{"id":"pullback_depth","factor":"drawdown_from_high","params":{"days":60,"min":7,"max":12}},{"id":"kdj_trigger","factor":"kdj_golden_cross","params":{"n":9,"k":3,"d":3}},{"id":"change_guard","factor":"change_range","params":{"min":0,"max":1.5}},{"id":"close_quality","factor":"close_strength","params":{"min_position":0.55,"max_upper_shadow":2.5}}],"scores":[{"id":"rsi_rebound","factor":"rsi_rebound","weight":35,"params":{"period":6,"lookback":5,"oversold":35,"min_current":38,"max_current":60}},{"id":"gain_quality","factor":"gain_days","weight":30,"params":{"days":20,"min":8,"max":25}},{"id":"drawdown_quality","factor":"drawdown_from_high","weight":35,"params":{"days":60,"min":7,"max":12}}],"pass":{"min_score":35,"top_n":8}}`,
-			Enabled:     true,
-			Readonly:    true,
-		},
-		{
-			ID:          "template-trend-pullback-confirm",
-			Name:        "趋势回踩双确认",
-			Description: "短中线回调：多头趋势温和回踩后必须出现KDJ确认，MACD、量能与回撤位置用于质量排序。",
-			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":180000000}},{"id":"ma_trend_filter","factor":"ma_trend","params":{"short":10,"mid":20,"long":60}},{"id":"ma_slope_filter","factor":"ma_slope","params":{"period":20,"lookback":5,"min":0,"max":6}},{"id":"kdj_trigger","factor":"kdj_golden_cross","params":{"n":9,"k":3,"d":3}},{"id":"calm_pullback","factor":"change_range","params":{"min":-3,"max":3}},{"id":"close_quality","factor":"close_strength","params":{"min_position":0.55,"max_upper_shadow":2.5}}],"scores":[{"id":"macd_confirm","factor":"macd_golden_cross","weight":40,"params":{"fast":12,"slow":26,"signal":9}},{"id":"volume_confirm","factor":"volume_up","weight":25,"params":{"days":5,"ratio":1.1}},{"id":"drawdown_quality","factor":"drawdown_from_high","weight":35,"params":{"days":20,"min":2,"max":8}}],"pass":{"min_score":15,"top_n":8}}`,
-			Enabled:     true,
-			Readonly:    true,
-		},
-		{
-			ID:          "template-rsi-trend-reversal",
-			Name:        "RSI趋势反转",
-			Description: "反转捕捉：RSI近期进入超卖区后重新回到强弱分界，且长期均线仍向上，避免把持续下跌误判为反转。",
-			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":180000000}},{"id":"price_range","factor":"price_range","params":{"min":3,"max":120}},{"id":"long_slope","factor":"ma_slope","params":{"period":60,"lookback":10,"min":0,"max":10}},{"id":"rsi_rebound_trigger","factor":"rsi_rebound","params":{"period":6,"lookback":5,"oversold":32,"min_current":36,"max_current":55}},{"id":"long_gain_guard","factor":"gain_days","params":{"days":60,"min":0,"max":40}},{"id":"change_guard","factor":"change_range","params":{"min":0,"max":5}},{"id":"close_quality","factor":"close_strength","params":{"min_position":0.6,"max_upper_shadow":2.5}}],"scores":[{"id":"kdj_golden","factor":"kdj_golden_cross","weight":40,"params":{"n":9,"k":3,"d":3}},{"id":"ma_trend","factor":"ma_trend","weight":30,"params":{"short":5,"mid":20,"long":60}},{"id":"volume_up","factor":"volume_up","weight":30,"params":{"days":5,"ratio":1.1}}],"pass":{"min_score":5,"top_n":8}}`,
-			Enabled:     true,
-			Readonly:    true,
-		},
-		{
-			ID:          "template-volume-breakout-confirm",
-			Name:        "量价突破确认",
-			Description: "大资金策略：放量突破、均线多头和趋势斜率均为硬条件，重点保留流动性好且收盘承接强的标的。",
-			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":250000000}},{"id":"price_range","factor":"price_range","params":{"min":5,"max":120}},{"id":"ma_trend_filter","factor":"ma_trend","params":{"short":5,"mid":10,"long":20}},{"id":"ma_slope_filter","factor":"ma_slope","params":{"period":20,"lookback":5,"min":0.3,"max":8}},{"id":"breakout_trigger","factor":"volume_breakout","params":{"days":20,"ratio":1.6,"min_change":2}},{"id":"change_guard","factor":"change_range","params":{"min":2,"max":6.5}},{"id":"close_quality","factor":"close_strength","params":{"min_position":0.72,"max_upper_shadow":2}}],"scores":[{"id":"macd_golden","factor":"macd_golden_cross","weight":35,"params":{"fast":12,"slow":26,"signal":9}},{"id":"boll_breakout","factor":"boll_breakout","weight":25,"params":{"period":20,"width":2}},{"id":"gain_quality","factor":"gain_days","weight":25,"params":{"days":20,"min":5,"max":25}},{"id":"slope_quality","factor":"ma_slope","weight":15,"params":{"period":20,"lookback":5,"min":0.3,"max":8}}],"pass":{"min_score":15,"top_n":8}}`,
-			Enabled:     true,
-			Readonly:    true,
-		},
-		{
-			ID:          "template-new-high-trend",
-			Name:        "新高趋势延续",
-			Description: "强势延续：20日收盘新高、长期多头、均线抬升和量能确认全部满足后才进入候选。",
-			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":250000000}},{"id":"ma_trend_filter","factor":"ma_trend","params":{"short":10,"mid":20,"long":60}},{"id":"ma_slope_filter","factor":"ma_slope","params":{"period":20,"lookback":5,"min":0.3,"max":8}},{"id":"break_high_trigger","factor":"break_high","params":{"days":20}},{"id":"volume_filter","factor":"volume_up","params":{"days":5,"ratio":1.2}},{"id":"change_guard","factor":"change_range","params":{"min":0.5,"max":6.5}},{"id":"close_quality","factor":"close_strength","params":{"min_position":0.68,"max_upper_shadow":2.5}}],"scores":[{"id":"macd_golden","factor":"macd_golden_cross","weight":35,"params":{"fast":12,"slow":26,"signal":9}},{"id":"boll_breakout","factor":"boll_breakout","weight":25,"params":{"period":20,"width":2}},{"id":"gain_quality","factor":"gain_days","weight":25,"params":{"days":20,"min":5,"max":25}},{"id":"slope_quality","factor":"ma_slope","weight":15,"params":{"period":20,"lookback":5,"min":0.3,"max":8}}],"pass":{"min_score":15,"top_n":8}}`,
-			Enabled:     true,
-			Readonly:    true,
-		},
-		{
 			ID:          "template-rocket-confirm",
 			Name:        "火箭启动确认",
 			Description: "爆发捕捉：火箭信号、均线多头、趋势斜率与强收盘全部确认，进一步限制流动性和追高幅度。",
@@ -1321,110 +1259,10 @@ func defaultStrategyTemplates() []Strategy {
 			Readonly:    true,
 		},
 		{
-			ID:          "template-boll-macd-resonance",
-			Name:        "BOLL MACD共振",
-			Description: "多指标共振：BOLL突破与MACD金叉必须同日共振，并要求均线抬升、强收盘和适度量能。",
-			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":250000000}},{"id":"ma_trend_filter","factor":"ma_trend","params":{"short":5,"mid":10,"long":20}},{"id":"ma_slope_filter","factor":"ma_slope","params":{"period":20,"lookback":5,"min":0.3,"max":8}},{"id":"boll_trigger","factor":"boll_breakout","params":{"period":20,"width":2}},{"id":"macd_trigger","factor":"macd_golden_cross","params":{"fast":12,"slow":26,"signal":9}},{"id":"change_guard","factor":"change_range","params":{"min":1,"max":6.5}},{"id":"close_quality","factor":"close_strength","params":{"min_position":0.7,"max_upper_shadow":2}}],"scores":[{"id":"volume_up","factor":"volume_up","weight":50,"params":{"days":5,"ratio":1.25}},{"id":"break_high","factor":"break_high","weight":30,"params":{"days":20}},{"id":"gain_quality","factor":"gain_days","weight":20,"params":{"days":20,"min":5,"max":25}}],"pass":{"min_score":12,"top_n":5}}`,
-			Enabled:     true,
-			Readonly:    true,
-		},
-		{
-			ID:          "template-strong-trend-continuation",
-			Name:        "强趋势延续精选",
-			Description: "精选龙头：高流动性股票必须同时满足长期多头、均线抬升、放量新高与强收盘，辅助指标只负责排序。",
-			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":300000000}},{"id":"ma_trend_filter","factor":"ma_trend","params":{"short":5,"mid":20,"long":60}},{"id":"ma_slope_filter","factor":"ma_slope","params":{"period":20,"lookback":5,"min":0.5,"max":8}},{"id":"volume_filter","factor":"volume_up","params":{"days":5,"ratio":1.3}},{"id":"break_high_trigger","factor":"break_high","params":{"days":20}},{"id":"change_guard","factor":"change_range","params":{"min":1,"max":6}},{"id":"close_quality","factor":"close_strength","params":{"min_position":0.7,"max_upper_shadow":2}}],"scores":[{"id":"macd_golden","factor":"macd_golden_cross","weight":30,"params":{"fast":12,"slow":26,"signal":9}},{"id":"kdj_golden","factor":"kdj_golden_cross","weight":25,"params":{"n":9,"k":3,"d":3}},{"id":"gain_quality","factor":"gain_days","weight":25,"params":{"days":20,"min":8,"max":25}},{"id":"boll_breakout","factor":"boll_breakout","weight":20,"params":{"period":20,"width":2}}],"pass":{"min_score":15,"top_n":8}}`,
-			Enabled:     true,
-			Readonly:    true,
-		},
-
-		// ========== 新增4个早期预警策略 ==========
-		{
-			ID:          "template-early-macd-approach",
-			Name:        "MACD即将金叉预警",
-			Description: "早期预警：DIF接近DEA且差值快速收敛，在金叉确认前1-2天提前买入，适合捕捉趋势启动初期。",
-			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":180000000}},{"id":"ma_trend_filter","factor":"ma_trend","params":{"short":5,"mid":10,"long":20}},{"id":"macd_approaching","factor":"macd_approaching","params":{"fast":12,"slow":26,"signal":9,"max_distance":0.15,"min_convergence":0.02,"require_positive":false}},{"id":"change_guard","factor":"change_range","params":{"min":-1,"max":4}},{"id":"volume_warming","factor":"volume_up","params":{"days":5,"ratio":1.1}}],"scores":[{"id":"convergence_speed","factor":"macd_convergence_speed","weight":40,"params":{"fast":12,"slow":26,"signal":9}},{"id":"ma_distance","factor":"distance_from_ma","weight":30,"params":{"period":20,"min":2,"max":8}},{"id":"volume_change","factor":"volume_change_rate","weight":30,"params":{"days":5}}],"pass":{"min_score":15,"top_n":10}}`,
-			Enabled:     true,
-			Readonly:    true,
-		},
-		{
-			ID:          "template-early-kdj-lift",
-			Name:        "KDJ底部抬升预警",
-			Description: "早期预警：K值在底部连续向上但还未上穿D值，提前1-2天埋伏，适合抓住反弹初期机会。",
-			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":150000000}},{"id":"kdj_approaching","factor":"kdj_approaching","params":{"n":9,"k":3,"d":3,"max_distance":8,"k_range_min":20,"k_range_max":50,"require_consecutive_rise":2}},{"id":"ma_trend_filter","factor":"ma_trend","params":{"short":10,"mid":20}},{"id":"change_guard","factor":"change_range","params":{"min":-2,"max":3}}],"scores":[{"id":"k_slope","factor":"kdj_k_slope","weight":35,"params":{"n":9,"k":3,"d":3}},{"id":"rsi_confirm","factor":"rsi_rebound","weight":30,"params":{"period":6,"lookback":5,"oversold":30,"min_current":32,"max_current":55}},{"id":"volume_quality","factor":"volume_steady_rise","weight":35,"params":{"days":3}}],"pass":{"min_score":12,"top_n":10}}`,
-			Enabled:     true,
-			Readonly:    true,
-		},
-		{
-			ID:          "template-early-volume-ignition",
-			Name:        "放量启动日捕捉",
-			Description: "早期预警：缩量整理后突然放量启动当天，收盘强势但涨幅适中，捕捉启动首日的最佳买点。",
-			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":200000000}},{"id":"volume_burst","factor":"volume_burst_after_shrink","params":{"lookback":5,"shrink_threshold":2,"burst_ratio":2.0,"min_turnover":3}},{"id":"price_position","factor":"distance_from_high","params":{"days":60,"min":-15,"max":-3}},{"id":"ma_support","factor":"ma_trend","params":{"short":10,"mid":20}},{"id":"change_guard","factor":"change_range","params":{"min":2,"max":7}},{"id":"close_quality","factor":"close_strength","params":{"min_position":0.7,"max_upper_shadow":2}}],"scores":[{"id":"volume_explosion","factor":"volume_ratio","weight":40,"params":{"days":5}},{"id":"close_position","factor":"close_strength","weight":30,"params":{"min_position":0.6,"max_upper_shadow":3}},{"id":"ma_slope","factor":"ma_slope","weight":30,"params":{"period":20,"lookback":5,"min":0,"max":10}}],"pass":{"min_score":15,"top_n":8}}`,
-			Enabled:     true,
-			Readonly:    true,
-		},
-		{
-			ID:          "template-early-breakout-ambush",
-			Name:        "突破前夜埋伏",
-			Description: "早期预警：价格逼近前期高点但还未突破，成交量连续放大，在突破前1-2天提前埋伏。",
-			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":200000000}},{"id":"near_high","factor":"distance_from_high","params":{"days":20,"min":-5,"max":-1}},{"id":"consecutive_rise","factor":"consecutive_gain_days","params":{"min_days":2,"max_days":4}},{"id":"volume_consecutive","factor":"volume_consecutive_rise","params":{"days":3}},{"id":"ma_trend_filter","factor":"ma_trend","params":{"short":5,"mid":10,"long":20}},{"id":"macd_positive","factor":"macd_positive","params":{"fast":12,"slow":26,"signal":9}},{"id":"change_guard","factor":"change_range","params":{"min":0.5,"max":3}},{"id":"drawdown_protection","factor":"max_amplitude","params":{"days":5,"max":5}}],"scores":[{"id":"distance_quality","factor":"distance_from_high","weight":35,"params":{"days":20,"optimal_min":-3,"optimal_max":-2}},{"id":"volume_steadiness","factor":"volume_consecutive_rise","weight":35,"params":{"days":3}},{"id":"macd_strength","factor":"macd_histogram","weight":30,"params":{"fast":12,"slow":26,"signal":9}}],"pass":{"min_score":18,"top_n":8}}`,
-			Enabled:     true,
-			Readonly:    true,
-		},
-
-		// ========== 新增3个震荡市策略 ==========
-		{
-			ID:          "template-range-bounce",
-			Name:        "区间震荡下沿买入",
-			Description: "震荡市策略：价格在明确的箱体区间内震荡，跌到下沿且RSI超卖时买入，反弹到均线附近止盈。",
-			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":150000000}},{"id":"range_bound","factor":"range_volatility","params":{"days":60,"max_range":25}},{"id":"at_lower_edge","factor":"distance_from_ma","params":{"period":20,"min":-5,"max":-2}},{"id":"rsi_oversold","factor":"rsi_value","params":{"period":6,"max":35}},{"id":"decline_slowing","factor":"decline_deceleration","params":{"lookback":3}},{"id":"volume_shrink","factor":"volume_below_average","params":{"days":5,"ratio":0.8}},{"id":"support_hold","factor":"support_not_broken","params":{"lookback":10}},{"id":"no_downtrend","factor":"ma_slope","params":{"period":60,"lookback":10,"min":-2,"max":2}}],"scores":[{"id":"oversold_degree","factor":"rsi_value","weight":40,"params":{"period":6,"optimal_min":25,"optimal_max":35}},{"id":"volume_exhaustion","factor":"volume_ratio","weight":30,"params":{"days":5,"lower_better":true}},{"id":"support_distance","factor":"distance_from_support","weight":30,"params":{"lookback":20}}],"pass":{"min_score":12,"top_n":8}}`,
-			Enabled:     true,
-			Readonly:    true,
-		},
-		{
-			ID:          "template-ma-convergence-breakout",
-			Name:        "均线缠绕突破方向",
-			Description: "震荡市策略：多条均线高度粘合充分整理后，突然选择向上方向并放量确认，适合震荡末期。",
-			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":180000000}},{"id":"ma_convergence","factor":"ma_convergence","params":{"ma_periods":[5,10,20],"max_divergence":3,"min_duration":5,"max_duration":15}},{"id":"breakout_up","factor":"price_above_ma_cluster","params":{"ma_periods":[5,10,20],"min_distance":1}},{"id":"volume_confirm","factor":"volume_up","params":{"days":10,"ratio":1.3}},{"id":"change_guard","factor":"change_range","params":{"min":1,"max":5}},{"id":"boll_expand","factor":"boll_width_expanding","params":{"period":20,"width":2}},{"id":"no_weak_stock","factor":"gain_days","params":{"days":60,"min":-15,"max":100}}],"scores":[{"id":"convergence_duration","factor":"ma_convergence_days","weight":35,"params":{"ma_periods":[5,10,20],"optimal_min":10,"optimal_max":12}},{"id":"breakout_strength","factor":"breakout_strength","weight":35,"params":{"volume_weight":0.6,"price_weight":0.4}},{"id":"ma_alignment","factor":"ma_distance","weight":30,"params":{"ma_periods":[5,10,20]}}],"pass":{"min_score":15,"top_n":6}}`,
-			Enabled:     true,
-			Readonly:    true,
-		},
-		{
-			ID:          "template-platform-breakout",
-			Name:        "缩量平台突破",
-			Description: "震荡市策略：横盘平台长期缩量整理后放量突破，适合个股走独立行情，不依赖大盘环境。",
-			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":200000000}},{"id":"platform_pattern","factor":"narrow_range","params":{"days":20,"max_range":12}},{"id":"low_turnover","factor":"average_turnover","params":{"days":10,"max":2}},{"id":"volume_burst","factor":"turnover_surge","params":{"min_turnover":3,"min_ratio":1.8}},{"id":"breakout_high","factor":"price_break_high","params":{"days":20}},{"id":"change_guard","factor":"change_range","params":{"min":2,"max":8}},{"id":"close_quality","factor":"close_strength","params":{"min_position":0.75,"max_upper_shadow":2}},{"id":"mid_term_stable","factor":"ma_slope","params":{"period":60,"lookback":10,"min":-5,"max":10}}],"scores":[{"id":"platform_duration","factor":"consolidation_days","weight":35,"params":{"min":15,"max":25,"optimal_min":18,"optimal_max":22}},{"id":"breakout_power","factor":"breakout_strength","weight":40,"params":{"volume_weight":0.7,"price_weight":0.3}},{"id":"close_quality","factor":"close_strength","weight":25,"params":{"min_position":0.6,"max_upper_shadow":3}}],"pass":{"min_score":18,"top_n":6}}`,
-			Enabled:     true,
-			Readonly:    true,
-		},
-		{
 			ID:          "template-low-three-bull-first-board",
 			Name:        "低位三连阳首板",
 			Description: "首板接力：首板前两日连续阳线、信号日主板首次涨停，要求放量不低于2.5倍、首板前60日位置不高于60%、近5日区间振幅不高于15%；次日仅在开盘涨幅0%-6%时参与。",
 			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":500000000}},{"id":"price_range","factor":"price_range","params":{"min":2,"max":80}},{"id":"first_board_pattern","factor":"low_three_bull_first_board","params":{"position_lookback":60,"max_pre_position":60,"min_amount":500000000,"max_amount":4000000000,"min_volume_ratio":2.5,"max_prior_volume_ratio":2,"max_prior_gain":5,"max_five_day_range":15,"limit_tolerance":0.25}}],"scores":[{"id":"pattern_quality","factor":"low_three_bull_first_board","weight":100,"params":{"position_lookback":60,"max_pre_position":60,"min_amount":500000000,"max_amount":4000000000,"min_volume_ratio":2.5,"max_prior_volume_ratio":2,"max_prior_gain":5,"max_five_day_range":15,"limit_tolerance":0.25}}],"pass":{"min_score":12,"top_n":5},"execution":{"min_open_gap":0,"max_open_gap":6}}`,
-			Enabled:     true,
-			Readonly:    true,
-		},
-		{
-			ID:          "template-jq-ma5-momentum",
-			Name:        "聚宽MA5百分之一动量",
-			Description: "聚宽双均线示例的系统化版本：收盘价至少高于MA5 1%，控制短线乖离、单日涨幅与流动性后，按均线距离、量能和收盘强度排序。",
-			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":100000000}},{"id":"price_range","factor":"price_range","params":{"min":2,"max":120}},{"id":"ma5_trigger","factor":"distance_from_ma","params":{"period":5,"min":1,"max":6}},{"id":"change_guard","factor":"change_range","params":{"min":-1,"max":6.5}}],"scores":[{"id":"ma5_distance","factor":"distance_from_ma","weight":50,"params":{"period":5,"optimal_min":1,"optimal_max":3}},{"id":"volume_quality","factor":"volume_change_rate","weight":25,"params":{"days":5}},{"id":"close_quality","factor":"close_strength","weight":25,"params":{"min_position":0.55,"max_upper_shadow":3}}],"pass":{"min_score":12,"top_n":10}}`,
-			Enabled:     true,
-			Readonly:    true,
-		},
-		{
-			ID:          "template-jq-small-cap-rotation",
-			Name:        "聚宽20至30亿小市值轮动",
-			Description: "聚宽小市值策略适配版：每周首个交易日从点时总市值20至30亿元的股票中按市值升序选3只；股本按当日已生效记录计算，避免历史回测使用未来数据。",
-			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":10000000}},{"id":"weekly_rebalance","factor":"rebalance_day","params":{"mode":"week_first"}},{"id":"market_cap_band","factor":"market_cap_range","params":{"min_yi":20,"max_yi":30}}],"scores":[{"id":"smallest_cap_first","factor":"market_cap_range","weight":100,"params":{"min_yi":20,"max_yi":30}}],"pass":{"min_score":1,"top_n":3}}`,
-			Enabled:     true,
-			Readonly:    true,
-		},
-		{
-			ID:          "template-jq-yellow-banner-value",
-			Name:        "聚宽正黄旗高股息价值",
-			Description: "聚宽正黄旗大妈选股法适配版：月初从近一年股息率市场前25%、点时PEG介于-1和3、原始股价低于9元的股票中，按市值与股息质量选10只；财报只在实际披露后参与计算。",
-			ConfigJSON:  `{"universe":"market","pool_id":"market-all-a","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":10000000}},{"id":"monthly_rebalance","factor":"rebalance_day","params":{"mode":"month_first"}},{"id":"low_raw_price","factor":"raw_price_range","params":{"min":0.5,"max":9}},{"id":"high_dividend","factor":"dividend_yield_percentile","params":{"min_percentile":75,"min_yield":0}},{"id":"peg_band","factor":"peg_range","params":{"min":-1,"max":3}}],"scores":[{"id":"small_cap_first","factor":"market_cap_ascending","weight":70,"params":{}},{"id":"dividend_quality","factor":"dividend_yield_percentile","weight":30,"params":{"min_percentile":75,"min_yield":0}}],"pass":{"min_score":1,"top_n":10},"execution":{"min_open_gap":-9,"max_open_gap":9}}`,
 			Enabled:     true,
 			Readonly:    true,
 		},
@@ -1437,6 +1275,26 @@ func defaultStrategyTemplates() []Strategy {
 }
 
 var retiredStrategyTemplateIDs = []string{
+	// Removed after the 2022-2024 multi-horizon review. Keep these IDs in the
+	// migration list so an existing database is cleaned on the next startup.
+	"template-macd-broad-regime",
+	"template-pullback",
+	"template-trend-pullback-confirm",
+	"template-rsi-trend-reversal",
+	"template-volume-breakout-confirm",
+	"template-new-high-trend",
+	"template-boll-macd-resonance",
+	"template-strong-trend-continuation",
+	"template-early-macd-approach",
+	"template-early-kdj-lift",
+	"template-early-volume-ignition",
+	"template-early-breakout-ambush",
+	"template-range-bounce",
+	"template-ma-convergence-breakout",
+	"template-platform-breakout",
+	"template-jq-ma5-momentum",
+	"template-jq-small-cap-rotation",
+	"template-jq-yellow-banner-value",
 	"template-local-rocket",
 	"template-ma-volume-breakout",
 	"template-macd-kdj-resonance",
@@ -1449,16 +1307,10 @@ var retiredStrategyTemplateIDs = []string{
 // strongMarketStrategyIDs 定义了需要强势市场环境（上证指数20日涨幅≥6%）才启用的策略
 // 这些策略高度依赖趋势环境，在震荡市或弱市中容易失效
 var strongMarketStrategyIDs = map[string]bool{
-	// 中线趋势策略（保留的7个需要强势环境）
-	"template-a-share-v3":                true,
-	"template-macd-trend":                true,
-	"template-volume-breakout-confirm":   true,
-	"template-new-high-trend":            true,
-	"template-rocket-confirm":            true,
-	"template-boll-macd-resonance":       true,
-	"template-strong-trend-continuation": true,
-	// 早期预警策略不需要强势市场环境（它们本身就是捕捉启动初期）
-	// 震荡市策略也不需要强势市场环境（它们专为震荡市设计）
+	// 保留的趋势策略需要强势环境
+	"template-a-share-v3":     true,
+	"template-macd-trend":     true,
+	"template-rocket-confirm": true,
 }
 
 func applyHighQualityStrategyProfile(strategy *Strategy) {
@@ -1473,24 +1325,6 @@ func applyHighQualityStrategyProfile(strategy *Strategy) {
 			"params": map[string]interface{}{"days": 20, "min": 6, "max": 100},
 		})
 		strategy.Description += " 仅在上证指数20日涨幅达到6%时启用。"
-	}
-	if strategy.ID == "template-pullback" {
-		for _, raw := range filters {
-			rule, _ := raw.(map[string]interface{})
-			switch rule["id"] {
-			case "pullback_depth":
-				rule["params"] = map[string]interface{}{"days": 60, "min": 7, "max": 12}
-			case "change_guard":
-				rule["params"] = map[string]interface{}{"min": 0, "max": 1.5}
-			}
-		}
-		for _, raw := range config["scores"].([]interface{}) {
-			rule, _ := raw.(map[string]interface{})
-			if rule["id"] == "drawdown_quality" {
-				rule["params"] = map[string]interface{}{"days": 60, "min": 7, "max": 12}
-			}
-		}
-		strategy.Description += " 二次优化限定信号日温和上涨0%-1.5%、距60日高点回撤7%-12%。"
 	}
 	config["filters"] = filters
 	if raw, err := json.Marshal(config); err == nil {
@@ -1515,10 +1349,6 @@ func applyDefaultStrategyUniverse(strategy *Strategy) {
 		},
 	}
 	if strategy.ID == "template-low-three-bull-first-board" {
-		universe := config["universe"].(map[string]interface{})
-		universe["exclude"] = append(universe["exclude"].([]map[string]string), map[string]string{"pool": "market-gem"})
-	}
-	if strategy.ID == "template-jq-yellow-banner-value" {
 		universe := config["universe"].(map[string]interface{})
 		universe["exclude"] = append(universe["exclude"].([]map[string]string), map[string]string{"pool": "market-gem"})
 	}
@@ -1574,6 +1404,9 @@ func (s *AppStore) ensureStrategyTemplates() error {
 	}
 	for _, id := range retiredStrategyTemplateIDs {
 		if _, err := s.db.Exec(`DELETE FROM strategies WHERE id=? AND readonly=1`, id); err != nil {
+			return err
+		}
+		if _, err := s.db.Exec(`DELETE FROM automation_tasks WHERE type='strategy_selection' AND payload_json LIKE ?`, `%"strategy_id":"`+id+`"%`); err != nil {
 			return err
 		}
 	}
@@ -1789,30 +1622,7 @@ func DefaultTradingSystemState() TradingSystemState {
 			MinCommission:      5,
 		},
 		Filter: "all",
-		Trades: []TradingTrade{
-			{
-				ID:            "serveyou-2026-08-26",
-				StockName:     "税友股份",
-				StockCode:     "603171",
-				Direction:     "buy",
-				Status:        "active",
-				EntryDate:     "2026-08-26",
-				EntryPrice:    40.80,
-				ExitDate:      "",
-				ExitPrice:     0,
-				ExitShares:    0,
-				CurrentPrice:  40.29,
-				Shares:        300,
-				InvalidPrice:  39.60,
-				PositionLabel: "试错仓",
-				TargetOne:     "40.80 / 42.60-43.30",
-				TargetTwo:     "45-46",
-				TradeMode:     "强势股回调到关键支撑附近，轻仓试错，博短线止跌修复。",
-				BuyReason:     "1. 前期从 34.42 附近启动，最高冲到 52.10，说明曾经有明显资金推动。\n2. 从 8月6日高点 52.10 回落到 40 元附近，跌幅较大，短线存在修复可能。\n3. 当前价格接近 7月31日加速段低点 39.60 附近，属于重要短线观察区。\n4. 买入价 40.80 距离 39.60 风控位不远，单股风险约 1.20 元，亏损比例约 2.94%，风险可控。",
-				ExitRules:     "技术无效点：有效跌破 39.60 元。\n\n有效跌破定义：\n1. 放量跌破 39.60，并且 15-30 分钟内不能快速收回；\n2. 或者当天收盘价低于 39.60；\n3. 或者跌破后反抽到 39.60-40.00 区间明显受压，再次回落。\n\n操作计划：\n1. 如果明天跌破 39.60 且收不回，先卖出 50% 或全部离场，保护本金。\n2. 如果盘中跌破 39.60 后快速拉回 40 元上方，先不急着卖完，观察是否是假破。\n3. 如果重新站稳 40.80 成本价，说明短线压力减轻，继续观察。\n4. 如果站上 42.60-43.30 区间，说明短线企稳增强，可考虑是否加确认仓。\n5. 如果反弹到 45-46 区间但放量滞涨，考虑止盈或减仓。\n6. 如果跌破 39.60 后反抽不过 40 元，不接回，不补仓。\n\n加仓条件：守住 39.60；重新站稳 40.80；放量站上 42.60-43.30。\n\n不加仓条件：跌破 39.60 后没有收回；反弹无量；冲高回落；大盘明显走弱；只是因为怕踏空而想追。\n\n止盈计划：快速反弹到 42.60-43.30 但量能不足，可先减一部分；放量突破 43.30 继续持有观察；到 45-46 附近冲不动，优先锁定利润；反弹途中跌回 40.80 下方，减仓。",
-				Review:        "盘后复盘：\n1. 今天有没有按计划执行？\n2. 买入理由是否仍然成立？\n3. 39.60 是否守住？\n4. 成交量是放大还是缩小？\n5. 反弹时有没有主动买盘？\n6. 我的操作是按规则，还是按情绪？\n7. 这笔交易下次哪里可以改进？",
-			},
-		},
+		Trades: []TradingTrade{},
 	}
 }
 

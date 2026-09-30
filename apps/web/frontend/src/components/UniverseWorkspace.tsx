@@ -299,7 +299,7 @@ export function UniverseWorkspace() {
         <Form form={poolForm} layout="vertical" onFinish={savePool}>
           <Form.Item name="name" label="股票池名称" rules={[{ required: true, message: '请输入股票池名称' }]}><Input placeholder="例如：新能源核心观察池" /></Form.Item>
           <Form.Item name="description" label="说明"><Input placeholder="描述这个池子的用途或来源" /></Form.Item>
-          <Form.Item name="symbols" label="股票代码" rules={[{ required: true, message: '请输入至少一个股票代码' }]}><Input.TextArea rows={5} placeholder="000001, 600519, 300750" /></Form.Item>
+          <Form.Item name="symbols" label="股票代码" rules={[{ required: true, message: '请输入至少一个股票代码' }]}><Input.TextArea rows={5} placeholder="手动输入股票代码，多个代码用逗号或换行分隔" /></Form.Item>
           <div className="universe-modal-actions"><Text type="secondary">保存后即可在起点、限定或剔除池中引用。</Text><Space><Button onClick={() => setPoolDialogOpen(false)}>取消</Button><Button type="primary" htmlType="submit" loading={poolSaving}>保存股票池</Button></Space></div>
         </Form>
       </Modal>

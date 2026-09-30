@@ -889,7 +889,7 @@ export function TradingSystemWorkspace() {
                   onSelect={(_value, option) => selectStock(option.stock as StockSearchResult)}
                   notFoundContent={stockSearchLoading ? '正在匹配...' : '没有找到匹配标的'}
                 >
-                  <Input placeholder="输入股票代码，例如：601899" />
+                  <Input placeholder="输入股票代码" />
                 </AutoComplete>
               </Form.Item>
               <Form.Item name="direction" label="交易方向" rules={[{ required: true }]}><Select options={[{ value: 'buy', label: '买入' }, { value: 'sell', label: '卖出' }]} /></Form.Item>

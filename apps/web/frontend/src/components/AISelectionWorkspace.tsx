@@ -166,7 +166,7 @@ export function AISelectionWorkspace() {
         <div className="ai-selection-form">
           <label><span>候选来源</span><Select value={source} onChange={setSource} options={[{ value: 'selection', label: '最近选股结果' }, { value: 'pool', label: '股票池' }, { value: 'manual', label: '手动输入' }]} /></label>
           {source === 'pool' ? <label><span>股票池</span><Select value={poolID || undefined} onChange={setPoolID} options={pools.map((item) => ({ value: item.id, label: `${item.name} · ${item.symbols?.length || 0}只` }))} /></label> : null}
-          {source === 'manual' ? <label className="ai-selection-manual"><span>股票代码</span><Input value={manualSymbols} onChange={(event) => setManualSymbols(event.target.value)} placeholder="000001, 600519, 603171" /></label> : null}
+          {source === 'manual' ? <label className="ai-selection-manual"><span>股票代码</span><Input value={manualSymbols} onChange={(event) => setManualSymbols(event.target.value)} placeholder="手动输入股票代码，多个代码用逗号分隔" /></label> : null}
           <label><span>候选上限</span><InputNumber min={2} max={20} value={candidateLimit} onChange={(value) => setCandidateLimit(value || 10)} /></label>
           <label><span>快速均线</span><InputNumber min={2} max={60} value={fastPeriod} onChange={(value) => setFastPeriod(value || 5)} /></label>
           <label><span>慢速均线</span><InputNumber min={3} max={120} value={slowPeriod} onChange={(value) => setSlowPeriod(value || 20)} /></label>

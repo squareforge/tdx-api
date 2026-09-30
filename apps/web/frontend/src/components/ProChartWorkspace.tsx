@@ -21,7 +21,7 @@ type ApplyMode = 'overlay' | 'change' | 'new-window';
 
 export function ProChartWorkspace() {
   const chartRef = useRef<HTMLDivElement | null>(null);
-  const [symbol, setSymbol] = useState('000001');
+  const [symbol, setSymbol] = useState('');
   const [period, setPeriod] = useState('day');
   const [formulas, setFormulas] = useState<Formula[]>([]);
   const [selectedFormulaID, setSelectedFormulaID] = useState('');
@@ -56,6 +56,10 @@ export function ProChartWorkspace() {
   const renderChart = useCallback(() => {
     const container = chartRef.current;
     if (!container) return;
+    if (!normalizeSymbol(symbol)) {
+      setChartStatus('请输入股票代码后加载图表');
+      return;
+    }
     const api = window.TDXHQChart;
     if (!api?.isAvailable?.()) {
       setChartStatus('HQChart 未加载，无法显示图表');
@@ -89,11 +93,16 @@ export function ProChartWorkspace() {
       message.warning('请先选择一个公式');
       return;
     }
+    const normalizedSymbol = normalizeSymbol(symbol);
+    if (!normalizedSymbol) {
+      message.warning('请输入股票代码');
+      return;
+    }
     try {
       const data = await apiFetch<FormulaRunResponse>(`/api/formulas/${selectedFormula.id}/test`, {
         method: 'POST',
         body: JSON.stringify({
-          symbol,
+          symbol: normalizedSymbol,
           period,
           calc_count: 500,
           out_count: 20
@@ -174,7 +183,7 @@ export function ProChartWorkspace() {
       >
         <Form layout="inline" className="chart-control-form">
           <Form.Item label="标的">
-            <Input value={symbol} onChange={(event) => setSymbol(event.target.value)} placeholder="000001" />
+            <Input value={symbol} onChange={(event) => setSymbol(event.target.value)} placeholder="输入股票代码" />
           </Form.Item>
           <Form.Item label="周期">
             <Select value={period} options={periodOptions} onChange={setPeriod} className="period-select" />

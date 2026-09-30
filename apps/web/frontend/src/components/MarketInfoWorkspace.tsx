@@ -83,7 +83,7 @@ async function resolveStockCode(input: string) {
 
 export function MarketInfoWorkspace({ kind }: MarketInfoWorkspaceProps) {
   const current = config[kind];
-  const [code, setCode] = useState('600519');
+  const [code, setCode] = useState('');
   const [items, setItems] = useState<Array<MarketResearchReport | MarketNotice | HotMoneyTrade>>([]);
   const [loading, setLoading] = useState(false);
   const [loadedCode, setLoadedCode] = useState('');
@@ -112,7 +112,7 @@ export function MarketInfoWorkspace({ kind }: MarketInfoWorkspaceProps) {
   }, [code, current.endpoint, current.title]);
 
   useEffect(() => {
-    void load();
+    if (code.trim()) void load();
   }, []);
 
   return (

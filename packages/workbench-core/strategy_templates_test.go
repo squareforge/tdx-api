@@ -7,8 +7,8 @@ import (
 
 func TestDefaultStrategyTemplatesAreValidAndConservative(t *testing.T) {
 	templates := defaultStrategyTemplates()
-	if len(templates) != 23 {
-		t.Fatalf("template count = %d, want 23", len(templates))
+	if len(templates) != 5 {
+		t.Fatalf("template count = %d, want 5", len(templates))
 	}
 
 	seen := make(map[string]bool, len(templates))
@@ -72,17 +72,7 @@ func TestDefaultStrategyTemplatesAreValidAndConservative(t *testing.T) {
 		if strongMarketStrategyIDs[item.ID] && !filterFactors["market_momentum"] {
 			t.Fatalf("strong-market strategy %q must include market regime filter", item.ID)
 		}
-		if item.ID == "template-pullback" {
-			for _, rule := range config.Filters {
-				if rule.ID == "pullback_depth" && (rule.Params["min"] != float64(7) || rule.Params["max"] != float64(12)) {
-					t.Fatalf("pullback depth was not tightened: %+v", rule.Params)
-				}
-				if rule.ID == "change_guard" && (rule.Params["min"] != float64(0) || rule.Params["max"] != float64(1.5)) {
-					t.Fatalf("pullback signal-day change was not tightened: %+v", rule.Params)
-				}
-			}
-		}
-		if item.ID == "template-macd-calm-confirm" || item.ID == "template-macd-broad-regime" {
+		if item.ID == "template-macd-calm-confirm" {
 			for _, required := range []string{"ma_trend", "ma_slope", "macd_golden_cross", "market_momentum", "gain_days", "max_amplitude"} {
 				if !filterFactors[required] {
 					t.Fatalf("high-win-rate template %q missing filter %q", item.ID, required)
@@ -120,45 +110,14 @@ func TestDefaultStrategyTemplatesAreValidAndConservative(t *testing.T) {
 				t.Fatalf("first-board opening-gap constraints = %+v, want 0%%-6%%", execution)
 			}
 		}
-		if item.ID == "template-jq-yellow-banner-value" {
-			if !filterFactors["rebalance_day"] || !filterFactors["dividend_yield_percentile"] || !filterFactors["peg_range"] || !filterFactors["raw_price_range"] {
-				t.Fatalf("yellow-banner template is missing point-in-time value filters: %+v", filterFactors)
-			}
-			if !excluded["market-gem"] {
-				t.Fatal("yellow-banner template must exclude GEM in addition to STAR/BJ")
-			}
-		}
-		if item.ID == "template-jq-small-cap-rotation" {
-			if !filterFactors["rebalance_day"] || !filterFactors["market_cap_range"] {
-				t.Fatalf("small-cap template is missing point-in-time filters: %+v", filterFactors)
-			}
-		}
 	}
 
 	for _, id := range []string{
 		"template-a-share-v3",
 		"template-macd-trend",
 		"template-macd-calm-confirm",
-		"template-macd-broad-regime",
-		"template-pullback",
-		"template-trend-pullback-confirm",
-		"template-volume-breakout-confirm",
-		"template-new-high-trend",
 		"template-rocket-confirm",
-		"template-rsi-trend-reversal",
-		"template-boll-macd-resonance",
-		"template-strong-trend-continuation",
-		"template-early-macd-approach",
-		"template-early-kdj-lift",
-		"template-early-volume-ignition",
-		"template-early-breakout-ambush",
-		"template-range-bounce",
-		"template-ma-convergence-breakout",
-		"template-platform-breakout",
 		"template-low-three-bull-first-board",
-		"template-jq-ma5-momentum",
-		"template-jq-small-cap-rotation",
-		"template-jq-yellow-banner-value",
 	} {
 		if !seen[id] {
 			t.Fatalf("missing template %q", id)
