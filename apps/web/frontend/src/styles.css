@@ -905,6 +905,10 @@ textarea {
   color: var(--market-down) !important;
 }
 
+.trading-zero {
+  color: #000 !important;
+}
+
 .decision-hit-foot strong {
   color: var(--danger);
 }
@@ -10509,7 +10513,7 @@ textarea::placeholder {
 
 .historical-facts {
   display: grid;
-  grid-template-columns: repeat(3, minmax(110px, .7fr)) minmax(190px, 1.2fr);
+  grid-template-columns: repeat(3, minmax(110px, .7fr)) minmax(190px, 1.2fr) minmax(250px, 1.5fr);
   gap: 1px;
   margin-bottom: 12px;
   border: 1px solid var(--line);
@@ -10534,6 +10538,28 @@ textarea::placeholder {
 .historical-facts strong {
   color: var(--text);
   font-size: 16px;
+}
+
+.historical-total-rates > div {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.historical-total-rates > div > span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+}
+
+.historical-total-rates em {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.historical-total-rates strong {
+  font-size: 14px;
 }
 
 .historical-portfolio-facts {
@@ -11399,6 +11425,9 @@ textarea::placeholder {
   .historical-progress-head,
   .historical-facts {
     grid-template-columns: 1fr 1fr;
+  }
+  .historical-total-rates {
+    grid-column: 1 / -1;
   }
   .historical-progress-head .ant-progress {
     grid-column: 1 / -1;

@@ -9,6 +9,13 @@ function formatPercent(value?: number) {
   return Number.isFinite(value) ? `${Number(value) >= 0 ? '+' : ''}${Number(value).toFixed(2)}%` : '--';
 }
 
+function percentColorClass(value?: number) {
+  if (!Number.isFinite(value)) return undefined;
+  if (Number(value) > 0) return 'trading-positive';
+  if (Number(value) < 0) return 'trading-negative';
+  return 'trading-zero';
+}
+
 function formatPrice(value?: number) {
   return Number.isFinite(value) && Number(value) > 0 ? Number(value).toFixed(3) : '--';
 }
@@ -26,12 +33,13 @@ export function TrackingHorizonCell({ value }: TrackingHorizonCellProps) {
   const peakPrice = Number(value?.max_gain_price || 0);
   const averageClose = Number(value?.average_close || 0);
   const averageCloseReturn = Number(value?.average_close_return);
+  const closeReturn = value?.close_return;
   return <div className="tracking-horizon-cell">
     <div className="tracking-horizon-cell-head">
       <Tag color={complete ? (value?.success ? 'success' : 'error') : 'default'}>{statusLabel(value)}</Tag>
-      <strong>{complete ? formatPercent(value?.close_return) : '--'}</strong>
+      <strong className={complete ? percentColorClass(closeReturn) : undefined}>{complete ? formatPercent(closeReturn) : '--'}</strong>
     </div>
-    <small>均收 {averageClose > 0 ? `${formatPrice(averageClose)} · ${formatPercent(averageCloseReturn)}` : '--'}</small>
-    <small>周期最高 {Number.isFinite(peakReturn) ? `${formatPercent(peakReturn)}${peakPrice > 0 ? ` · ${formatPrice(peakPrice)}` : ''}` : '--'}</small>
+    <small>均收 {averageClose > 0 ? <>{formatPrice(averageClose)} · <span className={percentColorClass(averageCloseReturn)}>{formatPercent(averageCloseReturn)}</span></> : '--'}</small>
+    <small>周期最高 {Number.isFinite(peakReturn) ? <><span className={percentColorClass(peakReturn)}>{formatPercent(peakReturn)}</span>{peakPrice > 0 ? ` · ${formatPrice(peakPrice)}` : ''}</> : '--'}</small>
   </div>;
 }

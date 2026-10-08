@@ -54,6 +54,13 @@ function scanReturnColor(value: number) {
   return value >= 0 ? 'trading-positive' : 'trading-negative';
 }
 
+function signedMetricColor(value?: number) {
+  if (!Number.isFinite(value)) return undefined;
+  if (Number(value) > 0) return 'trading-positive';
+  if (Number(value) < 0) return 'trading-negative';
+  return 'trading-zero';
+}
+
 function scanParamText(item: HistoricalScanResult) {
   return `${item.buy_base === 'open' ? '开盘' : '收盘'}买 · ${item.sell_base === 'next_open' ? '次日开' : '当日收'}卖 · 止${item.take_profit}% 回${item.trail_drawdown}% 损${item.stop_loss}% ${item.max_hold_days}天`;
 }
@@ -396,6 +403,15 @@ export function HistoricalBacktestWorkspace() {
 
 	const result = useMemo(() => parseJSON<HistoricalBacktestResult>(selectedRun?.result_json, {}), [selectedRun?.result_json]) || {};
   const summaries = result.strategy_summaries || [];
+  const totalHorizonRates = [1, 3, 5, 10].map((days) => {
+    const totals = summaries.reduce((acc, summary) => {
+      const horizon = summary.horizons?.[`d${days}`];
+      acc.completed += horizon?.completed || 0;
+      acc.success += horizon?.success_count || 0;
+      return acc;
+    }, { completed: 0, success: 0 });
+    return { days, rate: totals.completed > 0 ? totals.success / totals.completed * 100 : undefined };
+  });
   const consensus = result.consensus || [];
   const portfolio = result.portfolio;
   const progress = selectedRun?.total_dates ? Math.round(selectedRun.processed_dates * 100 / selectedRun.total_dates) : 0;
@@ -437,10 +453,10 @@ export function HistoricalBacktestWorkspace() {
     { title: '策略', dataIndex: 'strategy_name', width: 190, render: (value: string) => <strong>{value}</strong> },
     { title: '信号', dataIndex: 'signal_count', width: 82 },
     ...[1, 3, 5, 10].flatMap((days) => [
-      { title: `D${days}成功率`, key: `d${days}-rate`, width: 105, sorter: (a: HistoricalStrategySummary, b: HistoricalStrategySummary) => (a.horizons[`d${days}`]?.success_rate || 0) - (b.horizons[`d${days}`]?.success_rate || 0), render: (_: unknown, row: HistoricalStrategySummary) => <strong>{(row.horizons[`d${days}`]?.success_rate || 0).toFixed(1)}%</strong> },
-      { title: `D${days}均收`, key: `d${days}-return`, width: 95, render: (_: unknown, row: HistoricalStrategySummary) => pct(row.horizons[`d${days}`]?.average_return) }
+      { title: `D${days}成功率`, key: `d${days}-rate`, width: 105, sorter: (a: HistoricalStrategySummary, b: HistoricalStrategySummary) => (a.horizons[`d${days}`]?.success_rate || 0) - (b.horizons[`d${days}`]?.success_rate || 0), render: (_: unknown, row: HistoricalStrategySummary) => { const rate = row.horizons[`d${days}`]?.success_rate || 0; return <strong className={signedMetricColor(rate)}>{rate.toFixed(1)}%</strong>; } },
+      { title: `D${days}均收`, key: `d${days}-return`, width: 95, render: (_: unknown, row: HistoricalStrategySummary) => { const averageReturn = row.horizons[`d${days}`]?.average_return; return <span className={signedMetricColor(averageReturn)}>{pct(averageReturn)}</span>; } }
     ]),
-    { title: 'D10回撤', key: 'drawdown', width: 100, render: (_: unknown, row: HistoricalStrategySummary) => pct(row.horizons.d10?.average_max_drawdown) }
+    { title: 'D10回撤', key: 'drawdown', width: 100, render: (_: unknown, row: HistoricalStrategySummary) => { const drawdown = row.horizons.d10?.average_max_drawdown; return <span className={signedMetricColor(drawdown)}>{pct(drawdown)}</span>; } }
   ];
 
   const signalColumns = [
@@ -569,6 +585,7 @@ export function HistoricalBacktestWorkspace() {
               <div><span>候选股票</span><strong>{selectedRun.candidate_symbols || '--'}</strong></div>
               <div><span>历史信号</span><strong>{selectedRun.signal_count}</strong></div>
               <div><span>成功标准</span><strong>收益 ≥ {selectedRun.take_profit ?? selectedRun.target_return ?? 10}%</strong><small>回撤不低于 -{selectedRun.trail_drawdown ?? selectedRun.drawdown_limit ?? 5}%</small></div>
+              <div className="historical-total-rates"><span>总达标率</span><div>{totalHorizonRates.map(({ days, rate }) => <span key={days}><em>D{days}</em><strong className={signedMetricColor(rate)}>{Number.isFinite(rate) ? `${rate?.toFixed(1)}%` : '--'}</strong></span>)}</div><small>按各周期已完成信号汇总</small></div>
             </div>
             {selectedRun.error ? <Alert type="error" showIcon message={selectedRun.error} /> : null}
             <div className="historical-result-toolbar">
