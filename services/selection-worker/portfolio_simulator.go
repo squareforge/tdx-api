@@ -8,7 +8,8 @@ import (
 )
 
 // 组合模拟撮合引擎:在历史回测逐日信号的基础上,模拟单账户资金池的买卖流水。
-// 信号于 T 日收盘产生,撮合在 T+1 日开盘执行;退出条件由 T 日收盘判定,次日开盘执行。
+// 信号于 T 日收盘产生,撮合在 T+1 日开盘执行;通常退出条件在收盘判定、次日开盘执行。
+// 特定日线策略在可卖日按当日收盘价模拟退出。
 // 约束:涨停买不进、跌停卖不出、100股整手、T+1、最大持仓数、等权分配。
 
 type portfolioSimConfig struct {
@@ -32,6 +33,7 @@ type portfolioSimPosition struct {
 	entryDate      int
 	signalDate     int
 	strategyName   string
+	exitPolicy     string
 	lastClose      float64 // 最近可用收盘价(权益估值用)
 	peakClose      float64 // 持仓期间最高收盘价(回撤止损基准)
 	holdDays       int     // 持有交易日数
@@ -47,6 +49,9 @@ type portfolioPendingBuy struct {
 	signalClose  float64  // 信号日收盘价,买入基准"close"时作为限价参考
 	minOpenGap   *float64 // T+1开盘相对信号日收盘的最小涨幅; nil表示不限制
 	maxOpenGap   *float64 // T+1开盘相对信号日收盘的最大涨幅; nil表示不限制
+	buyAtOpen    bool
+	exitPolicy   string
+	onlyWhenFlat bool
 }
 
 type portfolioSimulator struct {
@@ -139,6 +144,7 @@ func (sim *portfolioSimulator) onDayOpen(date int, dateText string, klines map[s
 	}
 
 	// 2) 买入(按得分降序,先买高分)
+	flatAtOpen := len(sim.positions) == 0
 	sorted := append([]portfolioPendingBuy{}, buys...)
 	sort.Slice(sorted, func(i, j int) bool {
 		if sorted[i].score == sorted[j].score {
@@ -147,6 +153,10 @@ func (sim *portfolioSimulator) onDayOpen(date int, dateText string, klines map[s
 		return sorted[i].score > sorted[j].score
 	})
 	for _, buy := range sorted {
+		if buy.onlyWhenFlat && !flatAtOpen {
+			sim.appendSkip(buy, dateText, "策略要求开盘时空仓")
+			continue
+		}
 		sim.tryBuy(buy, date, dateText, klines)
 	}
 }
@@ -184,18 +194,21 @@ func (sim *portfolioSimulator) tryBuy(buy portfolioPendingBuy, date int, dateTex
 		sim.appendSkip(buy, dateText, "涨停无法买入")
 		return
 	}
-	// 买入限价 = 基准价 × (1+offset)。基准"open"用当日开盘价,"close"用信号日收盘价。
+	// 买入限价 = 基准价 × (1+offset)。指定开盘成交的策略不使用组合限价偏移。
 	basePrice := row.Open
-	if sim.cfg.BuyBase == "close" && buy.signalClose > 0 {
+	if !buy.buyAtOpen && sim.cfg.BuyBase == "close" && buy.signalClose > 0 {
 		basePrice = buy.signalClose
 	}
-	limitPrice := basePrice * (1 + sim.cfg.BuyOffset/100)
+	limitPrice := basePrice
+	if !buy.buyAtOpen {
+		limitPrice *= 1 + sim.cfg.BuyOffset/100
+	}
 	if limitPrice <= 0 {
 		sim.appendSkip(buy, dateText, "买入限价无效")
 		return
 	}
 	// 限价买单成交条件:当日最低价须不高于限价;开盘即低于限价则按开盘价成交。
-	if row.Low > limitPrice {
+	if !buy.buyAtOpen && row.Low > limitPrice {
 		sim.appendSkip(buy, dateText, "未跌至买入限价")
 		return
 	}
@@ -227,6 +240,7 @@ func (sim *portfolioSimulator) tryBuy(buy portfolioPendingBuy, date int, dateTex
 		entryDate:    date,
 		signalDate:   buy.signalDate,
 		strategyName: buy.strategyName,
+		exitPolicy:   buy.exitPolicy,
 		lastClose:    fillPrice,
 		peakClose:    fillPrice,
 	}
@@ -285,6 +299,23 @@ func (sim *portfolioSimulator) onDayClose(date int, dateText string, klines map[
 		pos.holdDays++
 		if row.Close > pos.peakClose {
 			pos.peakClose = row.Close
+		}
+		if pos.exitPolicy != "" {
+			if date <= pos.entryDate || strategyLimitUpClose(pos.symbol, row, 0.25) ||
+				row.YClose <= 0 || row.Close <= row.YClose*(1-portfolioPriceLimitRate(pos.symbol)) {
+				continue
+			}
+			switch pos.exitPolicy {
+			case "first_board_close":
+				pos.pendingExit = "首板低开：可卖日收盘未涨停"
+				sim.executeSell(pos, row.Close, date, dateText)
+			case "leader_close":
+				if pos.holdDays >= 3 || row.Close > pos.entryPrice {
+					pos.pendingExit = "连板龙头：收盘未涨停且盈利或持满两个交易日"
+					sim.executeSell(pos, row.Close, date, dateText)
+				}
+			}
+			continue
 		}
 		var reason string
 		switch {
@@ -409,8 +440,13 @@ func mergePendingBuy(buys []portfolioPendingBuy, symbol string, score float64, s
 		if buys[i].symbol != symbol {
 			continue
 		}
-		if score > buys[i].score {
+		useIncoming := score > buys[i].score
+		specialExecution := buys[i].exitPolicy != "" || incoming.ExitPolicy != ""
+		if useIncoming {
 			buys[i].score = score
+			buys[i].buyAtOpen = incoming.BuyAtOpen
+			buys[i].exitPolicy = incoming.ExitPolicy
+			buys[i].onlyWhenFlat = incoming.OnlyWhenFlat
 		}
 		if !strings.Contains(buys[i].strategyName, strategyName) {
 			if buys[i].strategyName != "" {
@@ -418,16 +454,25 @@ func mergePendingBuy(buys []portfolioPendingBuy, symbol string, score float64, s
 			}
 			buys[i].strategyName += strategyName
 		}
-		// Multiple strategies on one stock are alternatives. If either signal is
-		// unconstrained, the combined order remains unconstrained; otherwise use
-		// the union of their opening-gap intervals.
-		buys[i].minOpenGap = mergeMinOpenGap(buys[i].minOpenGap, incoming.MinOpenGap)
-		buys[i].maxOpenGap = mergeMaxOpenGap(buys[i].maxOpenGap, incoming.MaxOpenGap)
+		if specialExecution {
+			// A strategy-specific exit must keep the opening constraints of the
+			// same winning strategy when several strategies select one stock.
+			if useIncoming {
+				buys[i].minOpenGap = incoming.MinOpenGap
+				buys[i].maxOpenGap = incoming.MaxOpenGap
+			}
+		} else {
+			// Generic strategies are alternatives: combine their allowed gaps.
+			buys[i].minOpenGap = mergeMinOpenGap(buys[i].minOpenGap, incoming.MinOpenGap)
+			buys[i].maxOpenGap = mergeMaxOpenGap(buys[i].maxOpenGap, incoming.MaxOpenGap)
+		}
 		return buys
 	}
 	return append(buys, portfolioPendingBuy{
 		symbol: symbol, score: score, signalDate: signalDate, strategyName: strategyName, signalClose: signalClose,
 		minOpenGap: incoming.MinOpenGap, maxOpenGap: incoming.MaxOpenGap,
+		buyAtOpen:  incoming.BuyAtOpen,
+		exitPolicy: incoming.ExitPolicy, onlyWhenFlat: incoming.OnlyWhenFlat,
 	})
 }
 

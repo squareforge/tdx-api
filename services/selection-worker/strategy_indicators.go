@@ -28,6 +28,9 @@ type bollSnapshot struct {
 // factors used by the built-in strategy templates. Strength is normalized to
 // [0,1]; the runner applies the configured score weight afterwards.
 func evaluateAdvancedStrategyFactor(rows []FormulaKline, rule StrategyFactorRule, filter bool) (recognized, hit bool, strength float64, value any, reason string) {
+	if recognized, hit, strength, value, reason := evaluateShortTermPattern(rows, rule); recognized {
+		return recognized, hit, strength, value, reason
+	}
 	switch rule.Factor {
 	case "rebalance_day":
 		if len(rows) < 2 {

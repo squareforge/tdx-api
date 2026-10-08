@@ -1266,12 +1266,54 @@ func defaultStrategyTemplates() []Strategy {
 			Enabled:     true,
 			Readonly:    true,
 		},
+		{
+			ID:          "template-jq-limit-up-leader",
+			Name:        "连板龙头（日线版）",
+			Description: "前一交易日收盘涨停且至少连续两板，只选候选池内最高连板数；同板数按近5日平均成交量从小到大排序。次日开盘买入，可卖日收盘未涨停且已盈利或持满两个交易日时按收盘价卖出。VOL5以成交量近似，历史ST及上市日期过滤不完全等同聚宽。",
+			ConfigJSON:  `{"universe":"market","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"limit_up_streak","factor":"limit_up_streak","params":{"min_boards":2,"max_lookback":20,"min_listing_days":50,"limit_tolerance":0.25}}],"scores":[{"id":"limit_up_streak_score","factor":"limit_up_streak","weight":100,"params":{"min_boards":2,"max_lookback":20,"min_listing_days":50,"limit_tolerance":0.25}}],"pass":{"min_score":1,"top_n":10},"execution":{"buy_at_open":true,"exit_policy":"leader_close"}}`,
+			Enabled:     true,
+			Readonly:    true,
+		},
+		{
+			ID:          "template-jq-first-board-low-open",
+			Name:        "首板低开（日线版）",
+			Description: "前一交易日收盘首板、60日价格相对位置不高于50%，次日开盘低于前收盘3%-4%时按开盘价买入；首次可卖日收盘未涨停则按收盘价卖出。已移除11:28止盈；历史ST及上市日期过滤不完全等同聚宽。",
+			ConfigJSON:  `{"universe":"market","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"first_board_position","factor":"first_board_position","params":{"position_lookback":60,"max_position":50,"min_listing_days":250,"limit_tolerance":0.25}}],"scores":[{"id":"first_board_position_score","factor":"first_board_position","weight":100,"params":{"position_lookback":60,"max_position":50,"min_listing_days":250,"limit_tolerance":0.25}}],"pass":{"min_score":1,"top_n":0},"execution":{"min_open_gap":-4,"max_open_gap":-3,"buy_at_open":true,"exit_policy":"first_board_close","only_when_flat":true}}`,
+			Enabled:     true,
+			Readonly:    true,
+		},
 	}
+	templates = append(templates, researchShortTermStrategyTemplates()...)
 	for index := range templates {
 		applyHighQualityStrategyProfile(&templates[index])
 		applyDefaultStrategyUniverse(&templates[index])
 	}
 	return templates
+}
+
+// Research templates remain opt-in until their A-share out-of-sample results
+// have been reviewed. Historical backtests may select them explicitly.
+func researchShortTermStrategyTemplates() []Strategy {
+	return []Strategy{
+		{
+			ID: "template-research-nr7-close-breakout", Name: "NR7收盘突破（待验证）",
+			Description: "研究候选：前一日为近7日最窄振幅，信号日收盘向上突破前日高点且放量；次一交易日按回测规则买入。由StockCharts NR7盘中突破规则改为日线收盘确认，尚未验证A股超额收益。",
+			ConfigJSON:  `{"universe":"market","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":200000000}},{"id":"price_range","factor":"price_range","params":{"min":3,"max":100}},{"id":"nr7_pattern","factor":"nr7_close_breakout","params":{"min_breakout":0.3,"max_breakout":5,"min_volume_ratio":1.2}}],"scores":[{"id":"nr7_quality","factor":"nr7_close_breakout","weight":100,"params":{"min_breakout":0.3,"max_breakout":5,"min_volume_ratio":1.2}}],"pass":{"min_score":1,"top_n":10},"execution":{"buy_at_open":true}}`,
+			Enabled:     false, Readonly: true,
+		},
+		{
+			ID: "template-research-spring-reclaim", Name: "箱体假跌破收回（待验证）",
+			Description: "研究候选：信号日跌破前20日箱体支撑后收回，且收盘位于当日振幅上部。是Wyckoff spring形态的OHLCV简化代理，不代表完整吸筹阶段识别；尚未验证A股超额收益。",
+			ConfigJSON:  `{"universe":"market","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":200000000}},{"id":"price_range","factor":"price_range","params":{"min":3,"max":100}},{"id":"spring_pattern","factor":"spring_reclaim","params":{"lookback":20,"max_box_range":25,"min_break_depth":0.1,"max_break_depth":3,"min_reclaim":0.5,"min_close_position":0.65}}],"scores":[{"id":"spring_quality","factor":"spring_reclaim","weight":100,"params":{"lookback":20,"max_box_range":25,"min_break_depth":0.1,"max_break_depth":3,"min_reclaim":0.5,"min_close_position":0.65}}],"pass":{"min_score":1,"top_n":10},"execution":{"buy_at_open":true}}`,
+			Enabled:     false, Readonly: true,
+		},
+		{
+			ID: "template-research-gap-down-reclaim", Name: "低开收复（待验证）",
+			Description: "研究候选：信号日跳空低开后收盘收复前收盘价，要求较强收盘、放量和MA20上方。依据StockCharts缺口交易思路改为收盘确认，次一交易日买入；尚未验证A股超额收益。",
+			ConfigJSON:  `{"universe":"market","calc_count":260,"batch_size":50,"continue_on_error":true,"filters":[{"id":"exclude_pool","factor":"pool_exclude","params":{"pool_id":"exclude"}},{"id":"min_amount","factor":"min_amount","params":{"value":200000000}},{"id":"price_range","factor":"price_range","params":{"min":3,"max":100}},{"id":"gap_pattern","factor":"gap_down_reclaim","params":{"min_gap":-4,"max_gap":-1,"min_reclaim":0.3,"min_close_position":0.7,"min_volume_ratio":1.1}}],"scores":[{"id":"gap_quality","factor":"gap_down_reclaim","weight":100,"params":{"min_gap":-4,"max_gap":-1,"min_reclaim":0.3,"min_close_position":0.7,"min_volume_ratio":1.1}}],"pass":{"min_score":1,"top_n":10},"execution":{"buy_at_open":true}}`,
+			Enabled:     false, Readonly: true,
+		},
+	}
 }
 
 var retiredStrategyTemplateIDs = []string{

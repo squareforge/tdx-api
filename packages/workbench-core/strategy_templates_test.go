@@ -7,8 +7,8 @@ import (
 
 func TestDefaultStrategyTemplatesAreValidAndConservative(t *testing.T) {
 	templates := defaultStrategyTemplates()
-	if len(templates) != 5 {
-		t.Fatalf("template count = %d, want 5", len(templates))
+	if len(templates) != 10 {
+		t.Fatalf("template count = %d, want 10", len(templates))
 	}
 
 	seen := make(map[string]bool, len(templates))
@@ -17,8 +17,9 @@ func TestDefaultStrategyTemplatesAreValidAndConservative(t *testing.T) {
 			t.Fatalf("strategy template ID must be unique and non-empty: %q", item.ID)
 		}
 		seen[item.ID] = true
-		if !item.Enabled || !item.Readonly {
-			t.Fatalf("system template %q must be enabled and readonly", item.ID)
+		research := len(item.ID) >= len("template-research-") && item.ID[:len("template-research-")] == "template-research-"
+		if item.Enabled == research || !item.Readonly {
+			t.Fatalf("template %q has unexpected enabled/readonly state", item.ID)
 		}
 
 		var config struct {
@@ -35,6 +36,13 @@ func TestDefaultStrategyTemplatesAreValidAndConservative(t *testing.T) {
 				MinScore float64 `json:"min_score"`
 				TopN     int     `json:"top_n"`
 			} `json:"pass"`
+			Execution struct {
+				MinOpenGap   *float64 `json:"min_open_gap"`
+				MaxOpenGap   *float64 `json:"max_open_gap"`
+				BuyAtOpen    bool     `json:"buy_at_open"`
+				ExitPolicy   string   `json:"exit_policy"`
+				OnlyWhenFlat bool     `json:"only_when_flat"`
+			} `json:"execution"`
 			Universe struct {
 				Exclude []struct {
 					Pool string `json:"pool"`
@@ -47,14 +55,16 @@ func TestDefaultStrategyTemplatesAreValidAndConservative(t *testing.T) {
 		if len(config.Filters) == 0 || len(config.Scores) == 0 {
 			t.Fatalf("template %q must include filters and scores", item.ID)
 		}
-		if config.Pass.MinScore <= 0 || config.Pass.TopN <= 0 || config.Pass.TopN > 10 {
+		if config.Pass.MinScore <= 0 || config.Pass.TopN < 0 || config.Pass.TopN > 10 ||
+			(config.Pass.TopN == 0 && item.ID != "template-jq-first-board-low-open") {
 			t.Fatalf("template %q must use a bounded positive pass threshold: %+v", item.ID, config.Pass)
 		}
 		filterFactors := map[string]bool{}
 		for _, rule := range config.Filters {
 			filterFactors[rule.Factor] = true
 		}
-		if !filterFactors["pool_exclude"] || !filterFactors["min_amount"] {
+		if !filterFactors["pool_exclude"] ||
+			(!filterFactors["min_amount"] && item.ID != "template-jq-limit-up-leader" && item.ID != "template-jq-first-board-low-open") {
 			t.Fatalf("template %q must filter exclusions and liquidity: %+v", item.ID, filterFactors)
 		}
 		if config.ScanLimit == nil || *config.ScanLimit != 0 {
@@ -110,6 +120,25 @@ func TestDefaultStrategyTemplatesAreValidAndConservative(t *testing.T) {
 				t.Fatalf("first-board opening-gap constraints = %+v, want 0%%-6%%", execution)
 			}
 		}
+		if item.ID == "template-jq-limit-up-leader" {
+			if !filterFactors["limit_up_streak"] {
+				t.Fatal("leader template must filter by limit-up streak")
+			}
+			if !config.Execution.BuyAtOpen || config.Execution.ExitPolicy != "leader_close" {
+				t.Fatalf("leader execution = %+v", config.Execution)
+			}
+		}
+		if item.ID == "template-jq-first-board-low-open" {
+			if !filterFactors["first_board_position"] {
+				t.Fatal("first-board low-open template must filter by first-board position")
+			}
+			if !config.Execution.BuyAtOpen || config.Execution.ExitPolicy != "first_board_close" ||
+				!config.Execution.OnlyWhenFlat || config.Execution.MinOpenGap == nil ||
+				*config.Execution.MinOpenGap != -4 || config.Execution.MaxOpenGap == nil ||
+				*config.Execution.MaxOpenGap != -3 {
+				t.Fatalf("first-board low-open execution = %+v", config.Execution)
+			}
+		}
 	}
 
 	for _, id := range []string{
@@ -118,6 +147,11 @@ func TestDefaultStrategyTemplatesAreValidAndConservative(t *testing.T) {
 		"template-macd-calm-confirm",
 		"template-rocket-confirm",
 		"template-low-three-bull-first-board",
+		"template-jq-limit-up-leader",
+		"template-jq-first-board-low-open",
+		"template-research-nr7-close-breakout",
+		"template-research-spring-reclaim",
+		"template-research-gap-down-reclaim",
 	} {
 		if !seen[id] {
 			t.Fatalf("missing template %q", id)

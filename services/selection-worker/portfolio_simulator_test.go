@@ -2,6 +2,7 @@ package main
 
 import (
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -407,5 +408,123 @@ func TestPortfolioCosts(t *testing.T) {
 	}
 	if math.Abs(sim.cash-9536.95) > 0.01 {
 		t.Fatalf("cash = %v, want 9536.95", sim.cash)
+	}
+}
+
+func TestLimitUpLeaderKeepsHighestStreakAndLowestVolume(t *testing.T) {
+	bar := func(date int, yclose, close, vol float64) FormulaKline {
+		return FormulaKline{Date: date, YClose: yclose, Open: yclose, High: close, Low: yclose, Close: close, Vol: vol}
+	}
+	klines := map[string][]FormulaKline{
+		"000001": {bar(20260101, 10, 10, 100), bar(20260102, 10, 11, 100), bar(20260103, 11, 12.1, 100), bar(20260104, 12.1, 13.31, 100), bar(20260105, 13.31, 14.641, 100)},
+		"000002": {bar(20260101, 10, 10, 50), bar(20260102, 10, 11, 50), bar(20260103, 11, 12.1, 50), bar(20260104, 12.1, 13.31, 50), bar(20260105, 13.31, 14.641, 50)},
+		"000003": {bar(20260101, 10, 10, 10), bar(20260102, 10, 10, 10), bar(20260103, 10, 10, 10), bar(20260104, 10, 11, 10), bar(20260105, 11, 12.1, 10)},
+	}
+	for symbol, rows := range klines {
+		if count := limitUpStreak(symbol, rows, 20, 0.25); count != map[string]int{"000001": 4, "000002": 4, "000003": 2}[symbol] {
+			t.Fatalf("%s streak = %d", symbol, count)
+		}
+	}
+	result := &StrategyRunResult{Config: StrategyConfig{Pass: StrategyPassConfig{TopN: 10}}, KlineCache: klines}
+	matches := []StrategySelectionItem{{Symbol: "000001"}, {Symbol: "000002"}, {Symbol: "000003"}}
+	got := finalizeStrategyMatches(Strategy{ID: "template-jq-limit-up-leader"}, result, matches)
+	if len(got) != 2 || got[0].Symbol != "000002" || got[1].Symbol != "000001" || !strings.Contains(got[0].RankReason, "最高连板4板") {
+		t.Fatalf("leader order = %+v", got)
+	}
+}
+
+func TestFirstBoardPositionUsesSignalDayOnly(t *testing.T) {
+	rows := make([]FormulaKline, 61)
+	for i := range rows {
+		rows[i] = FormulaKline{Date: 20250101 + i, YClose: 10, Open: 10, High: 15, Low: 8, Close: 10}
+	}
+	rows[0].Date = 20240101
+	rows[60].Date = 20251001
+	rows[60].Close = 11
+	rule := StrategyFactorRule{Params: map[string]interface{}{"position_lookback": 60, "max_position": 50, "min_listing_days": 250}}
+	if hit, _, _, reason := evaluateFirstBoardPosition("000001", rows, rule); !hit {
+		t.Fatalf("first board rejected: %s", reason)
+	}
+	rows[59].Close = 11
+	if hit, _, _, _ := evaluateFirstBoardPosition("000001", rows, rule); hit {
+		t.Fatal("consecutive board must not count as first board")
+	}
+}
+
+func TestJQDailyExitRulesUseCloseAndObserveTPlusOne(t *testing.T) {
+	for _, tt := range []struct {
+		name, policy string
+		bars         []FormulaKline
+		exitPrice    float64
+	}{
+		{name: "first board", policy: "first_board_close", exitPrice: 9.8, bars: []FormulaKline{
+			{Date: 20260105, YClose: 10, Open: 9.65, High: 10.2, Low: 9.5, Close: 9.5},
+			{Date: 20260106, YClose: 9.5, Open: 9.6, High: 10, Low: 9.5, Close: 9.8},
+		}},
+		{name: "leader", policy: "leader_close", exitPrice: 10.8, bars: []FormulaKline{
+			{Date: 20260105, YClose: 10, Open: 10, High: 11, Low: 10, Close: 11},
+			{Date: 20260106, YClose: 11, Open: 10.5, High: 11, Low: 10.4, Close: 10.8},
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			klines := map[string][]FormulaKline{"000001": tt.bars}
+			sim := newPortfolioSimulator(portfolioSimConfig{InitialCash: 100000, MaxPositions: 1, BuyBase: "close", BuyOffset: -2, SellBase: "next_open", StopLoss: 1})
+			buy := pfBuy("000001", 90, 20260104, tt.name)
+			buy.buyAtOpen = true
+			buy.exitPolicy = tt.policy
+			sim.onDayOpen(20260105, "2026-01-05", klines, []portfolioPendingBuy{buy})
+			if pos := sim.positions["000001"]; pos == nil || pos.entryPrice != tt.bars[0].Open {
+				t.Fatalf("entry must use opening price: %+v", pos)
+			}
+			sim.onDayClose(20260105, "2026-01-05", klines)
+			if len(sim.positions) != 1 {
+				t.Fatal("entry-day close must not sell T+1 shares")
+			}
+			sim.onDayOpen(20260106, "2026-01-06", klines, nil)
+			sim.onDayClose(20260106, "2026-01-06", klines)
+			trade := pfSingleTrade(t, sim, "run")
+			if trade.Status != "closed" || trade.ExitPrice != tt.exitPrice || trade.ExitDate != "2026-01-06" {
+				t.Fatalf("trade = %+v", trade)
+			}
+		})
+	}
+}
+
+func TestFirstBoardOpeningGapAndFlatConstraint(t *testing.T) {
+	klines := map[string][]FormulaKline{
+		"000001": {{Date: 20260105, YClose: 10, Open: 9.65, High: 10, Low: 9.6, Close: 9.8}},
+		"000002": {{Date: 20260105, YClose: 10, Open: 9.8, High: 10, Low: 9.7, Close: 9.9}},
+	}
+	minGap, maxGap := -4.0, -3.0
+	buys := []portfolioPendingBuy{
+		{symbol: "000001", score: 100, signalDate: 20260104, minOpenGap: &minGap, maxOpenGap: &maxGap, buyAtOpen: true, onlyWhenFlat: true, exitPolicy: "first_board_close"},
+		{symbol: "000002", score: 90, signalDate: 20260104, minOpenGap: &minGap, maxOpenGap: &maxGap, buyAtOpen: true, onlyWhenFlat: true, exitPolicy: "first_board_close"},
+	}
+	sim := newPortfolioSimulator(portfolioSimConfig{InitialCash: 100000, MaxPositions: 2, BuyBase: "close", BuyOffset: -2})
+	sim.onDayOpen(20260105, "2026-01-05", klines, buys)
+	if pos := sim.positions["000001"]; pos == nil || pos.entryPrice != 9.65 {
+		t.Fatalf("first board must buy at open: %+v", pos)
+	}
+	if len(sim.trades) != 1 || !strings.Contains(sim.trades[0].Reason, "开盘涨幅") {
+		t.Fatalf("out-of-range open should be skipped: %+v", sim.trades)
+	}
+}
+
+func TestMergedDailyStrategyKeepsItsOpeningGap(t *testing.T) {
+	minGap, maxGap := -4.0, -3.0
+	daily := StrategyExecutionConfig{
+		MinOpenGap: &minGap, MaxOpenGap: &maxGap, BuyAtOpen: true,
+		ExitPolicy: "first_board_close", OnlyWhenFlat: true,
+	}
+	buys := mergePendingBuy(nil, "000001", 90, 20260105, "首板低开", 10, daily)
+	buys = mergePendingBuy(buys, "000001", 80, 20260105, "普通策略", 10)
+	if len(buys) != 1 || !buys[0].buyAtOpen || buys[0].exitPolicy != daily.ExitPolicy ||
+		buys[0].minOpenGap == nil || *buys[0].minOpenGap != minGap ||
+		buys[0].maxOpenGap == nil || *buys[0].maxOpenGap != maxGap {
+		t.Fatalf("daily execution constraints changed: %+v", buys)
+	}
+	buys = mergePendingBuy(buys, "000001", 100, 20260105, "更高分普通策略", 10)
+	if buys[0].buyAtOpen || buys[0].exitPolicy != "" || buys[0].minOpenGap != nil || buys[0].maxOpenGap != nil {
+		t.Fatalf("winning generic execution was not selected: %+v", buys[0])
 	}
 }

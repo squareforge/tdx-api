@@ -298,6 +298,9 @@ func handleStrategyFactors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	successResponse(w, []StrategyFactorDefinition{
+		{ID: "nr7_close_breakout", Name: "NR7收盘突破", Kind: "filter", Description: "前一日为近7日最窄振幅，今日收盘突破其高点且放量。", Params: []StrategyFactorParamDef{{Name: "min_breakout", Label: "最低突破%", Type: "number", Default: 0.3}, {Name: "max_breakout", Label: "最高突破%", Type: "number", Default: 5}, {Name: "min_volume_ratio", Label: "最低量比", Type: "number", Default: 1.2}}},
+		{ID: "spring_reclaim", Name: "箱体假跌破收回", Kind: "filter", Description: "今日跌破前N日低点后收盘收回，要求箱体及下破深度受限。", Params: []StrategyFactorParamDef{{Name: "lookback", Label: "箱体天数", Type: "number", Default: 20}, {Name: "max_box_range", Label: "最大箱体振幅%", Type: "number", Default: 25}, {Name: "min_break_depth", Label: "最小下破%", Type: "number", Default: 0.1}, {Name: "max_break_depth", Label: "最大下破%", Type: "number", Default: 3}, {Name: "min_reclaim", Label: "最低收复%", Type: "number", Default: 0.5}, {Name: "min_close_position", Label: "最低收盘位置", Type: "number", Default: 0.65}}},
+		{ID: "gap_down_reclaim", Name: "低开收复", Kind: "filter", Description: "今日低开后收盘收复昨收，要求强收盘、放量和MA20上方。", Params: []StrategyFactorParamDef{{Name: "min_gap", Label: "最低开盘涨幅%", Type: "number", Default: -4}, {Name: "max_gap", Label: "最高开盘涨幅%", Type: "number", Default: -1}, {Name: "min_reclaim", Label: "最低收复%", Type: "number", Default: 0.3}, {Name: "min_close_position", Label: "最低收盘位置", Type: "number", Default: 0.7}, {Name: "min_volume_ratio", Label: "最低量比", Type: "number", Default: 1.1}}},
 		{
 			ID:          "pool_exclude",
 			Name:        "排除股票池",

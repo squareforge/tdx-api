@@ -246,12 +246,13 @@ export function HistoricalBacktestWorkspace() {
         apiFetch<StockDirectory>('/api/codes').catch(() => ({ codes: [] })),
         apiFetch<StockPool[]>('/api/stock-pools')
       ]);
-      const available = (strategyList || []).filter((item) => item.enabled);
+      const available = strategyList || [];
       setStrategies(available);
       setStockPools(poolList || []);
       if (!initializedStrategies.current) {
-        const systemIDs = available.filter((item) => item.readonly).map((item) => item.id);
-        setStrategyIDs(systemIDs.length ? systemIDs : available.map((item) => item.id));
+        const enabled = available.filter((item) => item.enabled);
+        const systemIDs = enabled.filter((item) => item.readonly).map((item) => item.id);
+        setStrategyIDs(systemIDs.length ? systemIDs : enabled.map((item) => item.id));
         initializedStrategies.current = true;
       }
       setStockNames(Object.fromEntries((directory.codes || []).flatMap((item) => {
@@ -501,7 +502,7 @@ export function HistoricalBacktestWorkspace() {
             <div className="historical-form-fields historical-form-fields-scope">
               <label><span>开始日期</span><DatePicker value={startDate} onChange={setStartDate} allowClear={false} /></label>
               <label><span>结束日期</span><DatePicker value={endDate} onChange={setEndDate} allowClear={false} disabledDate={(date) => Boolean(startDate && date.isBefore(startDate, 'day'))} /></label>
-              <label className="historical-strategy-picker"><span>执行策略</span><Select mode="multiple" maxTagCount="responsive" value={strategyIDs} onChange={setStrategyIDs} options={strategies.map((item) => ({ value: item.id, label: item.name }))} /></label>
+              <label className="historical-strategy-picker"><span>执行策略</span><Select mode="multiple" maxTagCount="responsive" value={strategyIDs} onChange={setStrategyIDs} options={strategies.map((item) => ({ value: item.id, label: `${item.name}${item.enabled ? '' : ' · 未启用'}` }))} /></label>
               <label className="historical-universe-picker"><span>选股范围（多选合并、自动去重）</span><Select mode="multiple" maxTagCount="responsive" placeholder="跟随策略 · 不额外限定" value={universePoolIDs} onChange={setUniversePoolIDs} options={stockPools.filter((item) => item.id !== 'exclude').map((item) => ({ value: item.id, label: `${item.name} · ${item.symbols?.length || 0}只` }))} /></label>
             </div>
           </section>

@@ -3,7 +3,80 @@ package main
 import (
 	"fmt"
 	"math"
+	"time"
 )
+
+func limitUpStreak(symbol string, rows []FormulaKline, maxLookback int, tolerance float64) int {
+	count := 0
+	for i := len(rows) - 1; i >= 0 && count < maxLookback; i-- {
+		if !strategyLimitUpClose(symbol, rows[i], tolerance) {
+			break
+		}
+		count++
+	}
+	return count
+}
+
+func evaluateLimitUpStreak(symbol string, rows []FormulaKline, rule StrategyFactorRule) (bool, float64, any, string) {
+	minBoards := intParam(rule.Params, "min_boards", 2)
+	maxLookback := intParam(rule.Params, "max_lookback", 20)
+	if minBoards < 2 || maxLookback < minBoards || len(rows) < minBoards+1 {
+		return false, 0, nil, "连板数据或参数不足"
+	}
+	if !hasAvailableListingHistory(rows, intParam(rule.Params, "min_listing_days", 50)) {
+		return false, 0, nil, "可用上市历史不足"
+	}
+	count := limitUpStreak(symbol, rows, maxLookback, floatParam(rule.Params, "limit_tolerance", 0.25))
+	if count < minBoards {
+		return false, 0, count, fmt.Sprintf("连续涨停%d板，低于%d板", count, minBoards)
+	}
+	return true, 1, count, fmt.Sprintf("连续涨停%d板", count)
+}
+
+func evaluateFirstBoardPosition(symbol string, rows []FormulaKline, rule StrategyFactorRule) (bool, float64, any, string) {
+	lookback := intParam(rule.Params, "position_lookback", 60)
+	maxPosition := floatParam(rule.Params, "max_position", 50)
+	listingDays := intParam(rule.Params, "min_listing_days", 250)
+	if lookback < 2 || maxPosition < 0 || maxPosition > 100 || listingDays < 0 || len(rows) < lookback {
+		return false, 0, nil, "首板位置数据或参数不足"
+	}
+	current := rows[len(rows)-1]
+	if !strategyLimitUpClose(symbol, current, floatParam(rule.Params, "limit_tolerance", 0.25)) {
+		return false, 0, nil, "信号日收盘未涨停"
+	}
+	if len(rows) >= 2 && strategyLimitUpClose(symbol, rows[len(rows)-2], floatParam(rule.Params, "limit_tolerance", 0.25)) {
+		return false, 0, nil, "前一交易日已涨停"
+	}
+	if !hasAvailableListingHistory(rows, listingDays) {
+		return false, 0, nil, "可用上市历史不足"
+	}
+	high, low := 0.0, math.MaxFloat64
+	for _, row := range rows[len(rows)-lookback:] {
+		if row.High > high {
+			high = row.High
+		}
+		if row.Low > 0 && row.Low < low {
+			low = row.Low
+		}
+	}
+	if high <= low || low == math.MaxFloat64 {
+		return false, 0, nil, "60日价格区间无效"
+	}
+	position := (current.Close - low) * 100 / (high - low)
+	if position > maxPosition {
+		return false, 0, position, fmt.Sprintf("相对位置%.1f%%高于%.1f%%", position, maxPosition)
+	}
+	return true, 1, position, fmt.Sprintf("首板60日相对位置%.1f%%", position)
+}
+
+func hasAvailableListingHistory(rows []FormulaKline, days int) bool {
+	if len(rows) < 2 || days < 0 {
+		return false
+	}
+	firstDate, firstErr := time.ParseInLocation("20060102", fmt.Sprintf("%08d", rows[0].Date), time.Local)
+	currentDate, currentErr := time.ParseInLocation("20060102", fmt.Sprintf("%08d", rows[len(rows)-1].Date), time.Local)
+	return firstErr == nil && currentErr == nil && currentDate.Sub(firstDate).Hours()/24 >= float64(days)
+}
 
 // evaluateLowThreeBullFirstBoard adapts the JoinQuant "低位3连阳首板" setup
 // to the local point-in-time daily K-line model. Every input row is visible on

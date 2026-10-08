@@ -36,8 +36,11 @@ type StrategyConfig struct {
 // after a signal has been produced. Keeping these out of factor evaluation
 // prevents next-session prices from leaking into the signal day.
 type StrategyExecutionConfig struct {
-	MinOpenGap *float64 `json:"min_open_gap,omitempty"`
-	MaxOpenGap *float64 `json:"max_open_gap,omitempty"`
+	MinOpenGap   *float64 `json:"min_open_gap,omitempty"`
+	MaxOpenGap   *float64 `json:"max_open_gap,omitempty"`
+	BuyAtOpen    bool     `json:"buy_at_open,omitempty"`
+	ExitPolicy   string   `json:"exit_policy,omitempty"`
+	OnlyWhenFlat bool     `json:"only_when_flat,omitempty"`
 }
 
 type StrategyFactorRule struct {
@@ -837,6 +840,18 @@ func (r *AutomationRunner) evaluateFactor(result *StrategyRunResult, symbol stri
 		if hit {
 			fr.Score = strength
 		}
+	case "limit_up_streak":
+		hit, strength, value, reason := evaluateLimitUpStreak(symbol, rows, rule)
+		fr.Hit, fr.Reason, fr.Value = hit, reason, value
+		if hit {
+			fr.Score = strength
+		}
+	case "first_board_position":
+		hit, strength, value, reason := evaluateFirstBoardPosition(symbol, rows, rule)
+		fr.Hit, fr.Reason, fr.Value = hit, reason, value
+		if hit {
+			fr.Score = strength
+		}
 	case "formula":
 		formulaID := stringParam(rule.Params, "formula_id", "")
 		formulaName := stringParam(rule.Params, "formula_name", "")
@@ -1424,7 +1439,7 @@ func (r *AutomationRunner) evaluateStrategyDay(ctx context.Context, strategy Str
 				matches = append(matches, evaluation.item)
 			}
 		}
-		return rankHistoricalMatches(matches, result.Config.Pass.TopN), formulaDuration, evaluationDuration, nil
+		return finalizeStrategyMatches(strategy, result, matches), formulaDuration, evaluationDuration, nil
 	}
 
 	evaluationStarted := time.Now()
@@ -1460,5 +1475,42 @@ func (r *AutomationRunner) evaluateStrategyDay(ctx context.Context, strategy Str
 		}
 	}
 	evaluationDuration += time.Since(evaluationStarted)
-	return rankHistoricalMatches(matches, result.Config.Pass.TopN), formulaDuration, evaluationDuration, nil
+	return finalizeStrategyMatches(strategy, result, matches), formulaDuration, evaluationDuration, nil
+}
+
+func finalizeStrategyMatches(strategy Strategy, result *StrategyRunResult, matches []StrategySelectionItem) []StrategySelectionItem {
+	if strategy.ID != "template-jq-limit-up-leader" {
+		return rankHistoricalMatches(matches, result.Config.Pass.TopN)
+	}
+	maxStreak := 0
+	for _, item := range matches {
+		count := limitUpStreak(item.Symbol, result.KlineCache[item.Symbol], 20, 0.25)
+		if count > maxStreak {
+			maxStreak = count
+		}
+	}
+	leaders := make([]StrategySelectionItem, 0, len(matches))
+	for _, item := range matches {
+		if limitUpStreak(item.Symbol, result.KlineCache[item.Symbol], 20, 0.25) == maxStreak {
+			leaders = append(leaders, item)
+		}
+	}
+	sort.Slice(leaders, func(i, j int) bool {
+		left := strategyAverageVolumeAt(result.KlineCache[leaders[i].Symbol], len(result.KlineCache[leaders[i].Symbol]), 5)
+		right := strategyAverageVolumeAt(result.KlineCache[leaders[j].Symbol], len(result.KlineCache[leaders[j].Symbol]), 5)
+		if left == right {
+			return leaders[i].Symbol < leaders[j].Symbol
+		}
+		return left < right
+	})
+	for index := range leaders {
+		leaders[index].Rank = index + 1
+		leaders[index].RankScore = 100 - float64(index)*0.01
+		leaders[index].Score = leaders[index].RankScore
+		leaders[index].RankReason = fmt.Sprintf("最高连板%d板；近5日平均成交量升序（VOL5近似）", maxStreak)
+	}
+	if topN := result.Config.Pass.TopN; topN > 0 && len(leaders) > topN {
+		return leaders[:topN]
+	}
+	return leaders
 }

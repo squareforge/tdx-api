@@ -230,6 +230,50 @@ func TestWorkerAdvancedBreakoutAndVolumeFactors(t *testing.T) {
 	}
 }
 
+func TestResearchShortTermPatternsUseCompletedDailyBars(t *testing.T) {
+	rows := workerFactorRows(make([]float64, 21), nil)
+	for index := range rows {
+		rows[index].Open, rows[index].High, rows[index].Low = 10, 11, 9
+		rows[index].Close, rows[index].YClose, rows[index].Vol = 10, 10, 100
+	}
+	if got := workerEvalFactor("nr7_close_breakout", 100, nil, rows[:20], true); got.Hit {
+		t.Fatalf("NR7 cannot use a future breakout bar: %+v", got)
+	}
+	rows[19].High, rows[19].Low = 10.2, 9.8
+	rows[20].Open, rows[20].High, rows[20].Low, rows[20].Close, rows[20].Vol = 10.1, 10.9, 10, 10.6, 200
+	if got := workerEvalFactor("nr7_close_breakout", 100, nil, rows, true); !got.Hit {
+		t.Fatalf("confirmed NR7 breakout should pass: %+v", got)
+	}
+	rows[20].High = 10.5
+	if got := workerEvalFactor("nr7_close_breakout", 100, nil, rows, true); got.Hit {
+		t.Fatalf("close above the recorded high must fail: %+v", got)
+	}
+	rows[20].High = 10.9
+	rows[20].Close = 10.1
+	if got := workerEvalFactor("nr7_close_breakout", 100, nil, rows, true); got.Hit {
+		t.Fatalf("intraday high alone cannot confirm NR7 breakout: %+v", got)
+	}
+
+	rows[19].High, rows[19].Low = 11, 9
+	rows[20].Open, rows[20].High, rows[20].Low, rows[20].Close, rows[20].Vol = 9.2, 10.3, 8.85, 9.8, 120
+	if got := workerEvalFactor("spring_reclaim", 100, nil, rows, true); !got.Hit {
+		t.Fatalf("support break and close reclaim should pass: %+v", got)
+	}
+	rows[20].Close = 8.9
+	if got := workerEvalFactor("spring_reclaim", 100, nil, rows, true); got.Hit {
+		t.Fatalf("unreclaimed support must fail: %+v", got)
+	}
+
+	rows[20].Open, rows[20].High, rows[20].Low, rows[20].Close, rows[20].Vol = 9.8, 10.6, 9.6, 10.4, 150
+	if got := workerEvalFactor("gap_down_reclaim", 100, nil, rows, true); !got.Hit {
+		t.Fatalf("gap-down close reclaim should pass: %+v", got)
+	}
+	rows[20].Close = 9.9
+	if got := workerEvalFactor("gap_down_reclaim", 100, nil, rows, true); got.Hit {
+		t.Fatalf("an unfilled gap must fail: %+v", got)
+	}
+}
+
 func firstBoardFactorRows() []FormulaKline {
 	rows := make([]FormulaKline, 61)
 	for index := range rows {

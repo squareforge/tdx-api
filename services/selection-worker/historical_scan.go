@@ -191,6 +191,8 @@ func replayHistoricalPortfolio(klines map[string][]FormulaKline, dates []int, si
 		byDate[sig.SignalDate] = append(byDate[sig.SignalDate], portfolioPendingBuy{
 			symbol: sig.Symbol, score: sig.Score, signalDate: sig.SignalDate, signalClose: sig.SignalClose,
 			minOpenGap: sig.Execution.MinOpenGap, maxOpenGap: sig.Execution.MaxOpenGap,
+			buyAtOpen:  sig.Execution.BuyAtOpen,
+			exitPolicy: sig.Execution.ExitPolicy, onlyWhenFlat: sig.Execution.OnlyWhenFlat,
 		})
 	}
 	sim := newPortfolioSimulator(cfg)
