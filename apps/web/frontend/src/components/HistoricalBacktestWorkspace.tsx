@@ -62,7 +62,7 @@ function signedMetricColor(value?: number) {
 }
 
 function scanParamText(item: HistoricalScanResult) {
-  return `${item.buy_base === 'open' ? '开盘' : '收盘'}买 · ${item.sell_base === 'next_open' ? '次日开' : '当日收'}卖 · 止${item.take_profit}% 回${item.trail_drawdown}% 损${item.stop_loss}% ${item.max_hold_days}天`;
+  return `${item.buy_base === 'open' ? '开盘' : '收盘'}买 · 到期${item.sell_base === 'next_open' ? '次日开' : '当日收'}卖 · 止${item.take_profit}% 回${item.trail_drawdown}% 损${item.stop_loss}% ${item.max_hold_days}天`;
 }
 
 function scanScopeName(item: HistoricalScanResult) {
@@ -107,7 +107,7 @@ const scanDetailColumns = [
   { title: '股票池组合', key: 'universe_name', width: 220, render: (_: unknown, row: HistoricalScanResult) => scanScopeName(row) },
   { title: '候选数', dataIndex: 'universe_symbol_count', width: 80, render: (value?: number) => value || '--' },
   { title: '买入', dataIndex: 'buy_base', width: 70, render: (value: string) => value === 'open' ? '开盘' : '收盘' },
-  { title: '卖出', dataIndex: 'sell_base', width: 90, render: (value: string) => value === 'next_open' ? '次日开盘' : '当日收盘' },
+  { title: '到期退出', dataIndex: 'sell_base', width: 90, render: (value: string) => value === 'next_open' ? '次日开盘' : '当日收盘' },
   { title: '止盈', dataIndex: 'take_profit', width: 70, render: (value: number) => `${value}%` },
   { title: '回撤', dataIndex: 'trail_drawdown', width: 70, render: (value: number) => `${value}%` },
   { title: '止损', dataIndex: 'stop_loss', width: 70, render: (value: number) => `${value}%` },
@@ -537,7 +537,7 @@ export function HistoricalBacktestWorkspace() {
             <div className="historical-form-fields historical-form-fields-execution">
               <label><span>买入基准</span><Select value={buyBase} onChange={setBuyBase} options={[{ value: 'open', label: '开盘价' }, { value: 'close', label: '收盘价' }]} /></label>
               <label><span>买入偏移</span><InputNumber min={-50} max={50} step={0.1} addonAfter="%" value={buyOffset} onChange={(value) => setBuyOffset(value || 0)} /></label>
-              <label><span>卖出基准</span><Select value={sellBase} onChange={setSellBase} options={[{ value: 'next_open', label: '次日开盘' }, { value: 'same_close', label: '当日收盘' }]} /></label>
+              <label><span title="仅影响持有天数到期的退出；止盈、止损和回撤按盘中触价成交">到期退出时机</span><Select value={sellBase} onChange={setSellBase} options={[{ value: 'next_open', label: '次日开盘' }, { value: 'same_close', label: '当日收盘' }]} /></label>
               <label className="historical-cash-field"><span>初始资金</span><InputNumber min={10000} step={10000} addonAfter="元" value={initialCash} onChange={(value) => setInitialCash(value || 100000)} /></label>
               <Button className="historical-start-button" type="primary" icon={<PlayCircleOutlined />} loading={starting} disabled={runs.some((item) => item.status === 'running')} onClick={() => void startBacktest()}>开始回测</Button>
               <Button className="historical-start-button" icon={<ExperimentOutlined />} loading={scanning} disabled={scanRuns.some((item) => item.status === 'running')} onClick={() => void startScan()}>扫描全部策略</Button>

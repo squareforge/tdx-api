@@ -8,7 +8,7 @@ import (
 )
 
 // 组合模拟撮合引擎:在历史回测逐日信号的基础上,模拟单账户资金池的买卖流水。
-// 信号于 T 日收盘产生,撮合在 T+1 日开盘执行;通常退出条件在收盘判定、次日开盘执行。
+// 信号于 T 日收盘产生,买入在 T+1 日执行;通用风控从买入后的下一交易日开始生效。
 // 特定日线策略在可卖日按当日收盘价模拟退出。
 // 约束:涨停买不进、跌停卖不出、100股整手、T+1、最大持仓数、等权分配。
 
@@ -19,7 +19,7 @@ type portfolioSimConfig struct {
 	SellCost      float64 `json:"sell_cost"` // 卖出费率(佣金+过户+印花税),与策略回测引擎一致
 	BuyBase       string  `json:"buy_base"`  // 买入基准价: open(次日开盘) | close(信号日收盘)
 	BuyOffset     float64 `json:"buy_offset"`
-	SellBase      string  `json:"sell_base"` // 卖出价: next_open(次日开盘) | same_close(当日收盘)
+	SellBase      string  `json:"sell_base"` // 到期退出: next_open(次日开盘) | same_close(当日收盘)
 	TakeProfit    float64 `json:"take_profit"`
 	TrailDrawdown float64 `json:"trail_drawdown"`
 	StopLoss      float64 `json:"stop_loss"`
@@ -35,9 +35,9 @@ type portfolioSimPosition struct {
 	strategyName   string
 	exitPolicy     string
 	lastClose      float64 // 最近可用收盘价(权益估值用)
-	peakClose      float64 // 持仓期间最高收盘价(回撤止损基准)
+	peakHigh       float64 // 可卖期间的最高价;买入日仅以成交价和收盘价初始化
 	holdDays       int     // 持有交易日数
-	pendingExit    string  // 昨日收盘判定、次日开盘执行的退出原因
+	pendingExit    string  // 顺延到下一可交易日开盘执行的退出原因
 	pendingExitSet bool
 }
 
@@ -242,7 +242,7 @@ func (sim *portfolioSimulator) tryBuy(buy portfolioPendingBuy, date int, dateTex
 		strategyName: buy.strategyName,
 		exitPolicy:   buy.exitPolicy,
 		lastClose:    fillPrice,
-		peakClose:    fillPrice,
+		peakHigh:     fillPrice,
 	}
 }
 
@@ -285,10 +285,9 @@ func (sim *portfolioSimulator) appendSkip(buy portfolioPendingBuy, attemptDate, 
 	})
 }
 
-// onDayClose 收盘结算:更新持仓估值与峰值,判定退出条件,记录最大回撤。
-// 退出判定按"止损 > 回撤 > 止盈 > 超时"优先级;卖出价由 SellBase 决定。
-// same_close 在可卖持仓上按触发日收盘成交，买入日触发仍按 T+1 顺延；
-// next_open 一律在下一可交易日开盘执行。
+// onDayClose 逐日回放风控触价,更新收盘估值并结算组合回撤。
+// 日 K 线无法判断高低价先后;同时触发时按止损、回撤、止盈优先。
+// SellBase 只决定持有到期的退出时点;买入日不触发通用卖出条件。
 func (sim *portfolioSimulator) onDayClose(date int, dateText string, klines map[string][]FormulaKline) {
 	for _, pos := range sim.positions {
 		row, ok := portfolioKlineOnDate(klines[pos.symbol], date)
@@ -297,11 +296,15 @@ func (sim *portfolioSimulator) onDayClose(date int, dateText string, klines map[
 		}
 		pos.lastClose = row.Close
 		pos.holdDays++
-		if row.Close > pos.peakClose {
-			pos.peakClose = row.Close
+		if date <= pos.entryDate {
+			// 限价买入时,当天最高价可能发生在成交前,不能用它更新回撤峰值。
+			if row.Close > pos.peakHigh {
+				pos.peakHigh = row.Close
+			}
+			continue
 		}
 		if pos.exitPolicy != "" {
-			if date <= pos.entryDate || strategyLimitUpClose(pos.symbol, row, 0.25) ||
+			if strategyLimitUpClose(pos.symbol, row, 0.25) ||
 				row.YClose <= 0 || row.Close <= row.YClose*(1-portfolioPriceLimitRate(pos.symbol)) {
 				continue
 			}
@@ -317,28 +320,52 @@ func (sim *portfolioSimulator) onDayClose(date int, dateText string, klines map[
 			}
 			continue
 		}
+		if pos.pendingExitSet {
+			continue // 跌停或停牌顺延的卖单,保留首次触发原因
+		}
+		// 用当日最高价先更新峰值,再用最低价判断回撤,按保守路径处理日内顺序歧义。
+		priorPeak := pos.peakHigh
+		if row.High > pos.peakHigh {
+			pos.peakHigh = row.High
+		}
+		stopPrice := pos.entryPrice * (1 - sim.cfg.StopLoss/100)
+		trailPrice := pos.peakHigh * (1 - sim.cfg.TrailDrawdown/100)
+		takePrice := pos.entryPrice * (1 + sim.cfg.TakeProfit/100)
 		var reason string
+		price := 0.0
+		intraday := true
+		// 开盘价先于当日高低价,开盘触发的条件单优先于盘中保守判定。
 		switch {
-		case row.Close <= pos.entryPrice*(1-sim.cfg.StopLoss/100):
-			reason = fmt.Sprintf("止损(收盘≤-%g%%)", sim.cfg.StopLoss)
-		case row.Close <= pos.peakClose*(1-sim.cfg.TrailDrawdown/100):
-			reason = fmt.Sprintf("回撤(峰值回撤≥%g%%)", sim.cfg.TrailDrawdown)
-		case row.Close >= pos.entryPrice*(1+sim.cfg.TakeProfit/100):
-			reason = fmt.Sprintf("止盈(收盘收益≥%g%%)", sim.cfg.TakeProfit)
+		case row.Open <= stopPrice:
+			reason, price = fmt.Sprintf("止损(盘中触及-%g%%)", sim.cfg.StopLoss), row.Open
+		case row.Open <= priorPeak*(1-sim.cfg.TrailDrawdown/100):
+			reason, price = fmt.Sprintf("回撤(峰值回撤≥%g%%)", sim.cfg.TrailDrawdown), row.Open
+		case row.Open >= takePrice:
+			reason, price = fmt.Sprintf("止盈(盘中触及+%g%%)", sim.cfg.TakeProfit), row.Open
+		case row.Low <= stopPrice:
+			reason, price = fmt.Sprintf("止损(盘中触及-%g%%)", sim.cfg.StopLoss), stopPrice
+		case row.Low <= trailPrice:
+			reason, price = fmt.Sprintf("回撤(峰值回撤≥%g%%)", sim.cfg.TrailDrawdown), trailPrice
+		case row.High >= takePrice:
+			reason, price = fmt.Sprintf("止盈(盘中触及+%g%%)", sim.cfg.TakeProfit), takePrice
 		case pos.holdDays >= sim.cfg.MaxHoldDays:
 			reason = fmt.Sprintf("持有超过%d个交易日", sim.cfg.MaxHoldDays)
+			intraday = false
 		}
 		if reason == "" {
 			continue
 		}
-		if sim.cfg.SellBase == "same_close" && date > pos.entryDate {
-			pos.pendingExit = reason
-			sim.executeSell(pos, row.Close, date, dateText)
-		} else {
-			// A-share shares bought at today's open cannot be sold at today's
-			// close. Defer a same-close signal on the entry day to the next
-			// tradable open so every execution path observes T+1.
+		limitDown := row.YClose > 0 && row.Open <= row.YClose*(1-portfolioPriceLimitRate(pos.symbol)) &&
+			row.High <= row.YClose*(1-portfolioPriceLimitRate(pos.symbol))
+		if (!intraday && sim.cfg.SellBase == "next_open") || (intraday && limitDown) {
+			// 全天封死跌停时无法按盘中条件成交,待下一可交易日开盘重试。
 			pos.pendingExit, pos.pendingExitSet = reason, true
+		} else {
+			if !intraday {
+				price = row.Close
+			}
+			pos.pendingExit = reason
+			sim.executeSell(pos, price, date, dateText)
 		}
 	}
 	equity := sim.equity()

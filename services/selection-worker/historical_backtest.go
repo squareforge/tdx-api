@@ -418,13 +418,25 @@ func (r *AutomationRunner) runHistoricalBacktest(ctx context.Context, run Histor
 
 func (r *AutomationRunner) runHistoricalBacktestWithProfile(ctx context.Context, run HistoricalBacktestRun, req historicalBacktestRequest, strategies []Strategy, profile *historicalBacktestProfile) (map[string]interface{}, error) {
 	runStarted := time.Now()
+
+	// 1. 再做一次参数归一化。
+	// startHistoricalBacktest 启动任务前已经校验过请求，这里重新调用是为了拿到
+	// time.Time 类型的 start/end，方便后面计算需要加载多少历史 K 线，以及生成交易日范围。
+	// req 里的默认值也会在这里被补齐，例如 horizons、资金、止盈止损等。
 	_, start, end, err := normalizeHistoricalBacktestRequest(req)
 	if err != nil {
 		return nil, err
 	}
+
+	// 2. 为每个策略准备一份执行计划。
+	// historicalStrategyPlan 会保存策略本身、解析后的策略配置、该策略要扫描的股票列表，
+	// 以及可选的基本面/未复权 K 线缓存。后面的逐日回放只遍历 plans，不再直接遍历原始 strategies。
 	plans := make([]historicalStrategyPlan, 0, len(strategies))
 	allSymbols := map[string]bool{}
 	stageStarted := time.Now()
+
+	// 用户在前端可以选择一个或多个股票池。这里先把股票池合并并去重。
+	// 如果用户没有选股票池，requestedUniverse 为空，后面会表示“跟随策略自己的候选范围”。
 	requestedUniverse, err := r.historicalBacktestUniverse(req.UniversePoolIDs)
 	if err != nil {
 		return nil, err
@@ -435,19 +447,29 @@ func (r *AutomationRunner) runHistoricalBacktestWithProfile(ctx context.Context,
 			return nil, err
 		}
 		normalizeSystemStrategyConfig(&config)
+
+		// 历史回测这里按日线重放。非日线策略没有日线 K 线语义，直接拒绝。
 		if config.Period != "day" {
 			return nil, fmt.Errorf("策略 %s 不是日线策略", strategy.Name)
 		}
+
+		// 先取策略自身定义的候选范围，再和用户选择的股票池求交集。
+		// 这样用户股票池只做额外限定，不会把策略本来不覆盖的股票强行加入。
 		strategySymbols, err := r.strategyUniverse(config)
 		if err != nil {
 			return nil, fmt.Errorf("策略 %s 候选范围失败: %w", strategy.Name, err)
 		}
 		symbols := intersectHistoricalSymbols(strategySymbols, requestedUniverse)
+
+		// allSymbols 是所有策略实际需要加载行情的股票全集。
+		// 多个策略可能覆盖同一只股票，这里用 map 去重，避免重复加载 K 线。
 		for _, symbol := range symbols {
 			allSymbols[symbol] = true
 		}
 		plans = append(plans, historicalStrategyPlan{strategy: strategy, config: config, symbols: symbols})
 	}
+
+	// 把股票全集转成稳定排序后的切片。排序本身不影响结果，但能让日志、进度和后续处理更稳定。
 	symbols := make([]string, 0, len(allSymbols))
 	for symbol := range allSymbols {
 		symbols = append(symbols, symbol)
@@ -457,18 +479,32 @@ func (r *AutomationRunner) runHistoricalBacktestWithProfile(ctx context.Context,
 		return nil, errors.New("选股范围与所选策略的候选范围没有交集")
 	}
 	profile.record("stage", map[string]any{"name": "strategy_universe", "elapsed_ms": profileMillis(time.Since(stageStarted)), "symbols": len(symbols)})
+
+	// 3. 计算需要加载多少根 K 线。
+	// 回测区间可能很早，而行情接口按“最近 N 根”取数，所以不能只按 start/end 的区间长度加载。
+	// historicalHistoryCount 会额外留出指标预热期和最大跟踪周期，尽量保证从 start 开始有足够历史数据。
 	maxHorizon := req.Horizons[len(req.Horizons)-1]
 	historyCount := historicalHistoryCount(start, end, time.Now().In(time.Local), maxHorizon)
 	loadSymbols := append([]string{}, symbols...)
+
+	// 如果策略使用大盘/市场环境过滤，需要把基准指数也加入行情加载列表。
 	for _, plan := range plans {
 		if strategyUsesMarketContext(plan.config) {
 			loadSymbols = append(loadSymbols, strategyBenchmarkSymbol)
 			break
 		}
 	}
+
+	// 4. 批量加载前复权日线 K 线。
+	// loadSystemBatchKlines 默认使用 recover=qfq。后续策略计算、信号价、D1/D3/D5/D10 跟踪
+	// 都主要基于这批前复权日线数据。
 	stageStarted = time.Now()
 	klines, loadErrors := r.loadSystemBatchKlines(ctx, loadSymbols, historyCount)
 	profile.record("stage", map[string]any{"name": "kline_load", "elapsed_ms": profileMillis(time.Since(stageStarted)), "symbols": len(loadSymbols), "history_count": historyCount})
+
+	// 5. 如有策略使用基本面因子，则额外加载点时基本面和未复权 K 线。
+	// 一些基本面计算需要未复权价格做辅助，所以这里把 recover=none 的 rawKlines
+	// 放进对应策略计划里。没有基本面需求的策略不会走这段，减少额外开销。
 	if historicalPlansUseFundamentals(plans) {
 		stageStarted = time.Now()
 		rawKlines, _ := r.loadSystemBatchKlinesWithRecover(ctx, symbols, historyCount, "none")
@@ -486,8 +522,13 @@ func (r *AutomationRunner) runHistoricalBacktestWithProfile(ctx context.Context,
 			}
 		}
 	}
+
+	// 统计行情加载结果，供前端展示和结果 JSON 记录。
 	loadedCount := countLoadedStrategySymbols(symbols, klines)
 	failedCount := countFailedStrategySymbols(symbols, loadErrors)
+
+	// 6. 从所有已加载 K 线中提取回测区间内的真实交易日。
+	// 这里不使用自然日，而是用行情里实际存在的交易日，避免周末、节假日、停牌等日期影响回放。
 	stageStarted = time.Now()
 	dates := historicalTradingDates(klines, dateInt(start), dateInt(end))
 	profile.record("stage", map[string]any{"name": "trading_dates", "elapsed_ms": profileMillis(time.Since(stageStarted)), "dates": len(dates), "loaded": loadedCount, "failed": failedCount})
@@ -497,6 +538,10 @@ func (r *AutomationRunner) runHistoricalBacktestWithProfile(ctx context.Context,
 	if err := r.store.UpdateHistoricalBacktestProgress(run.ID, len(dates), 0, "", len(symbols), 0); err != nil {
 		return nil, err
 	}
+
+	// 7. 初始化结果统计容器。
+	// summaries 按策略累计信号数量和各跟踪周期的成功率；
+	// consensus 用于记录同一日期、同一股票被多个策略同时选中的“共振”信号。
 	summaries := map[string]*historicalStrategySummary{}
 	for _, plan := range plans {
 		summary := &historicalStrategySummary{StrategyID: plan.strategy.ID, StrategyName: plan.strategy.Name, Horizons: map[string]*historicalHorizonAccumulator{}}
@@ -506,33 +551,55 @@ func (r *AutomationRunner) runHistoricalBacktestWithProfile(ctx context.Context,
 		summaries[plan.strategy.ID] = summary
 	}
 	consensus := map[string]*historicalConsensusAccumulator{}
+
+	// trackingBars 是每只股票转换后的跟踪 K 线缓存。
+	// 同一股票可能在很多天、多套策略里反复出现，缓存后可以避免重复构造 TrackingBar 切片。
 	trackingBars := map[string][]workbench.TrackingBar{}
 	signalCount := 0
+
+	// 组合模拟器负责把每日信号转成真实交易流水和组合收益。
+	// 它会处理 T+1、涨停买不进、跌停卖不出、整手、最大持仓、止盈止损等交易规则。
 	sim := newPortfolioSimulator(portfolioSimConfig{
 		InitialCash: req.InitialCash, MaxPositions: req.MaxPositions, BuyCost: req.BuyCost, SellCost: req.SellCost,
 		BuyBase: req.BuyBase, BuyOffset: req.BuyOffset, SellBase: req.SellBase,
 		TakeProfit: req.TakeProfit, TrailDrawdown: req.TrailDrawdown, StopLoss: req.StopLoss, MaxHoldDays: req.MaxHoldDays,
 	})
+
+	// pendingBuys 保存“今天收盘产生、明天开盘尝试买入”的信号。
+	// 每个交易日开盘时先处理上一天留下的 pendingBuys，然后清空。
 	pendingBuys := []portfolioPendingBuy{}
 	evaluationWorkers := strategyEvaluationConcurrency()
 	totalOpen, totalScan, totalInsert, totalClose, totalProgress := time.Duration(0), time.Duration(0), time.Duration(0), time.Duration(0), time.Duration(0)
+
+	// 8. 核心循环：按交易日逐日回放。
+	// 这是历史回测最关键的一层：每一天只允许策略看到“截至当天”的数据，
+	// 然后生成当天收盘后的选股信号，并把这些信号留给下一交易日执行买入。
 	for dateIndex, signalDate := range dates {
 		if ctx.Err() != nil || r.store.HistoricalBacktestCancelRequested(run.ID) {
 			return historicalBacktestResult(req, dates, summaries, consensus, len(symbols), loadedCount, failedCount, historyCount), context.Canceled
 		}
 		dateText := historicalDateText(signalDate)
 		dayStarted := time.Now()
-		// 当日开盘:先执行昨日收盘触发的卖出,再执行昨日信号的买入
+
+		// 当日开盘:先执行此前顺延的卖单,再执行昨日信号的买入
 		sim.onDayOpen(signalDate, dateText, klines, pendingBuys)
 		openDuration := time.Since(dayStarted)
 		totalOpen += openDuration
 		pendingBuys = nil
+
+		// daySignals 只保存当天新产生的历史信号，稍后会批量落库。
 		daySignals := make([]HistoricalBacktestSignal, 0)
 		strategyTimings := make([]historicalStrategyTiming, 0, len(plans))
 		scanStarted := time.Now()
+
+		// 逐个策略在当天做一次“点时”扫描。
 		for _, plan := range plans {
 			strategyStarted := time.Now()
 			timing := historicalStrategyTiming{Name: plan.strategy.Name}
+
+			// StrategyRunResult 是策略执行时的上下文容器。
+			// 这里手动填充 KlineCache、RawKlineCache、FundamentalData 等缓存，
+			// 让 evaluateStrategyDay 可以复用普通策略执行逻辑，同时保证数据只截止到当天。
 			strategyResult := &StrategyRunResult{
 				Strategy: plan.strategy, Config: plan.config, Errors: map[string]string{}, KlineCache: map[string][]FormulaKline{},
 				PoolCache: map[string]map[string]bool{}, FormulaCache: map[string]map[string]bool{}, FormulaDetail: map[string]map[string]any{},
@@ -540,6 +607,9 @@ func (r *AutomationRunner) runHistoricalBacktestWithProfile(ctx context.Context,
 				FundamentalData: plan.fundamentalData, FundamentalRanks: map[string]map[string]float64{},
 			}
 			available := make([]string, 0, len(plan.symbols))
+
+			// 如果策略需要市场环境过滤，先把基准指数截至当天的数据放进去。
+			// 市场环境不过关时，这个策略当天直接跳过，不扫描个股。
 			if strategyUsesMarketContext(plan.config) {
 				if rows, ok := historicalRowsThroughDate(klines[strategyBenchmarkSymbol], signalDate); ok {
 					strategyResult.KlineCache[strategyBenchmarkSymbol] = rows
@@ -550,6 +620,9 @@ func (r *AutomationRunner) runHistoricalBacktestWithProfile(ctx context.Context,
 				strategyTimings = append(strategyTimings, timing)
 				continue
 			}
+
+			// 给策略准备每只股票“截至当天”的 K 线。
+			// historicalRowsThroughDate 要求当天必须有 K 线；如果股票当天停牌或缺数据，就不会加入 available。
 			for _, symbol := range plan.symbols {
 				rows, ok := historicalRowsThroughDate(klines[symbol], signalDate)
 				if !ok {
@@ -563,6 +636,9 @@ func (r *AutomationRunner) runHistoricalBacktestWithProfile(ctx context.Context,
 			}
 			timing.Available = len(available)
 			timing.PreparationMS = profileMillis(time.Since(strategyStarted))
+
+			// 真正执行当天策略扫描。
+			// matches 是当天收盘后命中的选股结果，里面包含股票、得分、命中原因、因子结果等。
 			matches, formulaDuration, evaluationDuration, err := r.evaluateStrategyDay(ctx, plan.strategy, strategyResult, available, evaluationWorkers, &timing.Formula)
 			if err != nil {
 				return historicalBacktestResult(req, dates, summaries, consensus, len(symbols), loadedCount, failedCount, historyCount), fmt.Errorf("策略 %s 在 %s 的公式计算失败: %w", plan.strategy.Name, dateText, err)
@@ -571,20 +647,32 @@ func (r *AutomationRunner) runHistoricalBacktestWithProfile(ctx context.Context,
 			timing.EvaluationMS = profileMillis(evaluationDuration)
 			timing.Matches = len(matches)
 			trackingStarted := time.Now()
+
+			// 把当天命中的每条选股结果转成历史信号，并计算后续 D1/D3/D5/D10 的表现。
 			for _, item := range matches {
+				// selection.CreatedAt 使用当天 16:00，表达“收盘后产生信号”的时间语义。
 				selection := SelectionResult{Symbol: item.Symbol, Latest: item.Latest, CreatedAt: dateText + "T16:00:00+08:00"}
 				bars, ok := trackingBars[item.Symbol]
 				if !ok {
 					bars = historicalTrackingBars(klines[item.Symbol])
 					trackingBars[item.Symbol] = bars
 				}
+
+				// EvaluateSelectionTracking 会从信号日之后的 K 线计算各观察周期的收益、
+				// 最大涨幅、最大回撤，以及是否达到 req.TargetReturn / req.DrawdownLimit 标准。
 				tracking := workbench.EvaluateSelectionTracking(selection, bars, req.Horizons, req.TargetReturn, req.DrawdownLimit, time.Now())
 				daySignals = append(daySignals, HistoricalBacktestSignal{
 					RunID: run.ID, StrategyID: plan.strategy.ID, StrategyName: plan.strategy.Name, SignalDate: dateText,
 					Symbol: item.Symbol, Latest: item.Latest, Score: item.Score, DetailJSON: mustJSON(item), Tracking: &tracking,
 				})
+
+				// 同一天同一股票可能被多个策略选中，组合交易只买一次。
+				// mergePendingBuy 会按得分保留更强的买入配置，并把策略名合并起来。
 				pendingBuys = mergePendingBuy(pendingBuys, item.Symbol, item.Score, signalDate, plan.strategy.Name, item.Latest, plan.config.Execution)
 				updateHistoricalSummary(summaries[plan.strategy.ID], tracking, req.Horizons)
+
+				// 共振统计的 key 是“日期 + 股票”。如果同一股票同一天被多个策略选中，
+				// 最终会在 result["consensus"] 里展示。
 				key := dateText + ":" + item.Symbol
 				entry := consensus[key]
 				if entry == nil {
@@ -598,18 +686,25 @@ func (r *AutomationRunner) runHistoricalBacktestWithProfile(ctx context.Context,
 		}
 		scanDuration := time.Since(scanStarted)
 		totalScan += scanDuration
+
+		// 当天全部策略扫描完后，把当天信号批量写入数据库。
+		// InsertHistoricalBacktestSignals 还会同步写 selection_results 和 selection_result_tracking，
+		// 所以前端信号明细展开时能看到 D1/D3/D5/D10 跟踪详情。
 		stageStarted = time.Now()
 		if err := r.store.InsertHistoricalBacktestSignals(daySignals); err != nil {
 			return nil, err
 		}
 		insertDuration := time.Since(stageStarted)
 		totalInsert += insertDuration
-		// 当日收盘:持仓退出条件判定与权益结算
+
+		// 回放当日盘中风控触价和到期退出,并按收盘价结算剩余持仓权益
 		stageStarted = time.Now()
 		sim.onDayClose(signalDate, dateText, klines)
 		closeDuration := time.Since(stageStarted)
 		totalClose += closeDuration
 		signalCount += len(daySignals)
+
+		// 更新批次进度，前端会通过轮询展示当前交易日、已处理交易日和信号总数。
 		stageStarted = time.Now()
 		if err := r.store.UpdateHistoricalBacktestProgress(run.ID, len(dates), dateIndex+1, dateText, len(symbols), signalCount); err != nil {
 			return nil, err
@@ -624,6 +719,7 @@ func (r *AutomationRunner) runHistoricalBacktestWithProfile(ctx context.Context,
 			"strategies": strategyTimings,
 		})
 	}
+
 	// 组合模拟收尾:未平仓转 open 记录并落库
 	stageStarted = time.Now()
 	trades := sim.finalize(run.ID)
@@ -634,6 +730,10 @@ func (r *AutomationRunner) runHistoricalBacktestWithProfile(ctx context.Context,
 	}
 	profile.record("stage", map[string]any{"name": "trade_finalize", "elapsed_ms": profileMillis(time.Since(stageStarted)), "trades": len(trades)})
 	stageStarted = time.Now()
+
+	// 9. 生成最终结果 JSON。
+	// historicalBacktestResult 汇总策略排行、共振信号、行情加载数量、策略成功率等；
+	// portfolio 则来自组合模拟器，包含期末权益、总收益、最大回撤、胜率、未成交数量等。
 	result := historicalBacktestResult(req, dates, summaries, consensus, len(symbols), loadedCount, failedCount, historyCount)
 	result["portfolio"] = sim.summary()
 	profile.record("summary", map[string]any{
@@ -648,11 +748,17 @@ func (r *AutomationRunner) runHistoricalBacktestWithProfile(ctx context.Context,
 func historicalHistoryCount(start, end, reference time.Time, maxHorizon int) int {
 	// K-line loaders return the latest N bars, so an older, narrow replay still
 	// needs enough rows to reach its start date plus indicator warm-up history.
+	// 举例：如果今天是 2026-10-09，但回测只跑 2026-01-01 到 2026-01-10，
+	// 行情接口仍然是“从今天往前取 N 根”，不是“只取 1 月这段”。N 太小就会只拿到最近
+	// 几个月数据，导致回测起点没有 K 线。这里按 start 到 reference 的自然日跨度估算
+	// 交易日数量，再额外加 180 根作为指标预热，并加上 maxHorizon 作为信号后续跟踪窗口。
 	if reference.Before(end) {
 		reference = end
 	}
 	calendarDays := int(reference.Sub(start).Hours()/24) + 1
 	historyCount := calendarDays*5/7 + 180 + maxHorizon
+	// 最少取 260 根，保证常见年线/长周期指标有足够预热数据；最多取 2000 根，
+	// 避免很早的回测一次性拉取过多行情，把接口和内存压力放大。
 	if historyCount < 260 {
 		historyCount = 260
 	}
