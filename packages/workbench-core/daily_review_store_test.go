@@ -1,6 +1,153 @@
 package workbench
 
-import "testing"
+import (
+	"math"
+	"testing"
+	"time"
+)
+
+func TestAggregateDailyReviewPriceStatsUsesSavedPricesAndInclusiveTarget(t *testing.T) {
+	complete := func(high, low, open, close float64) *SelectionTracking {
+		tracking := &SelectionTracking{BasePrice: 100, Horizons: map[string]SelectionHorizon{}}
+		for _, days := range []int{1, 3, 5, 10} {
+			tracking.Horizons[horizonKey(days)] = SelectionHorizon{
+				HorizonDays: days, Status: "complete", MaxGainPrice: high, MaxDrawdownPrice: low,
+				FinalOpen: open, FinalClose: close, StopLossHit: true, Success: false,
+			}
+		}
+		return tracking
+	}
+	items := []SelectionResult{
+		// The saved signal price takes priority over Latest and tracking.BasePrice.
+		{SignalPrice: 10, Latest: 100, Tracking: complete(10.3, 10.3, 10.3, 10.3)},
+		// Historical signals can use their saved Latest. 2.999% must not round up.
+		{Latest: 20, Tracking: complete(21, 20.5998, 20.5998, 20.6)},
+		{SignalPrice: 10},
+		{Tracking: complete(11, 10, 10, 10)},
+		{SignalPrice: math.Inf(1), Tracking: complete(11, 10, 10, 10)},
+		{SignalPrice: 10, Tracking: complete(math.NaN(), 10, 10, 10)},
+		{SignalPrice: 10, Tracking: complete(11, math.Inf(1), 10, 10)},
+		{SignalPrice: 10, Tracking: complete(11, 10, 0, 10)},
+		{SignalPrice: 10, Tracking: complete(11, 10, 10, -1)},
+	}
+	for _, status := range []string{"pending", "unavailable"} {
+		tracking := complete(11, 11, 11, 11)
+		for key, horizon := range tracking.Horizons {
+			horizon.Status = status
+			tracking.Horizons[key] = horizon
+		}
+		items = append(items, SelectionResult{SignalPrice: 10, Tracking: tracking})
+	}
+
+	stats := aggregateDailyReviewPriceStats(items)
+	want := DailyReviewPriceStats{
+		Completed: 2, TargetReturn: 3,
+		HighTargetCount: 2, LowTargetCount: 1, OpenTargetCount: 1, CloseTargetCount: 2,
+		HighTargetRate: 100, LowTargetRate: 50, OpenTargetRate: 50, CloseTargetRate: 100,
+	}
+	for _, key := range []string{"d1", "d3", "d5", "d10"} {
+		if stats[key] != want {
+			t.Errorf("%s stats = %+v, want %+v", key, stats[key], want)
+		}
+	}
+	for key, row := range aggregateDailyReviewPriceStats(nil) {
+		if row != (DailyReviewPriceStats{TargetReturn: 3}) {
+			t.Errorf("empty %s stats = %+v", key, row)
+		}
+	}
+}
+
+func TestBuildDailyReviewPriceStatsUsesFullWindowAndSeparateStrategies(t *testing.T) {
+	store := newHistoricalBacktestTestStore(t)
+	parent, err := store.CreateAutomationRun(AutomationTask{ID: SystemStrategyDailyBatchTaskID, Name: "系统策略日报", Type: "system_strategy_batch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	createStrategy := func(id string, items []SelectionResult) {
+		t.Helper()
+		child, err := store.CreateAutomationRun(AutomationTask{ID: "system-strategy:" + id, Name: id, Type: "strategy_selection"}, parent.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SaveSelectionResults(child, Formula{ID: "strategy:" + id, Name: id}, items); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.FinishAutomationRun(child.ID, "success", "", `{}`, len(items)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	trend := SelectionResult{ID: "trend-signal", Symbol: "000001", SignalPrice: 10, Latest: 50, SignalAt: "2026-09-01T16:00:00+08:00"}
+	tracking := EvaluateSelectionTracking(trend, []TrackingBar{
+		{Date: 20260901, Open: 40, High: 50, Low: 30, Close: 40},
+		{Date: 20260902, Open: 10.3, High: 11, Low: 9, Close: 10.3},
+		{Date: 20260903, Open: 10, High: 10.2, Low: 9.9, Close: 10},
+		{Date: 20260904, Open: 10.3, High: 10.3, Low: 10.3, Close: 10.3},
+		{Date: 20260907, Open: 10, High: 10.2, Low: 9.9, Close: 10},
+		{Date: 20260908, Open: 10, High: 10.2, Low: 9.9, Close: 10},
+	}, nil, 3, 5, time.Now())
+	trend.Tracking = &tracking
+	createStrategy("trend", []SelectionResult{trend})
+	// A signal at its prior day's +10% price remains an eligible sample.
+	limitSignal := SelectionResult{ID: "limit-signal", Symbol: "000001", SignalPrice: 11, Latest: 11, SignalAt: "2026-09-01T16:00:00+08:00", DetailJSON: `{"previous_close":10,"limit_up":11}`}
+	limitTracking := EvaluateSelectionTracking(limitSignal, []TrackingBar{
+		{Date: 20260902, Open: 11.4, High: 11.5, Low: 11.34, Close: 11.45},
+	}, nil, 3, 5, time.Now())
+	limitSignal.Tracking = &limitTracking
+	createStrategy("limit", []SelectionResult{limitSignal, {ID: "untracked", Symbol: "000002", SignalPrice: 10, Latest: 10}})
+	if err := store.FinishAutomationRun(parent.ID, "success", "", `{"strategy_count":2}`, 3); err != nil {
+		t.Fatal(err)
+	}
+
+	review, err := store.BuildDailyReview("", parent.ID, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byStrategy := map[string]DailyReviewStrategySummary{}
+	for _, strategy := range review.Strategies {
+		byStrategy[strategy.StrategyID] = strategy
+	}
+	wantTrend := DailyReviewPriceStats{
+		Completed: 1, TargetReturn: 3, HighTargetCount: 1, OpenTargetCount: 1, CloseTargetCount: 1,
+		HighTargetRate: 100, OpenTargetRate: 100, CloseTargetRate: 100,
+	}
+	for _, key := range []string{"d1", "d3"} {
+		if got := byStrategy["trend"].HorizonStats[key]; got != wantTrend {
+			t.Errorf("trend %s stats = %+v, want %+v", key, got, wantTrend)
+		}
+	}
+	wantLimit := wantTrend
+	wantLimit.LowTargetCount, wantLimit.LowTargetRate = 1, 100
+	if got := byStrategy["limit"].HorizonStats["d1"]; got != wantLimit {
+		t.Errorf("limit d1 stats = %+v, want %+v", got, wantLimit)
+	}
+	for _, key := range []string{"d3", "d5", "d10"} {
+		if got := byStrategy["limit"].HorizonStats[key]; got != (DailyReviewPriceStats{TargetReturn: 3}) {
+			t.Errorf("pending limit %s stats = %+v", key, got)
+		}
+	}
+	// The D5 final high is below target, but an earlier high in the window passed.
+	wantD5 := DailyReviewPriceStats{Completed: 1, TargetReturn: 3, HighTargetCount: 1, HighTargetRate: 100}
+	if got := byStrategy["trend"].HorizonStats["d5"]; got != wantD5 {
+		t.Errorf("trend d5 stats = %+v, want %+v", got, wantD5)
+	}
+	if got := byStrategy["trend"].HorizonStats["d10"]; got != (DailyReviewPriceStats{TargetReturn: 3}) {
+		t.Errorf("pending trend d10 stats = %+v", got)
+	}
+	capped, err := store.BuildDailyReview("", parent.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(capped.Signals) != 1 {
+		t.Fatalf("capped signals = %d, want 1", len(capped.Signals))
+	}
+	for _, strategy := range capped.Strategies {
+		for key, row := range strategy.HorizonStats {
+			if row != byStrategy[strategy.StrategyID].HorizonStats[key] {
+				t.Errorf("stock list limit changed %s %s rate: %+v", strategy.StrategyID, key, row)
+			}
+		}
+	}
+}
 
 func TestBuildDailyReviewAggregatesSystemStrategyBatch(t *testing.T) {
 	store := newHistoricalBacktestTestStore(t)

@@ -26,16 +26,30 @@ type DailyReviewBatchSummary struct {
 }
 
 type DailyReviewStrategySummary struct {
-	RunID        string `json:"run_id,omitempty"`
-	StrategyID   string `json:"strategy_id"`
-	StrategyName string `json:"strategy_name"`
-	Status       string `json:"status"`
-	Matched      int    `json:"matched"`
-	Errors       int    `json:"errors"`
-	Error        string `json:"error,omitempty"`
-	StartedAt    string `json:"started_at,omitempty"`
-	FinishedAt   string `json:"finished_at,omitempty"`
-	DurationMS   int64  `json:"duration_ms"`
+	RunID        string                           `json:"run_id,omitempty"`
+	StrategyID   string                           `json:"strategy_id"`
+	StrategyName string                           `json:"strategy_name"`
+	Status       string                           `json:"status"`
+	Matched      int                              `json:"matched"`
+	Errors       int                              `json:"errors"`
+	Error        string                           `json:"error,omitempty"`
+	StartedAt    string                           `json:"started_at,omitempty"`
+	FinishedAt   string                           `json:"finished_at,omitempty"`
+	DurationMS   int64                            `json:"duration_ms"`
+	HorizonStats map[string]DailyReviewPriceStats `json:"horizon_stats"`
+}
+
+type DailyReviewPriceStats struct {
+	Completed        int     `json:"completed"`
+	TargetReturn     float64 `json:"target_return"`
+	HighTargetCount  int     `json:"high_target_count"`
+	LowTargetCount   int     `json:"low_target_count"`
+	OpenTargetCount  int     `json:"open_target_count"`
+	CloseTargetCount int     `json:"close_target_count"`
+	HighTargetRate   float64 `json:"high_target_rate"`
+	LowTargetRate    float64 `json:"low_target_rate"`
+	OpenTargetRate   float64 `json:"open_target_rate"`
+	CloseTargetRate  float64 `json:"close_target_rate"`
 }
 
 type DailyReviewSignal struct {
@@ -299,9 +313,24 @@ func (s *AppStore) BuildDailyReview(date, batchID string, limit int) (DailyRevie
 	for _, child := range children {
 		runIDs = append(runIDs, child.ID)
 	}
-	results, err := s.ListSelectionResultsByRunIDs(runIDs, limit)
+	// Strategy rates cover the whole batch, even when the stock detail list is
+	// capped by the request limit.
+	results, err := s.listSelectionResultsByRunIDs(runIDs, 0)
 	if err != nil {
 		return data, err
+	}
+	resultsByRun := make(map[string][]SelectionResult, len(children))
+	for _, item := range results {
+		resultsByRun[item.RunID] = append(resultsByRun[item.RunID], item)
+	}
+	for index := range strategies {
+		strategies[index].HorizonStats = aggregateDailyReviewPriceStats(resultsByRun[strategies[index].RunID])
+	}
+	if limit <= 0 || limit > 20000 {
+		limit = 5000
+	}
+	if len(results) > limit {
+		results = results[:limit]
 	}
 	notes, err := s.ListDecisionNotes("", 5000)
 	if err != nil {
@@ -416,6 +445,58 @@ func (s *AppStore) BuildDailyReview(date, batchID string, limit int) (DailyRevie
 		KlineLoaded: selected.KlineLoaded, KlineFailed: selected.KlineFailed, DurationMS: selected.DurationMS,
 	}
 	return data, nil
+}
+
+// Price target rates use the saved signal price and one shared denominator of
+// complete samples. The period extrema are distinct from the final day's high
+// and low; existing success/stop-loss policy does not affect these four rates.
+func aggregateDailyReviewPriceStats(items []SelectionResult) map[string]DailyReviewPriceStats {
+	const targetReturn = 3.0
+	stats := make(map[string]DailyReviewPriceStats, 4)
+	for _, days := range []int{1, 3, 5, 10} {
+		key := horizonKey(days)
+		row := DailyReviewPriceStats{TargetReturn: targetReturn}
+		for _, item := range items {
+			base := effectiveSelectionPrice(item)
+			if item.Tracking == nil || !positiveFiniteTrackingValue(base) {
+				continue
+			}
+			horizon, ok := item.Tracking.Horizons[key]
+			if !ok || horizon.Status != "complete" {
+				continue
+			}
+			prices := []float64{horizon.MaxGainPrice, horizon.MaxDrawdownPrice, horizon.FinalOpen, horizon.FinalClose}
+			valid := true
+			for _, price := range prices {
+				if !positiveFiniteTrackingValue(price) {
+					valid = false
+					break
+				}
+			}
+			if !valid {
+				continue
+			}
+			row.Completed++
+			targetPrice := base * (1 + targetReturn/100)
+			counts := []*int{&row.HighTargetCount, &row.LowTargetCount, &row.OpenTargetCount, &row.CloseTargetCount}
+			for index, price := range prices {
+				// Allow only floating-point comparison noise, without rounding
+				// a below-target return (e.g. 2.999%) up to a passing 3%.
+				if price >= targetPrice || math.Abs(price-targetPrice) <= targetPrice*1e-12 {
+					*counts[index]++
+				}
+			}
+		}
+		if row.Completed > 0 {
+			denominator := float64(row.Completed)
+			row.HighTargetRate = roundDailyFloat(float64(row.HighTargetCount) / denominator * 100)
+			row.LowTargetRate = roundDailyFloat(float64(row.LowTargetCount) / denominator * 100)
+			row.OpenTargetRate = roundDailyFloat(float64(row.OpenTargetCount) / denominator * 100)
+			row.CloseTargetRate = roundDailyFloat(float64(row.CloseTargetCount) / denominator * 100)
+		}
+		stats[key] = row
+	}
+	return stats
 }
 
 func (s *AppStore) BuildDailyStrategyAnalysis(startDate, endDate string, days, limit int) (DailyStrategyAnalysisData, error) {
@@ -987,11 +1068,16 @@ func scanAutomationRuns(rows *sql.Rows, err error) ([]AutomationRun, error) {
 }
 
 func (s *AppStore) ListSelectionResultsByRunIDs(runIDs []string, limit int) ([]SelectionResult, error) {
-	if len(runIDs) == 0 {
-		return []SelectionResult{}, nil
-	}
 	if limit <= 0 || limit > 20000 {
 		limit = 5000
+	}
+	return s.listSelectionResultsByRunIDs(runIDs, limit)
+}
+
+// A zero limit loads all signals for batch-wide aggregates.
+func (s *AppStore) listSelectionResultsByRunIDs(runIDs []string, limit int) ([]SelectionResult, error) {
+	if len(runIDs) == 0 {
+		return []SelectionResult{}, nil
 	}
 	placeholders := make([]string, len(runIDs))
 	args := make([]interface{}, 0, len(runIDs)+1)
@@ -999,11 +1085,15 @@ func (s *AppStore) ListSelectionResultsByRunIDs(runIDs []string, limit int) ([]S
 		placeholders[index] = "?"
 		args = append(args, runID)
 	}
-	args = append(args, limit)
-	rows, err := s.db.Query(`SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,
+	query := `SELECT id,run_id,task_id,task_name,formula_id,formula_name,symbol,latest,
 		signal_at,signal_price,quote_at,quote_source,price_type,quote_age_ms,signal_score,strategy_version,market_context_json,snapshot_status,
 		detail_json,created_at
-		FROM selection_results WHERE run_id IN (`+strings.Join(placeholders, ",")+`) ORDER BY created_at DESC LIMIT ?`, args...)
+		FROM selection_results WHERE run_id IN (` + strings.Join(placeholders, ",") + `) ORDER BY created_at DESC`
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

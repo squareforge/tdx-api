@@ -1,9 +1,11 @@
 import {
   Alert, Button, Card, Empty, Input, Modal, Segmented, Select, Space, Table, Tag, Tooltip, Typography, message
 } from 'antd';
+import type { TableColumnsType, TableProps } from 'antd';
 import {
   CheckCircleOutlined, ClearOutlined, ClockCircleOutlined, EditOutlined, EyeOutlined, ReloadOutlined,
-  StopOutlined, TeamOutlined, UnorderedListOutlined, BarChartOutlined, CalendarOutlined, DownloadOutlined
+  StopOutlined, TeamOutlined, UnorderedListOutlined, BarChartOutlined, CalendarOutlined, DownloadOutlined,
+  CaretUpOutlined, CaretDownOutlined
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
@@ -11,6 +13,7 @@ import { apiFetch } from '../lib/api';
 import { normalizeSymbol } from '../lib/format';
 import type {
   DailyReviewBatchSummary, DailyReviewResponse, DailyReviewStock, DailyReviewStrategySummary,
+  DailyReviewPriceStats,
   DecisionNote, SelectionTracking, DailyReviewSignal, DailyStrategyAnalysisResponse, DailyStrategyAnalysisMetric,
   DailyReviewSignalDetail, SignalExecutionPath
 } from '../types';
@@ -21,6 +24,18 @@ const { Text } = Typography;
 const { TextArea } = Input;
 type ReviewView = 'overview' | 'stocks' | 'consensus' | 'distribution' | 'paper';
 type DailyReviewMode = 'single' | 'analysis';
+type StrategyPriceMetric = 'high_target_rate' | 'low_target_rate' | 'open_target_rate' | 'close_target_rate';
+type StrategySort = {
+  columnKey: string;
+  order: 'ascend' | 'descend';
+  metric?: StrategyPriceMetric;
+};
+const strategyPriceSortMetrics: { label: string; metric: StrategyPriceMetric }[] = [
+  { label: '最高', metric: 'high_target_rate' },
+  { label: '最低', metric: 'low_target_rate' },
+  { label: '开盘', metric: 'open_target_rate' },
+  { label: '收盘', metric: 'close_target_rate' }
+];
 interface StockDirectoryItem { code?: string; name?: string; }
 interface StockDirectory { codes?: StockDirectoryItem[]; }
 
@@ -74,6 +89,27 @@ function trackingCompleteness(tracking?: SelectionTracking) {
 
 function horizonCell(tracking: SelectionTracking | undefined, horizon: number) {
   return <TrackingHorizonCell value={horizonMetric(tracking, horizon)} />;
+}
+
+function strategyPriceStatsCell(stats: DailyReviewPriceStats | undefined, days: number) {
+  const metrics = [
+    { label: '最高', rate: stats?.high_target_rate, count: stats?.high_target_count, basis: `D${days} 观察周期内的最高价` },
+    { label: '最低', rate: stats?.low_target_rate, count: stats?.low_target_count, basis: `D${days} 观察周期内的最低价` },
+    { label: '开盘', rate: stats?.open_target_rate, count: stats?.open_target_count, basis: `第 ${days} 个交易日的开盘价` },
+    { label: '收盘', rate: stats?.close_target_rate, count: stats?.close_target_count, basis: `第 ${days} 个交易日的收盘价` }
+  ];
+  return <div className="daily-review-price-stats">
+    {metrics.map(({ label, rate, count, basis }) => <Tooltip key={label} title={stats?.completed
+      ? `${basis}相对信号保存价格涨幅 ≥${stats.target_return}%；${count} 只达标 / ${stats.completed} 只有效样本`
+      : '暂无已满周期且价格数据完整的有效样本'}>
+      <span><span className="daily-review-price-label">{label}：</span><strong>{stats?.completed && Number.isFinite(rate) ? `${Number(rate).toFixed(2)}%` : '--'}</strong></span>
+    </Tooltip>)}
+  </div>;
+}
+
+function strategyPriceRate(row: DailyReviewStrategySummary, columnKey: string, metric: StrategyPriceMetric) {
+  const stats = row.horizon_stats?.[columnKey];
+  return stats && stats.completed > 0 && Number.isFinite(stats[metric]) ? stats[metric] : undefined;
 }
 
 function formatTrackingDate(value?: number) {
@@ -267,6 +303,7 @@ export function DailyReviewWorkspace() {
   const [mode, setMode] = useState<DailyReviewMode>('single');
   const [review, setReview] = useState<DailyReviewResponse>(emptyReview);
   const [view, setView] = useState<ReviewView>('stocks');
+  const [strategySort, setStrategySort] = useState<StrategySort>();
   const [keyword, setKeyword] = useState('');
   const [loading, setLoading] = useState(false);
   const [actionSymbol, setActionSymbol] = useState('');
@@ -452,12 +489,60 @@ export function DailyReviewWorkspace() {
     }
   }
 
-  const strategyColumns = [
-    { title: '策略', dataIndex: 'strategy_name', width: 220, render: (value: string) => <strong>{value || '--'}</strong> },
+  function toggleStrategyPriceSort(days: number, metric: StrategyPriceMetric) {
+    const columnKey = `d${days}`;
+    setStrategySort((current) => {
+      if (current?.columnKey !== columnKey || current.metric !== metric) return { columnKey, metric, order: 'descend' };
+      return current.order === 'descend' ? { columnKey, metric, order: 'ascend' } : undefined;
+    });
+  }
+
+  const sortedStrategies = useMemo(() => {
+    if (!strategySort?.metric) return review.strategies;
+    const { columnKey, metric, order } = strategySort;
+    return [...review.strategies].sort((left, right) => {
+      const leftRate = strategyPriceRate(left, columnKey, metric);
+      const rightRate = strategyPriceRate(right, columnKey, metric);
+      const comparison = compareNullableNumber(leftRate, rightRate);
+      if (!Number.isFinite(leftRate) || !Number.isFinite(rightRate)) return comparison;
+      return order === 'ascend' ? comparison : -comparison;
+    });
+  }, [review.strategies, strategySort]);
+
+  const handleStrategyTableChange: TableProps<DailyReviewStrategySummary>['onChange'] = (_pagination, _filters, sorter, extra) => {
+    if (extra.action !== 'sort') return;
+    const activeSort = Array.isArray(sorter) ? sorter.find((item) => item.order) : sorter;
+    setStrategySort(activeSort?.order ? { columnKey: String(activeSort.columnKey), order: activeSort.order } : undefined);
+  };
+
+  const strategyColumns: TableColumnsType<DailyReviewStrategySummary> = [
+    { title: '策略', dataIndex: 'strategy_name', width: 220, fixed: 'left' as const, render: (value: string) => <strong>{value || '--'}</strong> },
     { title: '状态', dataIndex: 'status', width: 92, filters: [{ text: '已完成', value: 'success' }, { text: '失败', value: 'failed' }], onFilter: (value: boolean | React.Key, row: DailyReviewStrategySummary) => row.status === value, render: (value: string) => { const meta = statusMeta(value); return <Tag color={meta.color}>{meta.label}</Tag>; } },
-    { title: '命中', dataIndex: 'matched', width: 84, sorter: (left: DailyReviewStrategySummary, right: DailyReviewStrategySummary) => left.matched - right.matched },
-    { title: '错误股票', dataIndex: 'errors', width: 96, sorter: (left: DailyReviewStrategySummary, right: DailyReviewStrategySummary) => left.errors - right.errors },
-    { title: '耗时', dataIndex: 'duration_ms', width: 100, sorter: (left: DailyReviewStrategySummary, right: DailyReviewStrategySummary) => left.duration_ms - right.duration_ms, render: formatDuration },
+    { title: '命中', key: 'matched', dataIndex: 'matched', width: 84, sortOrder: strategySort?.columnKey === 'matched' ? strategySort.order : null, sorter: (left, right) => left.matched - right.matched },
+    { title: '错误股票', key: 'errors', dataIndex: 'errors', width: 96, sortOrder: strategySort?.columnKey === 'errors' ? strategySort.order : null, sorter: (left, right) => left.errors - right.errors },
+    ...[1, 3, 5, 10].map((days) => ({
+      title: <div className="daily-review-price-header">
+        <span>D{days}</span>
+        <div className="daily-review-price-sort-grid">
+          {strategyPriceSortMetrics.map(({ label, metric }) => {
+            const active = strategySort?.columnKey === `d${days}` && strategySort.metric === metric;
+            const order = active ? strategySort.order : undefined;
+            const nextAction = order === 'descend' ? '升序' : order === 'ascend' ? '取消排序' : '降序';
+            return <Tooltip key={metric} title={nextAction === '取消排序' ? `取消 D${days} ${label}排序` : `按 D${days} ${label}达标率${nextAction}`}>
+              <button type="button" className={`daily-review-price-sort${active ? ' is-active' : ''}`} aria-label={`D${days} ${label}达标率排序`} aria-pressed={active} onClick={() => toggleStrategyPriceSort(days, metric)}>
+                <span>{label}</span>
+                <span className="daily-review-price-sort-arrows" aria-hidden="true">
+                  <CaretUpOutlined className={order === 'ascend' ? 'is-active' : ''} />
+                  <CaretDownOutlined className={order === 'descend' ? 'is-active' : ''} />
+                </span>
+              </button>
+            </Tooltip>;
+          })}
+        </div>
+      </div>, key: `d${days}`, width: 236,
+      render: (_: unknown, row: DailyReviewStrategySummary) => strategyPriceStatsCell(row.horizon_stats?.[`d${days}`], days)
+    })),
+    { title: '耗时', key: 'duration_ms', dataIndex: 'duration_ms', width: 100, sortOrder: strategySort?.columnKey === 'duration_ms' ? strategySort.order : null, sorter: (left, right) => left.duration_ms - right.duration_ms, render: formatDuration },
     { title: '执行信息', dataIndex: 'error', ellipsis: true, render: (value: string) => value || '正常完成' }
   ];
 
@@ -666,7 +751,7 @@ export function DailyReviewWorkspace() {
               ]} />
               {view !== 'overview' ? <Input.Search allowClear placeholder="代码、名称或策略" value={keyword} onChange={(event) => setKeyword(event.target.value)} /> : null}
             </div>
-            {view === 'overview' ? <Table<DailyReviewStrategySummary> size="small" rowKey={(row) => row.run_id || row.strategy_id} dataSource={review.strategies} columns={strategyColumns} pagination={false} scroll={{ x: 850 }} locale={{ emptyText: selected.status === 'running' ? '策略正在执行' : '暂无策略明细' }} /> : null}
+            {view === 'overview' ? <Table<DailyReviewStrategySummary> size="small" rowKey={(row) => row.run_id || row.strategy_id} dataSource={sortedStrategies} columns={strategyColumns} onChange={handleStrategyTableChange} pagination={false} scroll={{ x: 1780 }} locale={{ emptyText: selected.status === 'running' ? '策略正在执行' : '暂无策略明细' }} /> : null}
             {view !== 'overview' ? <Table<DailyReviewStock>
               size="small" rowKey="symbol" loading={loading} dataSource={visibleStocks} columns={stockColumns}
               sortDirections={['ascend', 'descend']} pagination={{ pageSize: 50, showSizeChanger: false, showTotal: (total) => `共 ${total} 只` }} scroll={{ x: 1540 }}

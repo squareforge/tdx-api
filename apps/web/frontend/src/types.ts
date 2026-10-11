@@ -597,6 +597,20 @@ export interface DailyReviewStrategySummary {
   started_at?: string;
   finished_at?: string;
   duration_ms: number;
+  horizon_stats?: Record<string, DailyReviewPriceStats>;
+}
+
+export interface DailyReviewPriceStats {
+  completed: number;
+  target_return: number;
+  high_target_count: number;
+  low_target_count: number;
+  open_target_count: number;
+  close_target_count: number;
+  high_target_rate: number;
+  low_target_rate: number;
+  open_target_rate: number;
+  close_target_rate: number;
 }
 
 export interface DailyReviewSignal {

@@ -11070,6 +11070,81 @@ textarea::placeholder {
   white-space: nowrap;
 }
 
+.daily-review-price-header {
+  display: grid;
+  gap: 6px;
+  min-width: 220px;
+}
+
+.daily-review-price-sort-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 12px;
+}
+
+.daily-review-price-sort {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 26px;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--text-soft);
+  background: var(--panel);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.daily-review-price-sort:hover,
+.daily-review-price-sort.is-active {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.daily-review-price-sort:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.daily-review-price-sort-arrows {
+  display: flex;
+  flex-direction: column;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.daily-review-price-sort-arrows .is-active {
+  color: var(--primary);
+}
+
+.daily-review-price-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px 12px;
+  min-width: 220px;
+  font-size: 12px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+
+.daily-review-price-stats > span {
+  display: flex;
+  align-items: baseline;
+  white-space: nowrap;
+}
+
+.daily-review-price-label {
+  color: var(--text-soft);
+}
+
+.daily-review-price-stats strong {
+  color: var(--text);
+  font-weight: 700;
+}
+
 .tracking-horizon-cell {
   display: grid;
   min-width: 150px;
