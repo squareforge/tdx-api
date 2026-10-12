@@ -375,9 +375,9 @@ export default function App() {
         <div className={`sidebar-backdrop${sidebarOpen ? ' visible' : ''}`} onClick={() => setSidebarOpen(false)} aria-hidden="true" />
         <aside className={`app-sidebar${sidebarOpen ? ' mobile-open' : ''}`} aria-label="主导航">
           <div className="sidebar-brand">
-            <div className="sidebar-brand-mark">TDX</div>
+            <img className="sidebar-brand-mark" src="/favicon.svg" alt="" />
             <div className="sidebar-brand-copy">
-              <strong>股票数据终端</strong>
+              <strong>股研台</strong>
               <span>行情 · 研究 · 交易计划</span>
             </div>
           </div>

@@ -18,10 +18,10 @@ export function AppHeader({ status, loading, error }: AppHeaderProps) {
   return (
     <header className="app-header">
       <div className="brand-block">
-        <div className="brand-mark">TDX</div>
+        <img className="brand-mark" src="/favicon.svg" alt="" />
         <div>
-          <Text className="eyebrow">TDX / MARKET OPERATIONS</Text>
-          <Title level={1}>股票数据终端</Title>
+          <Text className="eyebrow">A 股研究工作台</Text>
+          <Title level={1}>股研台</Title>
           <Text className="subtitle">行情 · 研究 · 交易计划</Text>
         </div>
       </div>

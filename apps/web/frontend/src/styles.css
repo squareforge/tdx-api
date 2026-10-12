@@ -97,19 +97,9 @@ textarea {
 }
 
 .sidebar-brand-mark {
-  display: grid;
   flex: 0 0 auto;
-  place-items: center;
   width: 42px;
   height: 42px;
-  border: 1px solid rgba(143, 190, 255, 0.54);
-  border-radius: 10px;
-  color: #f3f8ff;
-  background: linear-gradient(145deg, #2772dc, #174896);
-  font-size: 13px;
-  font-weight: 900;
-  letter-spacing: 0.05em;
-  box-shadow: 0 5px 14px rgba(18, 69, 145, 0.3);
 }
 
 .sidebar-brand-copy {
@@ -357,17 +347,9 @@ textarea {
 }
 
 .brand-mark {
-  display: grid;
-  place-items: center;
   width: 48px;
   height: 48px;
   flex: 0 0 auto;
-  border: 1px solid rgba(144, 194, 255, 0.4);
-  border-radius: 5px;
-  background: #1b4fa3;
-  color: #d9e8ff;
-  font-size: 16px;
-  font-weight: 900;
 }
 
 .eyebrow {
