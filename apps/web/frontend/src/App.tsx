@@ -1,5 +1,28 @@
 import { Empty, Layout, Tabs } from 'antd';
+import {
+  AppstoreOutlined,
+  BarChartOutlined,
+  BellOutlined,
+  ClusterOutlined,
+  CloudServerOutlined,
+  ControlOutlined,
+  DatabaseOutlined,
+  ExperimentOutlined,
+  FileSearchOutlined,
+  FundProjectionScreenOutlined,
+  LineChartOutlined,
+  PartitionOutlined,
+  RobotOutlined,
+  SettingOutlined,
+  StarOutlined,
+  ThunderboltOutlined,
+  ToolOutlined,
+  FundOutlined,
+  MenuOutlined,
+  CloseOutlined
+} from '@ant-design/icons';
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import { AppHeader } from './components/AppHeader';
 import { AIConfigsWorkspace } from './components/AIConfigsWorkspace';
 import { AutomationsWorkspace } from './components/AutomationsWorkspace';
@@ -24,32 +47,32 @@ import { apiFetch } from './lib/api';
 import type { PlatformConfig, ServiceStatusResult } from './types';
 
 const primaryWorkspaces = [
-  { key: 'market', label: '自选' },
-  { key: 'proChart', label: '市场行情' },
-  { key: 'klineAnalysis', label: 'K线分析' },
-  { key: 'dataCenter', label: '数据中心' },
-  { key: 'tradingSystem', label: '交易系统' },
-  { key: 'selection', label: '选股' },
-  { key: 'automations', label: '自动化' },
-  { key: 'aiConfigs', label: 'AI 模型' },
-  { key: 'alerts', label: '预警中心' },
-  { key: 'webhooks', label: 'Webhook' },
-  { key: 'platformConfig', label: '平台配置' }
+  { key: 'market', label: '自选', icon: <StarOutlined /> },
+  { key: 'proChart', label: '市场行情', icon: <BarChartOutlined /> },
+  { key: 'klineAnalysis', label: 'K线分析', icon: <LineChartOutlined /> },
+  { key: 'dataCenter', label: '数据中心', icon: <DatabaseOutlined /> },
+  { key: 'tradingSystem', label: '交易系统', icon: <FundProjectionScreenOutlined /> },
+  { key: 'selection', label: '选股', icon: <FileSearchOutlined /> },
+  { key: 'automations', label: '自动化', icon: <ThunderboltOutlined /> },
+  { key: 'aiConfigs', label: 'AI 模型', icon: <RobotOutlined /> },
+  { key: 'alerts', label: '预警中心', icon: <BellOutlined /> },
+  { key: 'webhooks', label: 'Webhook', icon: <CloudServerOutlined /> },
+  { key: 'platformConfig', label: '平台配置', icon: <SettingOutlined /> }
 ];
 
 const selectionWorkspaces = [
-  { key: 'universe', label: '选股范围' },
-  { key: 'strategies', label: '策略中心' },
-  { key: 'selectionResults', label: '选股结果' },
-  { key: 'aiSelection', label: 'AI 选股' },
-  { key: 'dailyReview', label: '每日复盘' },
-  { key: 'historicalBacktest', label: '历史回测' }
+  { key: 'universe', label: '选股范围', icon: <AppstoreOutlined /> },
+  { key: 'strategies', label: '策略中心', icon: <ControlOutlined /> },
+  { key: 'selectionResults', label: '选股结果', icon: <FundOutlined /> },
+  { key: 'aiSelection', label: 'AI 选股', icon: <RobotOutlined /> },
+  { key: 'dailyReview', label: '每日复盘', icon: <FileSearchOutlined /> },
+  { key: 'historicalBacktest', label: '历史回测', icon: <ExperimentOutlined /> }
 ];
 
 // 交易系统内子 tab:持仓与交易(原有) + 日内交易(日内做T信号驾驶舱)。
 const tradingWorkspaces = [
-  { key: 'holdingsTrading', label: '持仓与交易' },
-  { key: 'intradayT', label: '日内交易' }
+  { key: 'holdingsTrading', label: '持仓与交易', icon: <PartitionOutlined /> },
+  { key: 'intradayT', label: '日内交易', icon: <FundProjectionScreenOutlined /> }
 ];
 
 const workspaceLabels = Object.fromEntries(
@@ -80,6 +103,27 @@ const workspaceCodes: Record<string, string> = {
 const selectionWorkspaceKeys = new Set(selectionWorkspaces.map((workspace) => workspace.key));
 const tradingWorkspaceKeys = new Set(tradingWorkspaces.map((workspace) => workspace.key));
 const primaryWorkspaceKeys = new Set(primaryWorkspaces.map((workspace) => workspace.key));
+
+type SidebarWorkspace = {
+  key: string;
+  label: string;
+  icon: ReactNode;
+  children?: typeof selectionWorkspaces;
+};
+
+const sidebarGroups = [
+  { key: 'overview', label: '核心工作台', icon: <AppstoreOutlined />, items: primaryWorkspaces.slice(0, 4) },
+  {
+    key: 'research',
+    label: '交易与研究',
+    icon: <ClusterOutlined />,
+    items: [
+      { ...primaryWorkspaces[4], children: tradingWorkspaces },
+      { ...primaryWorkspaces[5], children: selectionWorkspaces }
+    ]
+  },
+  { key: 'operations', label: '自动化与配置', icon: <ToolOutlined />, items: primaryWorkspaces.slice(6) }
+];
 
 function Placeholder({ name }: { name: string }) {
   return (
@@ -144,6 +188,14 @@ export default function App() {
     const savedWorkspace = window.localStorage.getItem('tdx.activeTradingWorkspace');
     return savedWorkspace && tradingWorkspaceKeys.has(savedWorkspace) ? savedWorkspace : 'holdingsTrading';
   });
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
+    overview: true,
+    research: true,
+    operations: true,
+    tradingSystem: true,
+    selection: true
+  });
   const [serviceStatus, setServiceStatus] = useState<ServiceStatusResult>();
   const [serviceLoading, setServiceLoading] = useState(false);
   const [serviceError, setServiceError] = useState('');
@@ -198,6 +250,15 @@ export default function App() {
     window.localStorage.setItem('tdx.activePrimaryWorkspace', activePrimaryWorkspace);
   }, [activePrimaryWorkspace]);
 
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSidebarOpen(false);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [sidebarOpen]);
+
   const selectionTabItems = selectionWorkspaces.map((workspace) => ({
     key: workspace.key,
     label: workspace.label,
@@ -250,23 +311,123 @@ export default function App() {
         : activePrimaryWorkspace;
   const activeWorkspaceLabel = workspaceLabels[activeWorkspace] || '工作台';
 
+  const selectWorkspace = (workspace: string, parent?: string) => {
+    if (parent === 'selection') {
+      setActivePrimaryWorkspace('selection');
+      setActiveSelectionWorkspace(workspace);
+    } else if (parent === 'tradingSystem') {
+      setActivePrimaryWorkspace('tradingSystem');
+      setActiveTradingWorkspace(workspace);
+    } else {
+      setActivePrimaryWorkspace(workspace);
+    }
+    setSidebarOpen(false);
+  };
+
+  const renderSidebarItem = (workspace: SidebarWorkspace, parent?: string) => {
+    const selected = activeWorkspace === workspace.key;
+    const children = workspace.children;
+    const parentSelected = activePrimaryWorkspace === workspace.key;
+    return (
+      <div key={workspace.key} className="sidebar-item-wrap">
+        <button
+          type="button"
+          className={`sidebar-item${selected || parentSelected ? ' active' : ''}${children ? ' has-children' : ''}`}
+          onClick={() => children ? setExpandedGroups((current) => ({ ...current, [workspace.key]: !current[workspace.key] })) : selectWorkspace(workspace.key, parent)}
+          aria-expanded={children ? Boolean(expandedGroups[workspace.key]) : undefined}
+          aria-current={selected && !children ? 'page' : undefined}
+        >
+          <span className="sidebar-item-icon">{workspace.icon}</span>
+          <span className="sidebar-item-label">{workspace.label}</span>
+          {children ? <span className={`sidebar-chevron${expandedGroups[workspace.key] ? ' open' : ''}`}>›</span> : null}
+        </button>
+        {children && expandedGroups[workspace.key] ? (
+          <div className="sidebar-subitems">
+            {children.map((child) => (
+              <button
+                type="button"
+                key={child.key}
+                className={`sidebar-subitem${activeWorkspace === child.key ? ' active' : ''}`}
+                onClick={() => selectWorkspace(child.key, workspace.key)}
+                aria-current={activeWorkspace === child.key ? 'page' : undefined}
+              >
+                <span className="sidebar-subitem-dot" />
+                <span>{child.label}</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+
   return (
     <Layout className="page-shell">
-      <div className="page-container">
-        <AppHeader status={serviceStatus} loading={serviceLoading} error={serviceError} />
-        <div className="terminal-bar" aria-label="当前工作区">
-          <span className="terminal-path">TDX://LOCAL/{workspaceCodes[activeWorkspace] || activeWorkspace.toUpperCase()}</span>
-          <strong>{activeWorkspaceLabel}</strong>
-          <span>{serviceStatus?.checked_at ? `CHECKED ${new Date(serviceStatus.checked_at).toLocaleTimeString('zh-CN', { hour12: false })}` : 'CHECKING'}</span>
-        </div>
-        <Tabs
-          className="workspace-tabs"
-          activeKey={activePrimaryWorkspace}
-          items={tabItems}
-          onChange={setActivePrimaryWorkspace}
-          destroyOnHidden={false}
-        />
-        <FloatingResearchAssistant workspace={activeWorkspaceLabel} />
+      <div className="workbench-shell">
+        <button
+          type="button"
+          className="mobile-menu-trigger"
+          aria-label={sidebarOpen ? '关闭菜单' : '打开菜单'}
+          onClick={() => setSidebarOpen((open) => !open)}
+        >
+          {sidebarOpen ? <CloseOutlined /> : <MenuOutlined />}
+        </button>
+        <div className={`sidebar-backdrop${sidebarOpen ? ' visible' : ''}`} onClick={() => setSidebarOpen(false)} aria-hidden="true" />
+        <aside className={`app-sidebar${sidebarOpen ? ' mobile-open' : ''}`} aria-label="主导航">
+          <div className="sidebar-brand">
+            <div className="sidebar-brand-mark">TDX</div>
+            <div className="sidebar-brand-copy">
+              <strong>股票数据终端</strong>
+              <span>行情 · 研究 · 交易计划</span>
+            </div>
+          </div>
+          <div className="sidebar-context">
+            <span className="sidebar-context-dot" />
+            <span>工作区导航</span>
+            <span className="sidebar-context-code">LOCAL</span>
+          </div>
+          <nav className="sidebar-nav">
+            {sidebarGroups.map((group) => (
+              <section className="sidebar-group" key={group.key}>
+                <button
+                  type="button"
+                  className="sidebar-group-title"
+                  onClick={() => setExpandedGroups((current) => ({ ...current, [group.key]: !current[group.key] }))}
+                  aria-expanded={expandedGroups[group.key]}
+                >
+                  <span className="sidebar-group-icon">{group.icon}</span>
+                  <span>{group.label}</span>
+                  <span className={`sidebar-chevron${expandedGroups[group.key] ? ' open' : ''}`}>›</span>
+                </button>
+                {expandedGroups[group.key] ? (
+                  <div className="sidebar-group-items">
+                    {group.items.map((workspace) => renderSidebarItem(workspace, group.key === 'research' ? workspace.key : undefined))}
+                  </div>
+                ) : null}
+              </section>
+            ))}
+          </nav>
+          <div className="sidebar-footer">
+            <span className="sidebar-footer-line" />
+            <span>TDX://LOCAL/{workspaceCodes[activeWorkspace] || activeWorkspace.toUpperCase()}</span>
+          </div>
+        </aside>
+        <main className="page-container">
+          <AppHeader status={serviceStatus} loading={serviceLoading} error={serviceError} />
+          <div className="terminal-bar" aria-label="当前工作区">
+            <span className="terminal-path">TDX://LOCAL/{workspaceCodes[activeWorkspace] || activeWorkspace.toUpperCase()}</span>
+            <strong>{activeWorkspaceLabel}</strong>
+            <span>{serviceStatus?.checked_at ? `CHECKED ${new Date(serviceStatus.checked_at).toLocaleTimeString('zh-CN', { hour12: false })}` : 'CHECKING'}</span>
+          </div>
+          <Tabs
+            className="workspace-tabs"
+            activeKey={activePrimaryWorkspace}
+            items={tabItems}
+            onChange={setActivePrimaryWorkspace}
+            destroyOnHidden={false}
+          />
+          <FloatingResearchAssistant workspace={activeWorkspaceLabel} />
+        </main>
       </div>
     </Layout>
   );
