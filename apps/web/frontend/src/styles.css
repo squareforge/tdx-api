@@ -33,8 +33,12 @@
 html,
 body,
 #root {
-  min-height: 100%;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
   margin: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 body {
@@ -51,36 +55,46 @@ textarea {
 }
 
 .page-shell {
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
   padding: 0;
   background: transparent;
 }
 
 .workbench-shell {
   display: flex;
-  min-height: 100vh;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
   width: 100%;
 }
 
 .page-container {
   width: min(1440px, calc(100% - 252px));
   flex: 1 1 auto;
+  height: 100%;
   min-width: 0;
+  min-height: 0;
   margin: 0;
-  padding: 18px 22px 40px;
+  padding: 18px 22px 22px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: none;
 }
 
 /* 左侧工作区导航：用深蓝色建立稳定的“终端”边界，内容区域保持轻量。 */
 .app-sidebar {
-  position: sticky;
-  top: 0;
+  position: relative;
   z-index: 100;
   display: flex;
   flex: 0 0 252px;
   flex-direction: column;
   width: 252px;
-  height: 100vh;
-  overflow-y: auto;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
   padding: 18px 12px 14px;
   color: #dbe8f8;
   background: #13253d;
@@ -90,6 +104,7 @@ textarea {
 
 .sidebar-brand {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 11px;
   padding: 2px 8px 18px;
@@ -128,6 +143,7 @@ textarea {
 
 .sidebar-context {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 7px;
   padding: 17px 9px 9px;
@@ -154,7 +170,13 @@ textarea {
 
 .sidebar-nav {
   display: grid;
+  flex: 1 1 auto;
+  align-content: start;
   gap: 12px;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: none;
 }
 
 .sidebar-group {
@@ -301,6 +323,7 @@ textarea {
 
 .sidebar-footer {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 7px;
   margin-top: auto;
@@ -12721,7 +12744,7 @@ textarea::placeholder {
   .page-container {
     width: 100%;
     max-width: none;
-    padding: 68px 12px 28px;
+    padding: 68px 12px 16px;
   }
 
   .mobile-menu-trigger {
@@ -12743,8 +12766,11 @@ textarea::placeholder {
 
   .app-sidebar {
     position: fixed;
+    top: 0;
+    left: 0;
     z-index: 901;
     width: min(280px, 88vw);
+    height: 100vh;
     height: 100dvh;
     transform: translateX(-100%);
     transition: transform 0.22s ease;
