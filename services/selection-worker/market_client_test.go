@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func newTestMarketClient(handler http.HandlerFunc) (*MarketServiceClient, func()) {
@@ -80,6 +81,32 @@ func TestMarketServiceClientErrorEnvelope(t *testing.T) {
 	err := client.get(context.Background(), "/api/fail", nil, &struct{}{})
 	if err == nil || err.Error() != "行情服务失败" {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestMarketInfoSyncOutlivesQueryTimeoutAndHonorsContext(t *testing.T) {
+	client, closeServer := newTestMarketClient(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(100 * time.Millisecond):
+			writeMarketTestResponse(t, w, map[string]int{"success": 1})
+		case <-r.Context().Done():
+		}
+	})
+	defer closeServer()
+	client.httpClient.Timeout = 20 * time.Millisecond
+	if err := client.post(context.Background(), "/api/market/sync", nil, nil); err != nil {
+		t.Fatalf("market sync was cut off by query timeout: %v", err)
+	}
+	if client.httpClient.Timeout != 20*time.Millisecond {
+		t.Fatal("sync changed the shared query client")
+	}
+	if err := client.post(context.Background(), "/api/hikyuu/kline/batch", nil, nil); err == nil {
+		t.Fatal("ordinary query should still use the query timeout")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := client.post(ctx, "/api/market/sync", nil, nil); err == nil {
+		t.Fatal("market sync should honor task cancellation")
 	}
 }
 

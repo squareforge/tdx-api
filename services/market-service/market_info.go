@@ -29,18 +29,18 @@ const (
 )
 
 type MarketResearchReport struct {
-	Title        string `json:"title"`
-	StockName    string `json:"stockName"`
-	StockCode    string `json:"stockCode"`
-	OrgSName     string `json:"orgSName"`
-	PublishDate  string `json:"publishDate"`
-	InfoCode     string `json:"infoCode"`
-	IndvInduName string `json:"indvInduName"`
-	EmRatingName string `json:"emRatingName"`
-	RatingChange int    `json:"ratingChange"`
-	SRatingName  string `json:"sRatingName"`
-	Researcher   string `json:"researcher"`
-	Market       string `json:"market"`
+	Title        string      `json:"title"`
+	StockName    string      `json:"stockName"`
+	StockCode    string      `json:"stockCode"`
+	OrgSName     string      `json:"orgSName"`
+	PublishDate  string      `json:"publishDate"`
+	InfoCode     string      `json:"infoCode"`
+	IndvInduName string      `json:"indvInduName"`
+	EmRatingName string      `json:"emRatingName"`
+	RatingChange flexibleInt `json:"ratingChange"`
+	SRatingName  string      `json:"sRatingName"`
+	Researcher   string      `json:"researcher"`
+	Market       string      `json:"market"`
 }
 
 type flexibleInt int

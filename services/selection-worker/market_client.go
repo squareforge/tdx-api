@@ -153,7 +153,16 @@ func (c *MarketServiceClient) post(ctx context.Context, path string, body interf
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.httpClient.Do(req)
+	client := c.httpClient
+	if path == "/api/market/sync" {
+		// Market information is fetched sequentially across up to 120 stocks.
+		// Allow the task's context to bound the whole sync instead of cutting it
+		// off with the ordinary three-minute market-query timeout.
+		syncClient := *client
+		syncClient.Timeout = 20 * time.Minute
+		client = &syncClient
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
