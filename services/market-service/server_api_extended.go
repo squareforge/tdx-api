@@ -138,7 +138,15 @@ func handleGetKlineHistory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	hikyuuResp, hikyuuErr := fetchHikyuuKline(r.Context(), code, klineType, int(limit))
+	var hikyuuResp *protocol.KlineResp
+	var hikyuuErr error
+	if r.URL.Query().Get("recover") == "none" && klineType == "day" && hikyuuClient != nil {
+		// Entry-price risk calculations need prices in the same units as the
+		// recorded fill, without later corporate actions adjusting past bars.
+		hikyuuResp, hikyuuErr = hikyuuClient.FetchKline(r.Context(), code, klineType, "none", int(limit))
+	} else {
+		hikyuuResp, hikyuuErr = fetchHikyuuKline(r.Context(), code, klineType, int(limit))
+	}
 	if hikyuuErr == nil && hikyuuResp != nil && len(hikyuuResp.List) > 0 {
 		successResponse(w, hikyuuResp)
 		return

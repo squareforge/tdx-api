@@ -511,7 +511,14 @@ export function WebhooksWorkspace() {
               <small>EVENTS</small>
             </div>
             <div className="webhook-form-grid webhook-form-grid-events">
-              <Form.Item name="events" label="事件 JSON"><Input.TextArea rows={4} placeholder={'例如：["t-signal.triggered","automation.failed","macro_event.alert_due"]'} /></Form.Item>
+              <Form.Item name="events" label="事件 JSON" extra="持仓止盈止损预警的事件名为 trade.alert；空数组接收全部事件。"><Input.TextArea rows={4} placeholder={'例如：["trade.alert","t-signal.triggered","automation.failed"]'} /></Form.Item>
+              <Button size="small" onClick={() => {
+                const events = parseWebhookEvents(form.getFieldValue('events'));
+                if (events.length && !events.includes('*') && !events.includes('trade.alert')) {
+                  form.setFieldValue('events', JSON.stringify([...events, 'trade.alert']));
+                }
+                message.success('此渠道已允许持仓止盈止损预警，保存后生效');
+              }}>订阅持仓止盈止损预警</Button>
             </div>
           </section>
 

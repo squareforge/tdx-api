@@ -1065,6 +1065,14 @@ export interface TradingTrade {
   previousClosePrice?: number;
   shares: number;
   invalidPrice: number;
+  stopPrice?: number;
+  targetPrice1?: number;
+  targetPrice2?: number;
+  alertEnabled?: boolean;
+  alertWebhookIds?: string[];
+  riskBasis?: string;
+  riskAsOf?: string;
+  manualRiskFields?: string[];
   positionLabel: string;
   targetOne: string;
   targetTwo: string;

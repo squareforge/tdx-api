@@ -220,3 +220,30 @@ func TestHandleGetKlineAllTDXUsesHikyuuWithoutTDXClient(t *testing.T) {
 		t.Fatalf("unexpected response: %+v body=%s", response, recorder.Body.String())
 	}
 }
+
+func TestEntryRiskKlineRequestsUnadjustedPrices(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("recover"); got != "none" {
+			t.Errorf("recover=%q, want unadjusted entry-price basis", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"code": 0, "data": map[string]interface{}{
+			"count": 1, "list": []map[string]interface{}{{"time": "2026-10-21T00:00:00+08:00", "open": 10, "high": 11, "low": 9, "close": 10, "volume": 100}},
+		}})
+	}))
+	defer upstream.Close()
+	previous := hikyuuClient
+	hikyuuClient = &HikyuuDataServiceClient{baseURL: upstream.URL, httpClient: upstream.Client()}
+	t.Cleanup(func() { hikyuuClient = previous })
+	response := httptest.NewRecorder()
+	handleGetKlineHistory(response, httptest.NewRequest(http.MethodGet, "/api/kline-history?code=600178&type=day&limit=120&recover=none", nil))
+	var envelope struct {
+		Code int                `json:"code"`
+		Data protocol.KlineResp `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Code != 0 || len(envelope.Data.List) != 1 || envelope.Data.List[0].Close != protocol.Yuan(10) {
+		t.Fatalf("unexpected risk bars: %s", response.Body.String())
+	}
+}

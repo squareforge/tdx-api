@@ -454,6 +454,17 @@ func handleDecisionNoteOperations(w http.ResponseWriter, r *http.Request) {
 
 func handleTradingSystemState(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
+	case http.MethodDelete:
+		state, err := appStore.DeleteTradingTrade(r.URL.Query().Get("id"))
+		if err == sql.ErrNoRows {
+			errorResponse(w, "交易记录不存在或已删除，请刷新列表")
+			return
+		}
+		if err != nil {
+			errorResponse(w, err.Error())
+			return
+		}
+		successResponse(w, state)
 	case http.MethodGet:
 		state, err := appStore.GetTradingSystemState()
 		if err == sql.ErrNoRows {

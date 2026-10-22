@@ -43,6 +43,9 @@ coverage.out
 /services/ai-service/ai-service
 /services/market-service/market-service
 /services/selection-worker/selection-worker
+# Keep worker source additions visible even with a global binary-name ignore.
+!/services/selection-worker/
+!/services/selection-worker/*.go
 
 # Project runtime data and generated reports
 data/

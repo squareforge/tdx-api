@@ -1,9 +1,10 @@
-import { AutoComplete, Button, Card, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography, message } from 'antd';
-import { CheckCircleOutlined, CloseOutlined, PlusOutlined, ReloadOutlined, SaveOutlined, WarningOutlined } from '@ant-design/icons';
+import { AutoComplete, Button, Card, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Typography, message } from 'antd';
+import { CheckCircleOutlined, CloseOutlined, DeleteOutlined, PlusOutlined, ReloadOutlined, SaveOutlined, WarningOutlined } from '@ant-design/icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../lib/api';
+import { allowsTradeAlerts, calculateTradeRisk, riskTargets, shanghaiDate } from '../lib/tradeRisk';
 import { normalizeSymbol, priceFromMilli, quoteKline } from '../lib/format';
-import type { AICredential, MacroEventOverview, Quote, TradingSystemState, TradingTrade } from '../types';
+import type { AICredential, MacroEventOverview, Quote, TradingSystemState, TradingTrade, Webhook } from '../types';
 
 const { Text } = Typography;
 
@@ -35,9 +36,10 @@ interface TradeAnalysis {
   updatedAt?: string;
 }
 
-const autoAnalysisFields = ['currentPrice', 'invalidPrice', 'targetOne', 'targetTwo'] as const;
+const autoAnalysisFields = ['currentPrice', 'invalidPrice', 'targetOne', 'targetTwo', 'stopPrice', 'targetPrice1', 'targetPrice2'] as const;
 type AutoAnalysisField = (typeof autoAnalysisFields)[number];
 const AI_ANALYSIS_TIMEOUT_MS = 18000;
+const riskFields = ['stopPrice', 'targetPrice1', 'targetPrice2'] as const;
 
 const currencyFormatter = new Intl.NumberFormat('zh-CN', {
   minimumFractionDigits: 2,
@@ -215,6 +217,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMS: number) {
 
 export function TradingSystemWorkspace() {
   const [state, setState] = useState<TradingSystemState | null>(null);
+  const [webhooks, setWebhooks] = useState<Webhook[]>([]);
   const [macroOverview, setMacroOverview] = useState<MacroEventOverview | null>(null);
   const [loading, setLoading] = useState(false);
   const [quotesUpdatedAt, setQuotesUpdatedAt] = useState<string | null>(null);
@@ -233,11 +236,28 @@ export function TradingSystemWorkspace() {
   const applyingAnalysisRef = useRef(false);
   const analysisRequestRef = useRef(0);
   const [form] = Form.useForm<TradingTrade>();
+  const [riskNote, setRiskNote] = useState('填写买入价后计算止盈止损');
+  const [riskLoading, setRiskLoading] = useState(false);
+  const [riskRevision, setRiskRevision] = useState(0);
+  const savedRiskUntouchedRef = useRef(false);
+  const [saving, setSaving] = useState(false);
+  const [pendingMutation, setPendingMutation] = useState<string | null>(null);
+  const historyCacheRef = useRef(new Map<string, { at: number; value: Promise<KlineHistory> }>());
+
+  function loadRiskHistory(code: string): Promise<KlineHistory> {
+    const cache = historyCacheRef.current.get(code);
+    if (cache && Date.now() - cache.at < 60_000) return cache.value;
+    const value = apiFetch<KlineHistory>(`/api/kline-history?code=${encodeURIComponent(code)}&type=day&limit=800&recover=none`);
+    historyCacheRef.current.set(code, { at: Date.now(), value });
+    value.catch(() => historyCacheRef.current.delete(code));
+    return value;
+  }
 
   const load = async () => {
     setLoading(true);
     try {
       setState(await apiFetch<TradingSystemState>('/api/trading-system'));
+      setWebhooks(await apiFetch<Webhook[]>('/api/webhooks').catch(() => []));
       void refreshMarketGate();
       try {
         setMacroOverview(await apiFetch<MacroEventOverview>('/api/macro-events/overview'));
@@ -367,6 +387,11 @@ export function TradingSystemWorkspace() {
   };
   const direction = Form.useWatch('direction', form) || (editing?.direction === 'sell' ? 'sell' : 'buy');
   const stockCode = Form.useWatch('stockCode', form) || '';
+  const entryPrice = Number(Form.useWatch('entryPrice', form) || 0);
+  const stopPrice = Number(Form.useWatch('stopPrice', form) || 0);
+  const enteredShares = Number(Form.useWatch('shares', form) || 0);
+  const entryDate = Form.useWatch('entryDate', form) || '';
+  const alertEnabled = Form.useWatch('alertEnabled', form) || false;
   const stockName = Form.useWatch('stockName', form) || '';
   const plannedR = Number(Form.useWatch('plannedR', form) || 0);
   const actualR = Number(Form.useWatch('actualR', form) || 0);
@@ -441,13 +466,17 @@ export function TradingSystemWorkspace() {
     .reduce((sum, trade) => sum + tradePnl(trade), 0);
 
   function openTradeDialog(trade?: TradingTrade) {
+    setRiskRevision(0);
+    savedRiskUntouchedRef.current = Boolean(trade?.stopPrice || trade?.targetPrice1 || trade?.targetPrice2);
     setEditing(trade || null);
     setStockSearchField(null);
     setStockSearchResults([]);
     manualAnalysisFieldsRef.current = new Set(
-      autoAnalysisFields.filter((field) => field !== 'currentPrice' && Boolean(trade?.[field]))
+      autoAnalysisFields.filter((field) => field !== 'currentPrice' && Boolean(trade?.[field]) &&
+        (!riskFields.includes(field as typeof riskFields[number]) || !trade?.manualRiskFields || trade.manualRiskFields.includes(field)))
     );
-    autoAnalysisFieldsRef.current = new Set();
+    autoAnalysisFieldsRef.current = new Set(riskFields.filter((field) => Boolean(trade?.[field]) && !manualAnalysisFieldsRef.current.has(field)));
+    setRiskNote(trade?.riskBasis || '填写买入价后计算止盈止损');
     setAnalysis({ source: 'idle', note: '选择股票后自动同步行情与建议' });
     form.resetFields();
     form.setFieldsValue(trade ? {
@@ -460,11 +489,19 @@ export function TradingSystemWorkspace() {
       stockCode: '',
       direction: 'buy',
       status: 'active',
-      entryDate: '',
+      entryDate: shanghaiDate(),
       entryPrice: 0,
       currentPrice: 0,
       shares: 0,
       invalidPrice: 0,
+      stopPrice: 0,
+      targetPrice1: 0,
+      targetPrice2: 0,
+      alertEnabled: false,
+      alertWebhookIds: [],
+      manualRiskFields: [],
+      riskBasis: '',
+      riskAsOf: '',
       positionLabel: '试错仓',
       targetOne: '',
       targetTwo: '',
@@ -480,7 +517,12 @@ export function TradingSystemWorkspace() {
     setDialogOpen(true);
   }
 
-  function resetAutomaticAnalysisFields() {
+  function resetAutomaticAnalysisFields(stockChanged = false) {
+    if (stockChanged) {
+      riskFields.forEach((field) => manualAnalysisFieldsRef.current.delete(field));
+      savedRiskUntouchedRef.current = false;
+      setRiskRevision((value) => value + 1);
+    }
     const patch: Partial<TradingTrade> = {};
     autoAnalysisFields.forEach((field) => {
       if (manualAnalysisFieldsRef.current.has(field)) return;
@@ -488,8 +530,13 @@ export function TradingSystemWorkspace() {
       if (field === 'invalidPrice') patch.invalidPrice = 0;
       if (field === 'targetOne') patch.targetOne = '';
       if (field === 'targetTwo') patch.targetTwo = '';
+      if (field === 'stopPrice') patch.stopPrice = 0;
+      if (field === 'targetPrice1') patch.targetPrice1 = 0;
+      if (field === 'targetPrice2') patch.targetPrice2 = 0;
       autoAnalysisFieldsRef.current.delete(field);
     });
+    patch.riskBasis = '';
+    patch.riskAsOf = '';
     if (Object.keys(patch).length) {
       applyingAnalysisRef.current = true;
       form.setFieldsValue(patch);
@@ -501,12 +548,14 @@ export function TradingSystemWorkspace() {
   function updateStockField(field: 'stockName' | 'stockCode', value: string) {
     setStockSearchField(field === 'stockName' ? 'name' : 'code');
     setStockSearchResults([]);
-    resetAutomaticAnalysisFields();
-    form.setFieldValue(field, value);
+    resetAutomaticAnalysisFields(true);
+    form.setFieldsValue(field === 'stockName' ? { stockName: value, stockCode: '' } : { stockCode: value, stockName: '' });
   }
 
   function selectStock(item: StockSearchResult) {
-    resetAutomaticAnalysisFields();
+    if (normalizeSymbol(item.code) !== normalizeSymbol(String(form.getFieldValue('stockCode') || ''))) {
+      resetAutomaticAnalysisFields(true);
+    }
     form.setFieldsValue({ stockName: item.name, stockCode: item.code });
     setStockSearchResults([]);
   }
@@ -521,7 +570,7 @@ export function TradingSystemWorkspace() {
     try {
       const [quotes, kline, credentials] = await Promise.all([
         apiFetch<Quote[]>(`/api/quote?code=${encodeURIComponent(code)}`),
-        apiFetch<KlineHistory>(`/api/kline-history?code=${encodeURIComponent(code)}&type=day&limit=120`),
+        loadRiskHistory(code),
         apiFetch<AICredential[]>('/api/ai/credentials').catch(() => [])
       ]);
       if (requestID !== analysisRequestRef.current) return;
@@ -539,7 +588,7 @@ export function TradingSystemWorkspace() {
           const value = values[field];
           if (value === undefined || manualAnalysisFieldsRef.current.has(field)) return;
           const currentValue = form.getFieldValue(field);
-          const empty = field === 'currentPrice' || field === 'invalidPrice'
+          const empty = field === 'currentPrice' || field === 'invalidPrice' || field === 'stopPrice' || field === 'targetPrice1' || field === 'targetPrice2'
             ? !Number(currentValue || 0)
             : !String(currentValue || '').trim();
           if (force || empty || autoAnalysisFieldsRef.current.has(field)) {
@@ -586,7 +635,7 @@ export function TradingSystemWorkspace() {
           if (requestID !== analysisRequestRef.current) return;
           const aiResult = parseAnalysisResult(aiResponse.result, aiResponse.content || '');
           if (aiResult) {
-            applyValues(aiResult);
+            applyValues({ invalidPrice: aiResult.invalidPrice, targetOne: aiResult.targetOne, targetTwo: aiResult.targetTwo });
             setAnalysis({
               source: 'ai',
               note: `AI建议 · ${enabledCredential.name || enabledCredential.model || enabledCredential.provider}`,
@@ -601,7 +650,7 @@ export function TradingSystemWorkspace() {
       }
 
       if (technical) {
-        applyValues(technical);
+        applyValues({ invalidPrice: technical.invalidPrice, targetOne: technical.targetOne, targetTwo: technical.targetTwo });
         setAnalysis({
           source: 'technical',
           note: '技术估算 · 日K行情',
@@ -624,33 +673,166 @@ export function TradingSystemWorkspace() {
     return () => window.clearTimeout(timer);
   }, [dialogOpen, stockCode, direction]);
 
+  useEffect(() => {
+    // Form watchers can still contain the previous dialog's values during mount.
+    // Read the hydrated form before deciding whether to keep saved risk levels.
+    const direction = form.getFieldValue('direction') || 'buy';
+    const stockCode = String(form.getFieldValue('stockCode') || '');
+    const entryPrice = Number(form.getFieldValue('entryPrice') || 0);
+    const entryDate = String(form.getFieldValue('entryDate') || '');
+    if (!dialogOpen || direction !== 'buy') return;
+    if (editing && savedRiskUntouchedRef.current && riskRevision === 0 && normalizeSymbol(editing.stockCode) === normalizeSymbol(stockCode) &&
+        entryPrice === editing.entryPrice && entryDate === editing.entryDate &&
+        (editing.stopPrice || editing.targetPrice1 || editing.targetPrice2)) {
+      setRiskLoading(false);
+      setRiskNote(editing.riskBasis || '已保留这笔交易保存时的价位；点击重新计算可采用新的建议。');
+      return;
+    }
+    savedRiskUntouchedRef.current = false;
+    let cancelled = false;
+    const code = normalizeSymbol(stockCode);
+    // Invalidate auto values immediately. A late response for the previous
+    // stock/entry must never refill this form.
+    const cleared: Partial<TradingTrade> = { riskBasis: '', riskAsOf: '' };
+    riskFields.forEach((field) => {
+      if (!manualAnalysisFieldsRef.current.has(field)) cleared[field] = 0;
+    });
+    form.setFieldsValue(cleared);
+    setRiskLoading(false);
+    if (!code || entryPrice <= 0 || !entryDate) {
+      setRiskNote('填写股票、买入日期和买入价后自动计算');
+      return;
+    }
+    if (entryDate > shanghaiDate()) {
+      setRiskNote('买入日期晚于今天，暂不生成价格');
+      return;
+    }
+    setRiskLoading(true);
+    setRiskNote('正在读取买入前日K与交易日历…');
+    const timer = window.setTimeout(async () => {
+      try {
+        const [history, calendar] = await Promise.all([
+          loadRiskHistory(code),
+          apiFetch<{ previous?: { iso: string }[] }>(`/api/workday?date=${encodeURIComponent(entryDate)}&count=1`)
+        ]);
+        if (cancelled) return;
+        const result = calculateTradeRisk(history.List || [], entryPrice, entryDate, calendar.previous?.[0]?.iso || '');
+        const patch: Partial<TradingTrade> = {};
+        if (result.levels) {
+          const levels = { ...result.levels };
+          if (manualAnalysisFieldsRef.current.has('stopPrice')) {
+            Object.assign(levels, riskTargets(entryPrice, Number(form.getFieldValue('stopPrice') || 0)));
+          }
+          riskFields.forEach((field) => {
+            if (!manualAnalysisFieldsRef.current.has(field)) {
+              patch[field] = levels[field];
+              autoAnalysisFieldsRef.current.add(field);
+            }
+          });
+          patch.riskBasis = result.levels.riskBasis;
+          patch.riskAsOf = result.levels.riskAsOf;
+          form.setFieldsValue(patch);
+        }
+        const hasManual = riskFields.some((field) => manualAnalysisFieldsRef.current.has(field));
+        setRiskNote(hasManual ? `算法原始建议：${result.reason} 手动价位已保留，当前风险以表内止损价及亏损估算为准。` : result.reason);
+      } catch (error) {
+        if (!cancelled) setRiskNote(error instanceof Error ? `无法计算：${error.message}` : '行情数据读取失败，暂不自动生成价格');
+      } finally {
+        if (!cancelled) setRiskLoading(false);
+      }
+    }, 360);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [dialogOpen, stockCode, direction, entryPrice, entryDate, riskRevision]);
+
+  useEffect(() => {
+    const direction = form.getFieldValue('direction') || 'buy';
+    const entryPrice = Number(form.getFieldValue('entryPrice') || 0);
+    const stopPrice = Number(form.getFieldValue('stopPrice') || 0);
+    if (!dialogOpen || direction !== 'buy' || !manualAnalysisFieldsRef.current.has('stopPrice') ||
+        stopPrice <= 0 || stopPrice >= entryPrice) return;
+    const risk = entryPrice - stopPrice;
+    const targets = riskTargets(entryPrice, stopPrice);
+    const patch: Partial<TradingTrade> = {};
+    if (!manualAnalysisFieldsRef.current.has('targetPrice1')) patch.targetPrice1 = targets.targetPrice1;
+    if (!manualAnalysisFieldsRef.current.has('targetPrice2')) patch.targetPrice2 = targets.targetPrice2;
+    form.setFieldsValue(patch);
+    setRiskNote(`止损采用手动价 ${stopPrice.toFixed(2)}；每股风险 ${risk.toFixed(2)}，未手动修改的止盈价按 1.5R/2.5R 更新。`);
+  }, [dialogOpen, direction, entryPrice, stopPrice]);
+
   async function saveTrade(values: TradingTrade) {
     if (!state) return;
+    if (saving || pendingMutation) return;
     const selectedDirection = values.direction === 'sell' ? 'sell' : 'buy';
     const shares = Number(values.shares || 0);
     const selectedStockCode = String(values.stockCode || '').trim();
+    if (selectedDirection === 'buy' && values.alertEnabled && riskLoading) {
+      message.warning('价位正在计算，请稍候保存'); return;
+    }
+    if (selectedDirection === 'buy' && values.alertEnabled && (!values.stopPrice && !values.targetPrice1 && !values.targetPrice2)) {
+      message.error('开启预警前请填写至少一个止损或止盈价');
+      return;
+    }
+    if (selectedDirection === 'buy' && values.alertEnabled && !(values.alertWebhookIds || []).length) {
+      message.error('请选择至少一个 Webhook 渠道');
+      return;
+    }
     if (selectedDirection === 'sell' && shares > getAvailableShares(trades, selectedStockCode, values.id) + 0.000001) {
       message.error(`卖出数量不能超过当前可用仓位（${formatShares(getAvailableShares(trades, selectedStockCode, values.id))} 股）`);
       return;
     }
     const nextTrades = [...trades];
     const id = values.id || `trade-${Date.now()}`;
+    const manualRiskFields = riskFields.filter((field) => manualAnalysisFieldsRef.current.has(field));
+    const originalRiskBasis = String(form.getFieldValue('riskBasis') || '').replace(/^手动修改：[^。]*。(?:算法原始建议：)?/, '');
+    const manualRiskLabels = manualRiskFields.map((field) => ({ stopPrice: '止损价', targetPrice1: '第一止盈价', targetPrice2: '第二止盈价' }[field]));
     const trade: TradingTrade = {
       ...values,
       id,
       stockCode: selectedStockCode,
       direction: selectedDirection,
       shares,
+      alertEnabled: selectedDirection === 'buy' && Boolean(values.alertEnabled),
+      manualRiskFields,
+      riskBasis: manualRiskFields.length ? `手动修改：${manualRiskLabels.join('、')}。算法原始建议：${originalRiskBasis}` : originalRiskBasis,
+      riskAsOf: form.getFieldValue('riskAsOf') || '',
       status: selectedDirection === 'sell' ? 'closed' : (editing?.status || 'active')
     };
     const index = nextTrades.findIndex((item) => item.id === id);
     if (index >= 0) nextTrades[index] = trade;
     else nextTrades.unshift(trade);
     const payload = { ...state, trades: nextTrades };
-    await apiFetch('/api/trading-system', { method: 'PUT', body: JSON.stringify(payload) });
-    message.success('交易已保存');
-    setDialogOpen(false);
-    await load();
+    setSaving(true);
+    try {
+      setState(await apiFetch<TradingSystemState>('/api/trading-system', { method: 'PUT', body: JSON.stringify(payload) }));
+      message.success('交易已保存');
+      setDialogOpen(false);
+    } catch (error) { message.error(error instanceof Error ? error.message : '保存失败'); }
+    finally { setSaving(false); }
+  }
+
+  async function deleteTrade(record: TradingTrade) {
+    if (!state || pendingMutation || saving) return;
+    setPendingMutation(record.id);
+    try {
+      setState(await apiFetch<TradingSystemState>(`/api/trading-system?id=${encodeURIComponent(record.id)}`, { method: 'DELETE' }));
+      message.success('记录已删除，相关持仓和预警已更新');
+    } catch (error) { message.error(error instanceof Error ? error.message : '删除失败'); }
+    finally { setPendingMutation(null); }
+  }
+
+  async function toggleAlert(record: TradingTrade, enabled: boolean) {
+    if (!state || pendingMutation) return;
+    const validChannel = (record.alertWebhookIds || []).some((id) => webhooks.some((hook) => hook.id === id && allowsTradeAlerts(hook)));
+    if (enabled && (!validChannel || (!record.stopPrice && !record.targetPrice1 && !record.targetPrice2))) {
+      message.warning('请先编辑交易，设置价位并选择订阅持仓预警的 Webhook');
+      openTradeDialog(record);
+      return;
+    }
+    setPendingMutation(record.id);
+    try {
+      setState(await apiFetch<TradingSystemState>('/api/trading-system', { method: 'PUT', body: JSON.stringify({ ...state, trades: trades.map((trade) => trade.id === record.id ? { ...trade, alertEnabled: enabled } : trade) }) }));
+    } catch (error) { message.error(error instanceof Error ? error.message : '预警开关保存失败'); }
+    finally { setPendingMutation(null); }
   }
 
   return (
@@ -811,15 +993,17 @@ export function TradingSystemWorkspace() {
                   )
                 )
               },
-              { title: '无效点', dataIndex: 'invalidPrice', width: 86, render: (value: number) => formatMoney(value) },
+              { title: '止损', dataIndex: 'stopPrice', width: 84, render: (value: number) => value ? formatMoney(value) : '--' },
+              { title: '止盈 1 / 2', width: 155, render: (_value, record: TradingTrade) => `${record.targetPrice1 ? formatMoney(record.targetPrice1) : '--'} / ${record.targetPrice2 ? formatMoney(record.targetPrice2) : '--'}` },
               { title: '仓位', dataIndex: 'positionLabel', width: 82, render: (value: string) => value || '--' },
+              { title: 'Webhook', width: 86, render: (_value, record: TradingTrade) => tradeDirection(record) === 'buy' && record.status === 'active' ? <Switch size="small" checked={Boolean(record.alertEnabled)} disabled={Boolean(pendingMutation)} loading={pendingMutation === record.id} onChange={(checked) => void toggleAlert(record, checked)} /> : '--' },
               {
                 title: '操作',
-                width: 76,
-                render: (_value, record) => <Button className="trading-edit-button" size="small" onClick={() => openTradeDialog(record)}>编辑</Button>
+                width: 168,
+                render: (_value, record) => <Space size={4}><Button className="trading-edit-button" size="small" disabled={Boolean(pendingMutation)} onClick={() => openTradeDialog(record)}>编辑</Button><Popconfirm title={tradeDirection(record) === 'buy' ? '删除这笔持仓记录？' : '删除这笔卖出记录？'} description={tradeDirection(record) === 'buy' ? '从账本移除本笔记录和归属它的卖出数量，并停止预警。其他持仓的剩余股数不变。' : '删除后会重新计算剩余持仓和预警。'} okText="确认删除" cancelText="取消" onConfirm={() => deleteTrade(record)}><Button size="small" danger icon={<DeleteOutlined />} disabled={Boolean(pendingMutation)}>{tradeDirection(record) === 'buy' ? '删除持仓' : '删除记录'}</Button></Popconfirm></Space>
               }
             ]}
-            scroll={{ x: 946 }}
+            scroll={{ x: 1180 }}
           />
         </div>
       </Card>
@@ -859,6 +1043,8 @@ export function TradingSystemWorkspace() {
           }}
         >
           <Form.Item name="id" hidden><Input /></Form.Item>
+          <Form.Item name="riskBasis" hidden><Input /></Form.Item>
+          <Form.Item name="riskAsOf" hidden><Input /></Form.Item>
           <Form.Item name="status" hidden><Input /></Form.Item>
           <section className="trade-form-section">
             <div className="trade-form-section-head">
@@ -942,6 +1128,9 @@ export function TradingSystemWorkspace() {
                 <InputNumber style={{ width: '100%' }} min={1} precision={0} />
               </Form.Item>
               <Form.Item name="invalidPrice" label={<span className="trade-field-label"><span>技术无效点</span><em className="is-auto">分析</em></span>}><InputNumber style={{ width: '100%' }} min={0} /></Form.Item>
+              {direction === 'buy' && <Form.Item name="stopPrice" label="止损价（自动，可修改）"><InputNumber style={{ width: '100%' }} min={0} precision={2} /></Form.Item>}
+              {direction === 'buy' && <Form.Item name="targetPrice1" label="第一止盈价（1.5R）"><InputNumber style={{ width: '100%' }} min={0} precision={2} /></Form.Item>}
+              {direction === 'buy' && <Form.Item name="targetPrice2" label="第二止盈价（2.5R）"><InputNumber style={{ width: '100%' }} min={0} precision={2} /></Form.Item>}
               <Form.Item name="positionLabel" label={<span className="trade-field-label"><span>仓位标签</span><em>手填</em></span>}><Select options={[{ value: '试错仓' }, { value: '确认仓' }, { value: '趋势仓' }, { value: '观察仓' }]} /></Form.Item>
               <Form.Item name="targetOne" label={<span className="trade-field-label"><span>{direction === 'sell' ? '第一观察 / 支撑位' : '第一观察 / 压力位'}</span><em className="is-auto">分析</em></span>}><Input placeholder="自动生成，可手动调整" /></Form.Item>
               <Form.Item name="targetTwo" label={<span className="trade-field-label"><span>{direction === 'sell' ? '强支撑 / 止盈区' : '强压力 / 止盈区'}</span><em className="is-auto">分析</em></span>}><Input placeholder="自动生成，可手动调整" /></Form.Item>
@@ -951,7 +1140,19 @@ export function TradingSystemWorkspace() {
               <Form.Item name="timeStopDate" label={<span className="trade-field-label"><span>时间止损</span><em>手填</em></span>} extra="买入日+5个交易日未走强离场">
                 <Input type="date" />
               </Form.Item>
+              {direction === 'buy' && <Form.Item name="alertEnabled" label="Webhook 预警" valuePropName="checked"><Switch /></Form.Item>}
+              {direction === 'buy' && <Form.Item name="alertWebhookIds" label="推送渠道" extra="在 Webhook 中订阅‘持仓止盈止损预警’；按北京时间，每笔交易的止损及各档止盈每天各提醒一次。" rules={alertEnabled ? [{ required: true, message: '请选择 Webhook 渠道' }] : []}><Select mode="multiple" placeholder="选择已订阅持仓预警的 Webhook" options={webhooks.filter(allowsTradeAlerts).map((hook) => ({ value: hook.id, label: hook.name }))} /></Form.Item>}
             </div>
+            {direction === 'buy' && <div className="trade-analysis-copy" style={{ marginTop: 12 }}><div>
+              <Text type="secondary">{riskNote}</Text>
+              {entryPrice > stopPrice && stopPrice > 0 && enteredShares > 0 && <div><Text>按 {formatShares(enteredShares)} 股估算，到止损价亏损 {formatMoney((entryPrice - stopPrice) * enteredShares)} 元（未含费用及跳空滑点）。</Text></div>}
+              <Button size="small" type="link" loading={riskLoading} onClick={() => {
+                riskFields.forEach((field) => manualAnalysisFieldsRef.current.delete(field));
+                historyCacheRef.current.delete(normalizeSymbol(stockCode));
+                // Re-run the date/price effect without changing the entered values.
+                setRiskRevision((value) => value + 1);
+              }}>重新计算并采用建议价</Button>
+            </div></div>}
           </section>
 
           <section className="trade-form-section">
@@ -977,7 +1178,7 @@ export function TradingSystemWorkspace() {
             <Text type="secondary">保存后会更新交易卡与账户汇总</Text>
             <Space>
               <Button onClick={() => setDialogOpen(false)}>取消</Button>
-              <Button type="primary" htmlType="submit" icon={<SaveOutlined />}>保存交易</Button>
+              <Button loading={saving} disabled={riskLoading && direction === 'buy'} type="primary" htmlType="submit" icon={<SaveOutlined />}>保存交易</Button>
             </Space>
           </div>
         </Form>

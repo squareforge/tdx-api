@@ -255,31 +255,39 @@ type TradingFeeConfig struct {
 }
 
 type TradingTrade struct {
-	ID            string  `json:"id"`
-	StockName     string  `json:"stockName"`
-	StockCode     string  `json:"stockCode"`
-	Direction     string  `json:"direction"`
-	Status        string  `json:"status"`
-	EntryDate     string  `json:"entryDate"`
-	EntryPrice    float64 `json:"entryPrice"`
-	ExitDate      string  `json:"exitDate"`
-	ExitPrice     float64 `json:"exitPrice"`
-	ExitShares    float64 `json:"exitShares"`
-	CurrentPrice  float64 `json:"currentPrice"`
-	PreviousClose float64 `json:"previousClosePrice"`
-	Shares        float64 `json:"shares"`
-	InvalidPrice  float64 `json:"invalidPrice"`
-	PositionLabel string  `json:"positionLabel"`
-	TargetOne     string  `json:"targetOne"`
-	TargetTwo     string  `json:"targetTwo"`
-	TradeMode     string  `json:"tradeMode"`
-	BuyReason     string  `json:"buyReason"`
-	ExitRules     string  `json:"exitRules"`
-	Review        string  `json:"review"`
-	PlannedR      float64 `json:"plannedR"`
-	ActualR       float64 `json:"actualR"`
-	TimeStopDate  string  `json:"timeStopDate"`
-	MarketGate    string  `json:"marketGate"`
+	ID               string   `json:"id"`
+	StockName        string   `json:"stockName"`
+	StockCode        string   `json:"stockCode"`
+	Direction        string   `json:"direction"`
+	Status           string   `json:"status"`
+	EntryDate        string   `json:"entryDate"`
+	EntryPrice       float64  `json:"entryPrice"`
+	ExitDate         string   `json:"exitDate"`
+	ExitPrice        float64  `json:"exitPrice"`
+	ExitShares       float64  `json:"exitShares"`
+	CurrentPrice     float64  `json:"currentPrice"`
+	PreviousClose    float64  `json:"previousClosePrice"`
+	Shares           float64  `json:"shares"`
+	InvalidPrice     float64  `json:"invalidPrice"`
+	StopPrice        float64  `json:"stopPrice"`
+	TargetPrice1     float64  `json:"targetPrice1"`
+	TargetPrice2     float64  `json:"targetPrice2"`
+	AlertEnabled     bool     `json:"alertEnabled"`
+	AlertWebhookIDs  []string `json:"alertWebhookIds"`
+	RiskBasis        string   `json:"riskBasis,omitempty"`
+	RiskAsOf         string   `json:"riskAsOf,omitempty"`
+	ManualRiskFields []string `json:"manualRiskFields"`
+	PositionLabel    string   `json:"positionLabel"`
+	TargetOne        string   `json:"targetOne"`
+	TargetTwo        string   `json:"targetTwo"`
+	TradeMode        string   `json:"tradeMode"`
+	BuyReason        string   `json:"buyReason"`
+	ExitRules        string   `json:"exitRules"`
+	Review           string   `json:"review"`
+	PlannedR         float64  `json:"plannedR"`
+	ActualR          float64  `json:"actualR"`
+	TimeStopDate     string   `json:"timeStopDate"`
+	MarketGate       string   `json:"marketGate"`
 }
 
 type TradingSystemState struct {
@@ -736,6 +744,16 @@ func (s *AppStore) migrate() error {
 			state_json TEXT NOT NULL DEFAULT '{}',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS trade_alert_deliveries (
+			trade_id TEXT NOT NULL,
+			alert_kind TEXT NOT NULL,
+			webhook_id TEXT NOT NULL,
+			alert_date TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'pending',
+			attempts INTEGER NOT NULL DEFAULT 0,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(trade_id, alert_kind, webhook_id, alert_date)
 		)`,
 		`CREATE TABLE IF NOT EXISTS t_signal_state (
 			id TEXT PRIMARY KEY,
@@ -2149,6 +2167,24 @@ func normalizeTradingSystemState(state TradingSystemState) TradingSystemState {
 		}
 		trade.TargetOne = strings.TrimSpace(trade.TargetOne)
 		trade.TargetTwo = strings.TrimSpace(trade.TargetTwo)
+		if trade.StopPrice < 0 {
+			trade.StopPrice = 0
+		}
+		if trade.TargetPrice1 < 0 {
+			trade.TargetPrice1 = 0
+		}
+		if trade.TargetPrice2 < 0 {
+			trade.TargetPrice2 = 0
+		}
+		if trade.AlertWebhookIDs == nil {
+			trade.AlertWebhookIDs = []string{}
+		}
+		trade.AlertWebhookIDs = uniqueTradeAlertStrings(trade.AlertWebhookIDs)
+		trade.RiskBasis = strings.TrimSpace(trade.RiskBasis)
+		trade.RiskAsOf = strings.TrimSpace(trade.RiskAsOf)
+		if trade.Direction == "sell" {
+			trade.AlertEnabled = false
+		}
 		trade.TradeMode = strings.TrimSpace(trade.TradeMode)
 		trade.BuyReason = strings.TrimSpace(trade.BuyReason)
 		trade.ExitRules = strings.TrimSpace(trade.ExitRules)
@@ -2214,6 +2250,9 @@ func (s *AppStore) GetTradingSystemState() (TradingSystemState, error) {
 func (s *AppStore) UpsertTradingSystemState(state TradingSystemState) (TradingSystemState, error) {
 	state = normalizeTradingSystemState(state)
 	if err := validateTradingDirections(state.Trades); err != nil {
+		return state, err
+	}
+	if err := validateTradeAlerts(state.Trades); err != nil {
 		return state, err
 	}
 	now := NowText()
@@ -2289,7 +2328,7 @@ func validateTradingDirections(trades []TradingTrade) error {
 		if trade.Direction == "sell" || trade.Status != "active" {
 			continue
 		}
-		holdings[trade.StockCode] += trade.Shares
+		holdings[TradingCode(trade.StockCode)] += trade.Shares
 	}
 	for _, trade := range trades {
 		if trade.Direction != "sell" {
@@ -2298,11 +2337,12 @@ func validateTradingDirections(trades []TradingTrade) error {
 		if trade.Shares < 0 {
 			return fmt.Errorf("%s 卖出数量不能为负数", trade.StockName)
 		}
-		available := holdings[trade.StockCode]
+		code := TradingCode(trade.StockCode)
+		available := holdings[code]
 		if trade.Shares > available+0.000001 {
 			return fmt.Errorf("%s 卖出数量 %.0f 股超过当前可用仓位 %.0f 股", trade.StockName, trade.Shares, available)
 		}
-		holdings[trade.StockCode] = available - trade.Shares
+		holdings[code] = available - trade.Shares
 	}
 	return nil
 }

@@ -293,6 +293,7 @@ tdx-api/
 | [部署指南](docs/deployment-guide.md) | Docker、本地运行、验证和排障 |
 | [API 参考](docs/api-reference.md) | REST API 参数、响应和示例 |
 | [交易系统 V1.1](docs/TRADING_SYSTEM_V1_1.md) | 交易卡、退出规则和 R 统计 |
+| [持仓止盈止损与预警](docs/trading-risk-alerts.md) | ATR 与支撑价位、Webhook 开关和每日去重 |
 | [历史回测对照分析](docs/HISTORICAL_BACKTEST_CONTROL_GROUP_PLAN.md) | 策略信号和同日对照组设计 |
 | [短线策略研究](docs/SHORT_TERM_STRATEGY_RESEARCH.md) | 研究候选策略和验证口径 |
 | [复权算法](docs/gbbq-adjustment.md) | 除权除息数据和复权计算 |

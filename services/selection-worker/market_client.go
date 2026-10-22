@@ -36,9 +36,11 @@ type MarketQuoteStreamEvent struct {
 }
 
 type MarketQuoteSnapshot struct {
-	Symbol string          `json:"symbol"`
-	Code   string          `json:"code"`
-	Quote  *protocol.Quote `json:"quote"`
+	Symbol    string          `json:"symbol"`
+	Code      string          `json:"code"`
+	Quote     *protocol.Quote `json:"quote"`
+	Stale     bool            `json:"stale"`
+	FetchedAt time.Time       `json:"fetched_at"`
 }
 
 type MarketKlineBatch struct {

@@ -25,57 +25,73 @@ type WebhookEvent struct {
 	RunAt          string      `json:"run_at"`
 }
 
+// A remote rejection is safe to retry. Network failures may have happened after
+// delivery, so holding alerts keep those attempts as uncertain instead.
+type webhookRejectedError struct{ error }
+
 func sendWebhooks(ctx context.Context, hooks []Webhook, event WebhookEvent) []string {
 	if len(hooks) == 0 {
 		return nil
 	}
 	event.RunAt = nowText()
-	client := &http.Client{Timeout: 20 * time.Second}
 	logs := make([]string, 0, len(hooks))
 
 	for _, hook := range hooks {
 		if !webhookAllowsEvent(hook, event.Event) {
 			continue
 		}
-		method := strings.ToUpper(hook.Method)
-		if method == "" {
-			method = http.MethodPost
-		}
-		raw, err := buildWebhookPayload(hook, event)
-		if err != nil {
-			logs = append(logs, fmt.Sprintf("%s 构建消息失败: %v", hook.Name, err))
-			continue
-		}
-		req, err := http.NewRequestWithContext(ctx, method, hook.URL, bytes.NewReader(raw))
-		if err != nil {
-			logs = append(logs, fmt.Sprintf("%s 创建请求失败: %v", hook.Name, err))
-			continue
-		}
-		req.Header.Set("Content-Type", "application/json")
-		var headers map[string]string
-		if err := json.Unmarshal([]byte(hook.HeadersJSON), &headers); err == nil {
-			for k, v := range headers {
-				req.Header.Set(k, v)
-			}
-		}
-		resp, err := client.Do(req)
-		if err != nil {
+		if err := sendWebhook(ctx, hook, event); err != nil {
 			logs = append(logs, fmt.Sprintf("%s 发送失败: %v", hook.Name, err))
-			continue
+		} else {
+			logs = append(logs, fmt.Sprintf("%s 已发送", hook.Name))
 		}
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		resp.Body.Close()
-		if resp.StatusCode >= 300 {
-			logs = append(logs, fmt.Sprintf("%s 返回状态: %s %s", hook.Name, resp.Status, strings.TrimSpace(string(body))))
-			continue
-		}
-		if err := validateWebhookResponse(hook, body); err != nil {
-			logs = append(logs, fmt.Sprintf("%s 返回失败: %v", hook.Name, err))
-			continue
-		}
-		logs = append(logs, fmt.Sprintf("%s 已发送", hook.Name))
 	}
 	return logs
+}
+
+func sendWebhook(ctx context.Context, hook Webhook, event WebhookEvent) error {
+	if !webhookAllowsEvent(hook, event.Event) {
+		return nil
+	}
+	if event.RunAt == "" {
+		event.RunAt = nowText()
+	}
+	client := &http.Client{Timeout: 20 * time.Second}
+	method := strings.ToUpper(hook.Method)
+	if method == "" {
+		method = http.MethodPost
+	}
+	raw, err := buildWebhookPayload(hook, event)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, method, hook.URL, bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	var headers map[string]string
+	if err := json.Unmarshal([]byte(hook.HeadersJSON), &headers); err == nil {
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return webhookRejectedError{fmt.Errorf("返回状态: %s", resp.Status)}
+	}
+	if readErr != nil {
+		return readErr
+	}
+	if err := validateWebhookResponse(hook, body); err != nil {
+		return webhookRejectedError{err}
+	}
+	return nil
 }
 
 func buildWebhookPayload(hook Webhook, event WebhookEvent) ([]byte, error) {
