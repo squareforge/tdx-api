@@ -22,12 +22,14 @@ RUN sed -i \
         -e 's|deb.debian.org/debian|mirrors.aliyun.com/debian|g' \
         /etc/apt/sources.list.d/debian.sources && \
     apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates tzdata wget libgomp1 libgl1 libglib2.0-0 && \
+    apt-get install -y --no-install-recommends ca-certificates tzdata wget git libgomp1 libgl1 libglib2.0-0 && \
     rm -rf /var/lib/apt/lists/*
 
 COPY services/hikyuu-data-service/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple --trusted-host pypi.tuna.tsinghua.edu.cn -r requirements.txt && \
     pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple --trusted-host pypi.tuna.tsinghua.edu.cn hikyuu==2.8.2
+RUN pip install --no-cache-dir --force-reinstall --no-deps \
+    'git+https://github.com/squareforge/pytdx.git@d77b65dcdbae74af9c3eb205b37eabbecc644193'
 
 COPY services/hikyuu-data-service/app.py ./app.py
 COPY services/hikyuu-data-service/importdata_runner.py ./importdata_runner.py
